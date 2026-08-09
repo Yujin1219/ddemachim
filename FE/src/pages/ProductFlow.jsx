@@ -1,4 +1,6 @@
 import { useEffect, useState } from 'react';
+import { motion, useReducedMotion } from 'motion/react';
+import { ChevronLeft, ChevronRight, CircleHelp, Clock3, Heart, Image as ImageIcon, LocateFixed, MapPin, MoreHorizontal, SearchX, SendHorizontal, X } from 'lucide-react';
 import BottomNav from '../components/BottomNav';
 import { SearchIcon } from '../components/Icons';
 import {
@@ -10,6 +12,7 @@ import {
   NearbyMotion,
   RouteMotion,
 } from '../components/MotionAssets';
+import ScrollOnboarding from '../components/ScrollOnboarding';
 
 const routeGroups = {
   auth: ['splash', 'intro', 'login', 'signup', 'onboarding', 'onboarding-schedule', 'onboarding-permissions'],
@@ -53,7 +56,10 @@ function ActionButton({ children, onClick, tone = 'primary', disabled = false, c
 }
 
 function IconButton({ label, children, onClick, className = '' }) {
-  return <button className={`icon-button ${className}`} onClick={onClick} type="button" aria-label={label} title={label}>{children}</button>;
+  const icons = { 이전: ChevronLeft, 더보기: MoreHorizontal, 저장: Heart, 저장됨: Heart, 닫기: X, 도움말: CircleHelp };
+  const Icon = icons[label];
+  const isSaved = label === '저장됨';
+  return <button className={`icon-button ${className}`} onClick={onClick} type="button" aria-label={label} title={label}>{Icon ? <Icon aria-hidden="true" size={20} strokeWidth={2} fill={isSaved ? 'currentColor' : 'none'} /> : children}</button>;
 }
 
 function BackHeader({ title, onBack, action, actionLabel = '더보기' }) {
@@ -69,49 +75,36 @@ function SearchField({ value, onChange, onSubmit, placeholder, autoFocus = false
     <form className="search-field" onSubmit={(event) => { event.preventDefault(); onSubmit?.(); }}>
       <span className="search-field-icon"><SearchIcon /></span>
       <input aria-label={placeholder} autoFocus={autoFocus} value={value} onChange={(event) => onChange(event.target.value)} placeholder={placeholder} />
-      {value && <button type="button" className="clear-search" aria-label="검색어 지우기" onClick={() => onChange('')}>×</button>}
+      {value && <button type="button" className="clear-search" aria-label="검색어 지우기" onClick={() => onChange('')}><X aria-hidden="true" size={14} strokeWidth={2.4} /></button>}
     </form>
   );
 }
 
 function Chip({ children, active = false, onClick, tone = '' }) {
-  return <button type="button" className={`ui-chip ${active ? 'is-active' : ''} ${tone}`} onClick={onClick}>{children}</button>;
+  const className = `ui-chip ${active ? 'is-active' : ''} ${tone}`;
+  return onClick ? <button type="button" className={className} onClick={onClick} aria-pressed={active}>{children}</button> : <span className={className}>{children}</span>;
 }
 
 function StatusBanner({ tone = 'blue', title, copy, action, onAction }) {
   return <section className={`status-banner ${tone}`}>
     <div><strong>{title}</strong>{copy && <p>{copy}</p>}</div>
-    {action && <button onClick={onAction} type="button">{action}</button>}
+    {action && (onAction ? <button onClick={onAction} type="button">{action}</button> : <span className="status-banner-note">{action}</span>)}
   </section>;
 }
 
 function PlaceRow({ place, onClick, action, onAction }) {
-  return (
-    <article className="place-row" onClick={onClick} role={onClick ? 'button' : undefined} tabIndex={onClick ? 0 : undefined} onKeyDown={(event) => { if (onClick && event.key === 'Enter') onClick(); }}>
-      <img src={place.image} alt="" />
-      <div className="place-row-copy">
-        {place.badge && <span className="small-badge">{place.badge}</span>}
-        <h3>{place.name}</h3>
-        <p>{place.meta}</p>
-      </div>
-      {action ? <button className="row-action" onClick={(event) => { event.stopPropagation(); onAction?.(); }} type="button">{action}</button> : <span className="row-next" aria-hidden="true">›</span>}
-    </article>
-  );
+  const content = <><img src={place.image} alt="" /><div className="place-row-copy">{place.badge && <span className="small-badge">{place.badge}</span>}<h3>{place.name}</h3><p>{place.meta}</p></div></>;
+  if (onClick && !action) return <button className="place-row" onClick={onClick} type="button">{content}<ChevronRight className="row-next" aria-hidden="true" size={20} /></button>;
+  return <article className="place-row">{content}{action ? <button className="row-action" onClick={onAction} type="button">{action}</button> : <ChevronRight className="row-next" aria-hidden="true" size={20} />}</article>;
 }
 
 function PlaceCard({ place, onClick }) {
-  return (
-    <article className="place-card-v3" onClick={onClick} role="button" tabIndex="0" onKeyDown={(event) => { if (event.key === 'Enter') onClick(); }}>
-      <div className="place-card-image"><img src={place.image} alt="" />{place.badge && <span>{place.badge}</span>}</div>
-      <h3>{place.name}</h3>
-      <p>{place.meta}</p>
-    </article>
-  );
+  return <button className="place-card-v3" onClick={onClick} type="button"><div className="place-card-image"><img src={place.image} alt="" />{place.badge && <span>{place.badge}</span>}</div><h3>{place.name}</h3><p>{place.meta}</p></button>;
 }
 
 function ScreenSection({ title, subtitle, action, onAction, children }) {
   return <section className="content-section">
-    <div className="section-title-row"><h2>{title}</h2>{action && <button type="button" onClick={onAction}>{action}</button>}</div>
+    <div className="section-title-row"><h2>{title}</h2>{action && (onAction ? <button type="button" onClick={onAction}>{action}</button> : <span className="section-action-note">{action}</span>)}</div>
     {subtitle && <p className="section-subtitle">{subtitle}</p>}
     {children}
   </section>;
@@ -135,7 +128,7 @@ function AuthScreen({ screen, go }) {
     return <section className="phone auth-screen splash-screen"><div className="splash-orbit" /><div className="splash-brand">ㅌ</div><h1>때마침</h1><p>걷기 좋은 순간, 도착하는 여행</p><div className="splash-progress"><span /></div><button className="full-screen-hit" onClick={() => go('intro')} aria-label="서비스 시작" /></section>;
   }
   if (screen === 'intro') {
-    return <section className="phone auth-screen intro-screen"><header className="intro-header"><strong>때마침</strong><button type="button" onClick={() => go('map')}>건너뛰기</button></header><div className="intro-hero"><img src="/assets/figma/intro-visual.png" alt="안국동 궁궐 연못 풍경" /><div><span>현재 위치에서 시작</span><h2>안국에서 성수까지<br />오늘의 코스</h2></div></div><div className="intro-copy"><h1>요즘 서울을, 때마침</h1><p>흩어진 장소를 하루 코스로 묶고<br />도착하면 혼잡도와 주변 볼거리를 먼저 알려드려요.</p></div><div className="intro-pager" aria-label="소개 1 / 3"><i className="active" /><i /><i /></div><div className="auth-actions"><ActionButton onClick={() => go('login')}>시작하기</ActionButton></div></section>;
+    return <ScrollOnboarding go={go} />;
   }
   if (screen === 'login' || screen === 'signup') {
     const isSignup = screen === 'signup';
@@ -143,13 +136,20 @@ function AuthScreen({ screen, go }) {
   }
   const step = screen === 'onboarding' ? 1 : screen === 'onboarding-schedule' ? 2 : 3;
   const goNext = () => go(screen === 'onboarding' ? 'onboarding-schedule' : screen === 'onboarding-schedule' ? 'onboarding-permissions' : 'map');
-  return <section className="phone standard-screen onboarding-screen onboarding-v3"><main className="page-scroll onboarding-scroll"><div className="onboarding-progress"><strong>{step} / 3</strong><span><i style={{ width: `${step * 33.333}%` }} /></span></div>{screen === 'onboarding' && <><div className="onboarding-copy"><h1>어떤 장소를 좋아하세요?</h1><p>관심 있는 테마를 고르면 첫 코스를 더 잘 추천할 수 있어요.</p></div><div className="onboarding-topic-list">{[['촬영지', '영화와 드라마 속 장면'], ['요즘 뜨는 곳', '저장과 사진 반응이 빠른 장소'], ['팝업·전시', '이번 주에만 만날 수 있는 공간'], ['골목·산책', '천천히 걷기 좋은 서울의 길'], ['카페·디저트', '메뉴와 공간이 함께 좋은 곳']].map(([name, copy]) => { const selected = themes.includes(name); return <button type="button" className={selected ? 'selected' : ''} key={name} onClick={() => setThemes((current) => selected ? current.filter((item) => item !== name) : [...current, name])}><i /><span><strong>{name}</strong><small>{copy}</small></span></button>; })}</div></>}{screen === 'onboarding-schedule' && <><div className="onboarding-copy"><h1>오늘 여행은 어떤 느낌이 좋아요?</h1><p>일정 밀도와 사용할 수 있는 시간을 알려주세요.</p></div><section className="onboarding-group"><h2>일정 밀도</h2><div className="onboarding-density-grid">{[['여유롭게', '장소마다 충분히 머물고 싶어요'], ['촘촘하게', '더 많은 장소를 방문하고 싶어요']].map(([name, copy]) => <button type="button" className={pace === name ? 'selected' : ''} key={name} onClick={() => setPace(name)}><strong>{name}</strong><small>{copy}</small></button>)}</div></section><section className="onboarding-group"><h2>여행 시간</h2><div className="onboarding-duration-grid">{[['3시간', '가볍게 반나절 걷기'], ['5시간', '점심부터 저녁 전까지'], ['하루 종일', '여유 있는 서울 여행']].map(([name, copy]) => <button type="button" className={tripTime === name ? 'selected' : ''} key={name} onClick={() => setTripTime(name)}><strong>{name}</strong><small>{copy}</small></button>)}</div></section></>}{screen === 'onboarding-permissions' && <><div className="onboarding-copy"><h1>필요한 순간에 알려드릴게요</h1><p>권한은 해당 기능을 사용할 때만 요청해요.</p></div><div className="onboarding-permission-list">{[['위치', '길 안내와 도착 감지에 사용'], ['알림', '혼잡 변화와 주변 장소 안내'], ['카메라', '촬영 장면 구도 맞추기'], ['사진', '방문 인증 사진 저장']].map(([name, copy]) => { const selected = permissions.includes(name); return <button type="button" className={selected ? 'selected' : ''} key={name} onClick={() => setPermissions((current) => selected ? current.filter((item) => item !== name) : [...current, name])}><i>{selected ? '✓' : ''}</i><span><strong>{name}</strong><small>{copy}</small></span></button>; })}</div><button type="button" className="onboarding-later" onClick={goNext}>나중에 설정<span>MY에서 언제든 변경 가능</span></button></>}</main><div className="sticky-actions"><ActionButton onClick={goNext}>{screen === 'onboarding-permissions' ? '때마침 시작' : '다음'}</ActionButton></div></section>;
+  return <section className="phone standard-screen onboarding-screen onboarding-v3"><main className="page-scroll onboarding-scroll"><div className="onboarding-progress"><strong>{step} / 3</strong><span><i style={{ transform: `scaleX(${step / 3})` }} /></span></div>{screen === 'onboarding' && <><div className="onboarding-copy"><h1>어떤 장소를 좋아하세요?</h1><p>관심 있는 테마를 고르면 첫 코스를 더 잘 추천할 수 있어요.</p></div><div className="onboarding-topic-list">{[['촬영지', '영화와 드라마 속 장면'], ['요즘 뜨는 곳', '저장과 사진 반응이 빠른 장소'], ['팝업·전시', '이번 주에만 만날 수 있는 공간'], ['골목·산책', '천천히 걷기 좋은 서울의 길'], ['카페·디저트', '메뉴와 공간이 함께 좋은 곳']].map(([name, copy]) => { const selected = themes.includes(name); return <button type="button" className={selected ? 'selected' : ''} key={name} onClick={() => setThemes((current) => selected ? current.filter((item) => item !== name) : [...current, name])}><i /><span><strong>{name}</strong><small>{copy}</small></span></button>; })}</div></>}{screen === 'onboarding-schedule' && <><div className="onboarding-copy"><h1>오늘 여행은 어떤 느낌이 좋아요?</h1><p>일정 밀도와 사용할 수 있는 시간을 알려주세요.</p></div><section className="onboarding-group"><h2>일정 밀도</h2><div className="onboarding-density-grid">{[['여유롭게', '장소마다 충분히 머물고 싶어요'], ['촘촘하게', '더 많은 장소를 방문하고 싶어요']].map(([name, copy]) => <button type="button" className={pace === name ? 'selected' : ''} key={name} onClick={() => setPace(name)}><strong>{name}</strong><small>{copy}</small></button>)}</div></section><section className="onboarding-group"><h2>여행 시간</h2><div className="onboarding-duration-grid">{[['3시간', '가볍게 반나절 걷기'], ['5시간', '점심부터 저녁 전까지'], ['하루 종일', '여유 있는 서울 여행']].map(([name, copy]) => <button type="button" className={tripTime === name ? 'selected' : ''} key={name} onClick={() => setTripTime(name)}><strong>{name}</strong><small>{copy}</small></button>)}</div></section></>}{screen === 'onboarding-permissions' && <><div className="onboarding-copy"><h1>필요한 순간에 알려드릴게요</h1><p>권한은 해당 기능을 사용할 때만 요청해요.</p></div><div className="onboarding-permission-list">{[['위치', '길 안내와 도착 감지에 사용'], ['알림', '혼잡 변화와 주변 장소 안내'], ['카메라', '촬영 장면 구도 맞추기'], ['사진', '방문 인증 사진 저장']].map(([name, copy]) => { const selected = permissions.includes(name); return <button type="button" className={selected ? 'selected' : ''} key={name} onClick={() => setPermissions((current) => selected ? current.filter((item) => item !== name) : [...current, name])}><i>{selected ? '✓' : ''}</i><span><strong>{name}</strong><small>{copy}</small></span></button>; })}</div><button type="button" className="onboarding-later" onClick={goNext}>나중에 설정<span>MY에서 언제든 변경 가능</span></button></>}</main><div className="sticky-actions"><ActionButton onClick={goNext}>{screen === 'onboarding-permissions' ? '때마침 시작' : '다음'}</ActionButton></div></section>;
 }
 
 function MapHome({ go }) {
   const [filter, setFilter] = useState('전체');
-  const mapNearbyPlace = { name: '도토리가든', meta: '도보 8분 · 저장 1.2천', image: images.mapPlace, badge: 'D-3 팝업' };
-  return <section className="phone map-home-screen"><MapStage><div className="map-top-fade" /><header className="map-home-header"><p>안국동 · 내 주변</p><h1>오늘, 어디로 걸어볼까요?</h1><button className="map-search-trigger" onClick={() => go('search')} type="button"><span><SearchIcon /></span>장소·지역·테마 검색</button><div className="chip-row">{['전체', '요즘', '팝업', '촬영지'].map((item) => <Chip active={filter === item} key={item} onClick={() => setFilter(item)}>{item}</Chip>)}</div></header><MapPlacePulse /><button className="map-location-button" type="button" aria-label="내 위치">◎</button><BottomSheet className="map-nearby-sheet"><ScreenSection title="지금 가기 좋은 곳" action="전체보기" onAction={() => go('explore')}><PlaceRow place={mapNearbyPlace} onClick={() => go('place')} /></ScreenSection></BottomSheet></MapStage><BottomNav active="map" onNavigate={(tab) => go(rootRoutes[tab])} /></section>;
+  const [isLocated, setIsLocated] = useState(false);
+  const nearbyByFilter = {
+    전체: { title: '지금 가기 좋은 곳', place: { name: '도토리가든', meta: '도보 8분 · 저장 1.2천', image: images.mapPlace, badge: 'D-3 팝업' }, next: 'place' },
+    요즘: { title: '요즘 반응이 좋은 곳', place: { name: '런던베이글뮤지엄', meta: '도보 12분 · 오전이 가장 여유로워요', image: images.cafe, badge: '요즘 인기' }, next: 'place' },
+    팝업: { title: '이번 주 팝업', place: { name: '블루 모먼트 전시 팝업', meta: '도보 14분 · 8월 31일까지', image: images.scene, badge: '이번 주' }, next: 'place' },
+    촬영지: { title: '장면 속 가까운 곳', place: { name: '창덕궁 후원', meta: '도보 10분 · 도깨비 촬영지', image: images.popup, badge: '촬영지' }, next: 'filming-content' },
+  };
+  const nearby = nearbyByFilter[filter];
+  return <section className="phone map-home-screen"><MapStage><div className="map-top-fade" /><header className="map-home-header"><p>안국동 · 내 주변</p><h1>오늘, 어디로 걸어볼까요?</h1><button className="map-search-trigger" onClick={() => go('search')} type="button"><span><SearchIcon /></span>장소·지역·테마 검색</button><div className="chip-row">{['전체', '요즘', '팝업', '촬영지'].map((item) => <Chip active={filter === item} key={item} onClick={() => setFilter(item)}>{item}</Chip>)}</div></header><MapPlacePulse /><button className={`map-location-button ${isLocated ? 'is-located' : ''}`} type="button" aria-label="내 위치" aria-pressed={isLocated} onClick={() => setIsLocated((current) => !current)}><LocateFixed aria-hidden="true" size={20} strokeWidth={2.2} /></button>{isLocated && <p className="map-location-status" role="status">현재 위치를 기준으로 보고 있어요</p>}<BottomSheet className="map-nearby-sheet"><ScreenSection title={nearby.title} action="전체보기" onAction={() => go('explore')}><PlaceRow place={nearby.place} onClick={() => go(nearby.next)} /></ScreenSection><button type="button" className="map-live-link" onClick={() => go('live-talk')}><span>내 주변 지금톡</span><small>현장 소식 6개&nbsp; ›</small></button></BottomSheet></MapStage><BottomNav active="map" onNavigate={(tab) => go(rootRoutes[tab])} /></section>;
 }
 
 function ExploreScreen({ go }) {
@@ -160,7 +160,7 @@ function ExploreScreen({ go }) {
 }
 
 function EmptySearch({ query, onClear }) {
-  return <section className="empty-search"><div className="empty-search-icon">⌕</div><h2>검색 결과가 없어요</h2><p>{query ? `'${query}'` : '입력한'}와 일치하는 장소를 찾지 못했어요.</p><button type="button" onClick={onClear}>검색어 지우기</button></section>;
+  return <section className="empty-search"><div className="empty-search-icon"><SearchX aria-hidden="true" size={28} strokeWidth={1.8} /></div><h2>검색 결과가 없어요</h2><p>{query ? `'${query}'` : '입력한'}와 일치하는 장소를 찾지 못했어요.</p><button type="button" onClick={onClear}>검색어 지우기</button></section>;
 }
 
 function PlaceDetail({ go }) {
@@ -168,13 +168,19 @@ function PlaceDetail({ go }) {
 }
 
 function SearchResults({ screen, go }) {
-  const [query, setQuery] = useState(screen === 'search-empty' ? '없는 장소' : '안국');
+  const [query, setQuery] = useState(screen === 'search-empty' ? '없는 장소' : '운현궁');
+  const [activeTab, setActiveTab] = useState('장소');
+  const resultSets = {
+    장소: [locationRows[2], locationRows[1], locationRows[0]],
+    코스: [{ name: '안국동 궁궐 산책', meta: '3곳 · 2시간 10분 · 도보 중심', image: images.myMap, badge: '추천 코스' }, { name: '드라마 속 종로', meta: '4곳 · 3시간 30분 · 촬영지', image: images.popup, badge: '촬영지 코스' }],
+    콘텐츠: [{ name: '운현궁 · 눈물의 여왕', meta: 'EP.03 · 구도 가이드 제공', image: images.onsite, badge: '촬영지 콘텐츠' }, { name: '창덕궁 후원 · 도깨비', meta: '연못가 장면 · 도보 10분', image: images.popup, badge: '촬영지 콘텐츠' }],
+  };
   if (screen === 'search-empty') return <section className="phone standard-screen search-screen"><BackHeader title="검색" onBack={() => go('explore')} /><main className="page-scroll"><div className="search-page-field"><SearchField value={query} onChange={setQuery} onSubmit={() => go('search')} placeholder="장소·지역·테마 검색" autoFocus /></div><EmptySearch query={query} onClear={() => setQuery('')} /></main></section>;
-  return <section className="phone standard-screen search-screen"><BackHeader title="검색" onBack={() => go('explore')} /><main className="page-scroll"><div className="search-page-field"><SearchField value={query} onChange={setQuery} onSubmit={() => go(query ? 'search' : 'search-empty')} placeholder="장소·지역·테마 검색" autoFocus /></div><div className="search-result-copy"><strong>'{query}'</strong> 주변에서 찾았어요</div><div className="result-tabs"><Chip active>장소 12</Chip><Chip>코스 3</Chip><Chip>콘텐츠 5</Chip></div><div className="search-result-list">{locationRows.map((place) => <PlaceRow key={place.name} place={place} onClick={() => go(place.name === '창덕궁 후원' ? 'filming-content' : 'place')} />)}</div></main></section>;
+  return <section className="phone standard-screen search-screen"><BackHeader title="검색" onBack={() => go('explore')} /><main className="page-scroll"><div className="search-page-field"><SearchField value={query} onChange={setQuery} onSubmit={() => go(query ? 'search' : 'search-empty')} placeholder="장소·지역·테마 검색" autoFocus /></div><div className="search-result-copy"><strong>'{query}' 검색 결과</strong><span>안국동 주변에서 찾았어요</span></div><div className="result-tabs">{[['장소', '12'], ['코스', '3'], ['콘텐츠', '5']].map(([name, count]) => <Chip active={activeTab === name} key={name} onClick={() => setActiveTab(name)}>{name} {count}</Chip>)}</div><div className="search-result-list">{resultSets[activeTab].map((place) => <PlaceRow key={place.name} place={place} onClick={() => go(activeTab === '콘텐츠' || place.name === '창덕궁 후원' ? 'filming-content' : activeTab === '코스' ? 'route-map' : 'place')} />)}</div></main></section>;
 }
 
 function SavedConfirmation({ go }) {
-  return <section className="phone standard-screen confirmation-screen"><div className="confirmation-mark">✓</div><h1>저장했어요</h1><p>도토리가든을 저장한 장소에서<br />언제든 다시 볼 수 있어요.</p><div className="confirmation-card"><img src={images.cafe} alt="" /><div><strong>도토리가든</strong><span>안국 · 카페</span></div></div><div className="auth-actions"><ActionButton onClick={() => go('course-conditions')}>코스 만들기</ActionButton><ActionButton tone="secondary" onClick={() => go('my')}>저장 목록 보기</ActionButton></div></section>;
+  return <section className="phone standard-screen saved-detail-screen"><main className="page-scroll"><div className="detail-hero"><img src={images.detail} alt="도토리가든 외관" /><div className="detail-controls"><IconButton label="이전" onClick={() => go('place')}>‹</IconButton><IconButton label="저장됨" onClick={() => go('my')}>♥</IconButton></div></div><div className="detail-content detail-content-v3"><p className="eyebrow">안국 · 카페</p><h1>도토리가든</h1><p className="detail-meta">매일 10:00-21:00</p><div className="chip-row"><Chip active>지금 여유</Chip><Chip>도보 8분</Chip></div><ScreenSection title="지금 가야 하는 이유"><div className="why-card place-why-card"><span>최근 후기 기반 · 오늘 업데이트</span><strong>최근 3일간 소금빵과 정원 사진을<br />저장한 사람이 빠르게 늘고 있어요.</strong><p>오후 2-4시는 사진 후기가 특히 많아요</p></div></ScreenSection><ScreenSection title="지금 현장에서는" action="12분 전"><div className="place-live-grid"><article><span>대기</span><b>약 10분</b></article><article><span>메뉴</span><b>소금빵 재고 있음</b></article></div></ScreenSection></div></main><section className="save-confirmation-toast" role="status"><span>✓</span><div><strong>저장한 장소에 추가했어요</strong><small>MY에서 언제든 다시 볼 수 있어요.</small></div><button type="button" onClick={() => go('my')}>보기</button></section><div className="sticky-actions split place-actions"><ActionButton onClick={() => go('course-conditions')}>코스에 추가</ActionButton><ActionButton tone="secondary" onClick={() => go('explore')}>탐색 계속</ActionButton></div></section>;
 }
 
 const collectionInfo = {
@@ -185,18 +191,24 @@ const collectionInfo = {
 
 function CollectionScreen({ screen, go }) {
   const [title, subtitle, places] = collectionInfo[screen];
-  return <section className="phone standard-screen list-screen"><BackHeader title={title} onBack={() => go('explore')} /><main className="page-scroll"><p className="screen-lede">{subtitle}</p><div className="collection-list">{places.concat(places).map((place, index) => <PlaceRow key={`${place.name}-${index}`} place={place} onClick={() => go(screen === 'filming-locations' ? 'filming-content' : 'place')} />)}</div></main></section>;
+  const [filter, setFilter] = useState('전체');
+  const filters = screen === 'popups' ? ['전체', '이번 주', '무료'] : screen === 'filming-locations' ? ['전체', '드라마', '영화'] : ['전체', '안국', '지금 여유'];
+  const displayedPlaces = filter === '전체' ? places.concat(places) : places.concat(places).filter((_, index) => index % 2 === 0);
+  return <section className="phone standard-screen list-screen collection-screen-v3"><BackHeader title={title} onBack={() => go('explore')} /><main className="page-scroll"><header className="collection-heading"><p>{screen === 'popups' ? '서울의 이번 주' : screen === 'filming-locations' ? '서울의 장면들' : '최근 저장과 후기'}</p><h1>{title}</h1><small>{subtitle}</small></header><div className="collection-filters">{filters.map((item) => <Chip key={item} active={filter === item} onClick={() => setFilter(item)}>{item}</Chip>)}</div><div className="collection-list">{displayedPlaces.map((place, index) => <PlaceRow key={`${place.name}-${index}`} place={place} onClick={() => go(screen === 'filming-locations' ? 'filming-content' : 'place')} />)}</div></main></section>;
 }
 
 function LiveTalk({ go }) {
-  return <section className="phone standard-screen live-talk-screen"><BackHeader title="내 주변 지금톡" onBack={() => go('map')} /><main className="page-scroll"><div className="talk-hero"><CrowdMotion /><div><span>안국동 · 실시간</span><h2>지금 근처가 어떤가요?</h2><p>현장에 있는 사람들이 남긴 짧은 소식이에요.</p></div></div><div className="chat-list"><p className="chat-bubble other">창덕궁 쪽은 입장 줄이 거의 없어요.</p><p className="chat-bubble mine">도토리가든은 지금 바로 들어갔어요!</p><p className="chat-bubble other">북촌 골목은 오후보다 한산해요.</p></div></main><form className="talk-input" onSubmit={(event) => event.preventDefault()}><input placeholder="지금 상황을 남겨보세요" /><button type="submit" aria-label="보내기">↑</button></form></section>;
+  const [draft, setDraft] = useState('');
+  const [messages, setMessages] = useState([{ text: '창덕궁 쪽은 입장 줄이 거의 없어요.', mine: false }, { text: '도토리가든은 지금 바로 들어갔어요!', mine: true }, { text: '북촌 골목은 오후보다 한산해요.', mine: false }]);
+  const submit = (event) => { event.preventDefault(); const text = draft.trim(); if (!text) return; setMessages((current) => [...current, { text, mine: true }]); setDraft(''); };
+  return <section className="phone standard-screen live-talk-screen"><BackHeader title="내 주변 지금톡" onBack={() => go('map')} /><main className="page-scroll"><div className="talk-hero"><CrowdMotion /><div><span>안국동 · 실시간</span><h2>지금 근처가 어떤가요?</h2><p>현장에 있는 사람들이 남긴 짧은 소식이에요.</p></div></div><div className="talk-presence"><i />지금 안국동에 6명이 있어요</div><div className="chat-list">{messages.map((message, index) => <p className={`chat-bubble ${message.mine ? 'mine' : 'other'}`} key={`${message.text}-${index}`}>{message.text}</p>)}</div></main><form className="talk-input" onSubmit={submit}><input value={draft} onChange={(event) => setDraft(event.target.value)} placeholder="지금 상황을 남겨보세요" /><button type="submit" aria-label="보내기" disabled={!draft.trim()}><SendHorizontal aria-hidden="true" size={19} strokeWidth={2} /></button></form></section>;
 }
 
 function CourseConditions({ go }) {
   const [duration, setDuration] = useState('5시간');
   const [pace, setPace] = useState('여유롭게');
   const [budget, setBudget] = useState('1만원');
-  return <section className="phone standard-screen course-condition-screen"><main className="page-scroll"><BackHeader title="코스 만들기" onBack={() => go('map')} /><span className="progress-pill">1 / 3</span><div className="course-hero"><p>오늘의 코스</p><h1>어떤 하루를 보내고 싶어요?</h1><span>시간과 일정 밀도만 알려주세요.</span></div><ScreenSection title="출발 정보"><div className="setting-card"><button type="button"><span>⌖ 출발 위치</span><strong>현재 위치 · 안국동</strong>›</button><button type="button"><span>◷ 출발 시간</span><strong>오늘 13:40</strong>›</button></div></ScreenSection><ScreenSection title="얼마나 함께 걸을까요?"><div className="three-choice-row">{['3시간', '5시간', '하루 종일'].map((item) => <button key={item} type="button" onClick={() => setDuration(item)} className={duration === item ? 'selected' : ''}>{item}</button>)}</div></ScreenSection><ScreenSection title="일정은 어떤 느낌이 좋아요?"><div className="pace-choice-grid">{[['여유롭게', '머무는 시간을 넉넉히'], ['촘촘하게', '더 많은 장소를 방문']].map(([name, copy]) => <button type="button" className={pace === name ? 'selected' : ''} key={name} onClick={() => setPace(name)}><strong>{name}</strong><span>{copy}</span></button>)}</div></ScreenSection><ScreenSection title="이동비 예산"><div className="three-choice-row">{['0원', '1만원', '2만원 이상'].map((item) => <button key={item} type="button" onClick={() => setBudget(item)} className={budget === item ? 'selected' : ''}>{item}</button>)}</div></ScreenSection><StatusBanner tone="blue" title="예약 · 마감 시간을 먼저 고려해요" copy="가능한 장소만 골라 이동 순서를 맞춰드려요." /></main><div className="sticky-actions"><ActionButton onClick={() => go('basket')}>이 조건으로 코스 만들기</ActionButton></div></section>;
+  return <section className="phone standard-screen course-condition-screen"><main className="page-scroll"><BackHeader title="코스 만들기" onBack={() => go('map')} /><span className="progress-pill">1 / 3</span><div className="course-hero"><p>오늘의 코스</p><h1>어떤 하루를 보내고 싶어요?</h1><span>시간과 일정 밀도만 알려주세요.</span></div><ScreenSection title="출발 정보"><div className="setting-card"><button type="button"><span className="setting-card-label"><MapPin aria-hidden="true" size={16} />출발 위치</span><strong>현재 위치 · 안국동</strong><ChevronRight aria-hidden="true" size={16} /></button><button type="button"><span className="setting-card-label"><Clock3 aria-hidden="true" size={16} />출발 시간</span><strong>오늘 13:40</strong><ChevronRight aria-hidden="true" size={16} /></button></div></ScreenSection><ScreenSection title="얼마나 함께 걸을까요?"><div className="three-choice-row">{['3시간', '5시간', '하루 종일'].map((item) => <button key={item} type="button" onClick={() => setDuration(item)} className={duration === item ? 'selected' : ''}>{item}</button>)}</div></ScreenSection><ScreenSection title="일정은 어떤 느낌이 좋아요?"><div className="pace-choice-grid">{[['여유롭게', '머무는 시간을 넉넉히'], ['촘촘하게', '더 많은 장소를 방문']].map(([name, copy]) => <button type="button" className={pace === name ? 'selected' : ''} key={name} onClick={() => setPace(name)}><strong>{name}</strong><span>{copy}</span></button>)}</div></ScreenSection><ScreenSection title="이동비 예산"><div className="three-choice-row">{['0원', '1만원', '2만원 이상'].map((item) => <button key={item} type="button" onClick={() => setBudget(item)} className={budget === item ? 'selected' : ''}>{item}</button>)}</div></ScreenSection><StatusBanner tone="blue" title="예약 · 마감 시간을 먼저 고려해요" copy="가능한 장소만 골라 이동 순서를 맞춰드려요." /></main><div className="sticky-actions"><ActionButton onClick={() => go('basket')}>이 조건으로 코스 만들기</ActionButton></div></section>;
 }
 
 function RouteOverview({ go, active = false }) {
@@ -229,17 +241,23 @@ function GuidanceMapState({ go, data }) {
 function CourseBasket({ screen, go }) {
   const isNatural = screen === 'basket-natural';
   const isGlass = screen === 'basket-glass';
+  const isCurated = isNatural || isGlass;
+  const variant = isNatural ? { title: '4곳을 담았어요', copy: '걷는 구간을 줄여 조금 더 여유롭게 정리했어요', label: '걷기 편한 순서', summary: '4곳 · 약 5시간 20분', note: '긴 도보 구간을 한 번 줄였어요' } : isGlass ? { title: '4곳을 담았어요', copy: '예약과 운영 시간을 먼저 반영해 정리했어요', label: '예약 시간 반영', summary: '4곳 · 약 5시간 10분', note: '15:00 예약에 맞춰 순서를 정했어요' } : { title: '코스 바구니', copy: '꼭 갈 곳과 가고 싶은 곳을 확인해요', label: '오늘 일정 준비 중', summary: '4곳 · 약 5시간 20분', note: '15시 예약 1건을 기준으로 순서를 맞췄어요' };
   const places = [
     { name: '런던 베이글 뮤지엄', meta: '15:00 예약 · 45분 체류', image: images.cafe, badge: '꼭 갈 곳' },
     { name: '블루 모먼트 전시 팝업', meta: '18:00 종료 · 40분 체류', image: images.scene, badge: 'D-3 팝업' },
     { name: '서울공예박물관', meta: '새 전시 · 60분 체류', image: images.cafe, badge: '가고 싶은 곳' },
+    { name: '도토리가든', meta: '소금빵 · 40분 체류', image: images.detail, badge: '가고 싶은 곳' },
   ];
-  return <section className={`phone standard-screen basket-screen basket-screen-v3 ${screen}`}><main className="page-scroll basket-scroll"><header className="basket-heading"><h1>코스 바구니</h1><p>{isNatural ? '동선을 조금 더 여유롭게 정리했어요' : isGlass ? '지금의 동선으로 경로를 준비했어요' : '꼭 갈 곳과 가고 싶은 곳을 확인해요'}</p></header><section className="basket-summary"><span>오늘 일정 준비 중</span><h2>4곳 · 약 5시간 20분</h2><p>15시 예약 1건을 기준으로 순서를 맞췄어요</p></section><section className="basket-place-section"><h2>꼭 갈 곳</h2><div className="basket-place-list">{places.slice(0, 2).map((place) => <PlaceRow key={place.name} place={place} onClick={() => go('place')} />)}</div></section><section className="basket-place-section want"><h2>가고 싶은 곳</h2><div className="basket-place-list"><PlaceRow place={places[2]} onClick={() => go('place')} /></div></section></main><div className="sticky-actions basket-actions"><ActionButton onClick={() => go('compare')}>4개 장소로 코스 만들기</ActionButton></div><BottomNav active="course" onNavigate={(tab) => go(rootRoutes[tab])} /></section>;
+  return <section className={`phone standard-screen basket-screen basket-screen-v3 ${screen} ${isCurated ? 'basket-curated' : ''}`}><main className="page-scroll basket-scroll"><header className="basket-heading"><h1>{variant.title}</h1><p>{variant.copy}</p></header><section className="basket-summary"><span>{variant.label}</span><h2>{variant.summary}</h2><p>{variant.note}</p></section>{isCurated && <section className="basket-reservation-note"><span>예약 일정</span><strong>런던 베이글 뮤지엄 · 오늘 15:00</strong><small>예약 10분 전 도착을 기준으로 계산했어요.</small></section>}<section className="basket-place-section"><h2>꼭 갈 곳</h2><div className="basket-place-list">{places.slice(0, 2).map((place) => <PlaceRow key={place.name} place={place} onClick={() => go('place')} />)}</div></section><section className="basket-place-section want"><h2>가고 싶은 곳</h2><div className="basket-place-list">{places.slice(2).map((place) => <PlaceRow key={place.name} place={place} onClick={() => go('place')} />)}</div></section>{isCurated && <button type="button" className="basket-add-place" onClick={() => go('explore')}><span>＋</span>장소 더 담기</button>}</main><div className="sticky-actions basket-actions"><ActionButton onClick={() => go('compare')}>4개 장소로 코스 만들기</ActionButton></div><BottomNav active="course" onNavigate={(tab) => go(rootRoutes[tab])} /></section>;
 }
 
 function CourseCompare({ screen, go }) {
   if (screen === 'route-map') return <RouteOverview go={go} />;
-  return <section className="phone standard-screen compare-screen compare-screen-v3"><main className="page-scroll compare-scroll"><header className="compare-heading"><h1>코스 비교</h1><p>같은 장소도 순서에 따라 하루가 달라져요</p></header><div className="compare-cards"><article className="compare-card selected"><span>추천 · 이동 최소</span><h2>빠른 코스</h2><strong>4시간 20분</strong><p>도보 43분 · 3.8km · 환승 1회</p><small>팝업 마감 전에 먼저 방문하도록 배치했어요</small></article><article className="compare-card"><span>걷기 부담 최소</span><h2>편한 코스</h2><strong>5시간 10분</strong><p>도보 28분 · 2.4km · 환승 2회</p><small>긴 도보 구간을 나눠 중간에 이동을 넣었어요</small></article></div><button type="button" className="compare-map-preview" onClick={() => go('route-map')}><img src={images.myMap} alt="안국과 성수를 잇는 코스 지도" /><span>안국 → 성수 · 4곳</span></button></main><div className="sticky-actions compare-actions"><ActionButton onClick={() => go('route-map')}>빠른 코스로 시작하기</ActionButton></div><BottomNav active="course" onNavigate={(tab) => go(rootRoutes[tab])} /></section>;
+  const [selected, setSelected] = useState('fast');
+  const courses = [{ id: 'fast', badge: '추천 · 이동 최소', title: '빠른 코스', time: '4시간 20분', detail: '도보 43분 · 3.8km · 환승 1회', copy: '팝업 마감 전에 먼저 방문하도록 배치했어요' }, { id: 'easy', badge: '걷기 부담 최소', title: '편한 코스', time: '5시간 10분', detail: '도보 28분 · 2.4km · 환승 2회', copy: '긴 도보 구간을 나눠 중간에 이동을 넣었어요' }];
+  const selectedCourse = courses.find((course) => course.id === selected);
+  return <section className="phone standard-screen compare-screen compare-screen-v3"><main className="page-scroll compare-scroll"><header className="compare-heading"><h1>코스 비교</h1><p>같은 장소도 순서에 따라 하루가 달라져요</p></header><div className="compare-cards">{courses.map((course) => <article className={`compare-card ${selected === course.id ? 'selected' : ''}`} key={course.id} role="button" tabIndex="0" aria-pressed={selected === course.id} onClick={() => setSelected(course.id)} onKeyDown={(event) => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); setSelected(course.id); } }}><span>{course.badge}</span><h2>{course.title}</h2><strong>{course.time}</strong><p>{course.detail}</p><small>{course.copy}</small></article>)}</div><button type="button" className="compare-map-preview" onClick={() => go('route-map')}><img src={images.myMap} alt="안국과 성수를 잇는 코스 지도" /><span>안국 → 성수 · 4곳</span></button></main><div className="sticky-actions compare-actions"><ActionButton onClick={() => go('route-map')}>{selectedCourse.title}로 시작하기</ActionButton></div><BottomNav active="course" onNavigate={(tab) => go(rootRoutes[tab])} /></section>;
 }
 
 const navStates = {
@@ -308,11 +326,15 @@ const filmingState = {
 };
 
 function CameraScreen({ go }) {
-  return <section className="phone camera-screen camera-match-screen"><img className="camera-live-image" src="/assets/figma/intro-visual.png" alt="카메라 미리보기" /><div className="camera-dim" /><div className="camera-header"><IconButton label="닫기" onClick={() => go('scene-detail')}>×</IconButton><span>촬영 장면 구도 맞추기</span><IconButton label="도움말">?</IconButton></div><CameraGuide /><div className="camera-caption"><strong>처마 끝을 파란 선에 맞춰보세요</strong><span>눈물의 여왕 · EP.03</span></div><div className="camera-reference-note"><span>참고 장면과 현재 화면을 겹쳐 보여줘요</span><small>TMDB 이미지 · 공공데이터 위치</small></div><div className="camera-controls"><button type="button" className="camera-gallery" aria-label="앨범">▣</button><button type="button" className="camera-shutter" aria-label="촬영" onClick={() => go('shot-result')}><span /></button><button type="button" className="camera-switch" aria-label="카메라 전환">1×</button></div></section>;
+  return <section className="phone camera-screen camera-match-screen"><img className="camera-live-image" src="/assets/figma/intro-visual.png" alt="카메라 미리보기" /><div className="camera-dim" /><div className="camera-header"><IconButton label="닫기" onClick={() => go('scene-detail')}>×</IconButton><span>촬영 장면 구도 맞추기</span><IconButton label="도움말">?</IconButton></div><CameraGuide /><div className="camera-caption"><strong>처마 끝을 파란 선에 맞춰보세요</strong><span>눈물의 여왕 · EP.03</span></div><div className="camera-reference-note"><span>참고 장면과 현재 화면을 겹쳐 보여줘요</span><small>TMDB 이미지 · 공공데이터 위치</small></div><div className="camera-controls"><button type="button" className="camera-gallery" aria-label="앨범"><ImageIcon aria-hidden="true" size={22} strokeWidth={2} /></button><button type="button" className="camera-shutter" aria-label="촬영" onClick={() => go('shot-result')}><span /></button><button type="button" className="camera-switch" aria-label="카메라 전환">1×</button></div></section>;
 }
 
 function MapPermissionPrompt({ go, title, copy, detail, action, next }) {
   return <section className="phone map-permission-screen"><MapStage variant="home"><div className="map-top-fade" /><header className="server-map-heading"><p>안국동 · 내 주변</p><h1>오늘, 어디로 걸어볼까요?</h1><button type="button"><span><SearchIcon /></span>장소 · 지역 · 테마 검색</button><div><Chip active>전체</Chip><Chip>요즘</Chip><Chip>팝업</Chip><Chip>촬영지</Chip></div></header><div className="server-error-dim" /><BottomSheet className="map-permission-sheet"><h1>{title}</h1><p>{copy}</p><article><strong>{detail[0]}</strong><small>{detail[1]}</small></article><ActionButton onClick={() => go(next)}>{action}</ActionButton></BottomSheet></MapStage></section>;
+}
+
+function MapLoadingPrompt({ go }) {
+  return <section className="phone map-permission-screen map-loading-screen"><MapStage variant="home"><div className="map-top-fade" /><header className="server-map-heading"><p>안국동 · 내 주변</p><h1>오늘, 어디로 걸어볼까요?</h1><button type="button"><span><SearchIcon /></span>장소 · 지역 · 테마 검색</button><div><Chip active>전체</Chip><Chip>요즘</Chip><Chip>팝업</Chip><Chip>촬영지</Chip></div></header><div className="server-error-dim" /><BottomSheet className="map-permission-sheet map-loading-sheet"><BrandLoading /><h1>장소 정보를 불러오고 있어요</h1><p>공공데이터와 실시간 혼잡 정보를 확인하는 중이에요.</p><article><strong>잠시만 기다려주세요</strong><small>네트워크 상태에 따라 몇 초 걸릴 수 있어요.</small></article><ActionButton tone="secondary" onClick={() => go('map')}>나중에 다시 보기</ActionButton></BottomSheet></MapStage></section>;
 }
 
 function ShotResultScreen({ go }) {
@@ -321,7 +343,7 @@ function ShotResultScreen({ go }) {
 
 function FilmingScreen({ screen, go }) {
   if (screen === 'camera') return <CameraScreen go={go} />;
-  if (screen === 'camera-permission') return <MapPermissionPrompt go={go} title="카메라 권한이 필요해요" copy="촬영 장면과 현재 화면을 겹쳐 보려면 카메라 접근이 필요해요." detail={['사진과 동영상 촬영 허용', '촬영한 사진은 저장하기 전까지 기기에 남지 않아요.']} action="위치 권한 허용" next="camera" />;
+  if (screen === 'camera-permission') return <MapPermissionPrompt go={go} title="카메라 권한이 필요해요" copy="촬영 장면과 현재 화면을 겹쳐 보려면 카메라 접근이 필요해요." detail={['사진과 동영상 촬영 허용', '촬영한 사진은 저장하기 전까지 기기에 남지 않아요.']} action="카메라 권한 허용" next="camera" />;
   if (screen === 'scene-list') return <section className="phone standard-screen scene-list-v3"><BackHeader title="촬영 장면 · 운현궁" onBack={() => go('filming-content')} /><main className="page-scroll scene-list-scroll"><header><h1>이곳에서 촬영된 장면</h1><p>눈물의 여왕 · 장면 2개</p></header><div className="scene-sort-row"><Chip active>작품별</Chip><Chip>최신순</Chip></div><article className="scene-work-card"><img src="/assets/figma/intro-visual.png" alt="운현궁 촬영 장면" /><div><span>눈물의 여왕</span><small>tvN · 2024 · TMDB 작품 정보</small><p>EP.03 · 마당을 지나 대화를 나누는 장면<br />EP.11 · 처마 아래에서 재회하는 장면</p></div></article><p className="scene-list-note">스틸 이미지는 참고용으로 제공돼요</p><ScreenSection title="장면 선택"><div className="scene-choice-list"><button type="button" onClick={() => go('scene-detail')}><span><strong>EP.03</strong><small>낮 장면 · 구도 가이드 제공</small></span><b>장면 상세&nbsp; ›</b></button><button type="button" onClick={() => go('scene-detail')}><span><strong>EP.11</strong><small>저녁 장면 · 구도 가이드 제공</small></span><b>장면 보기&nbsp; ›</b></button></div></ScreenSection></main></section>;
   if (screen === 'onsite') return <section className="phone standard-screen onsite-screen"><main className="page-scroll"><div className="onsite-hero"><img src="/assets/figma/intro-visual.png" alt="운현궁 전경" /><div className="onsite-overlay-actions"><IconButton label="이전" onClick={() => go('arrival')}>‹</IconButton><IconButton label="저장" onClick={() => go('saved')}>♡</IconButton></div></div><div className="onsite-copy"><p className="eyebrow">안국 · 궁궐</p><h1>운현궁</h1><p>화-일 09:00-18:00</p><div className="chip-row"><Chip active>지금 여유</Chip><Chip>관람 약 20분</Chip></div><ScreenSection title="운현궁에서 놓치지 말 것"><div className="why-card"><span>현장 위치 확인 완료 · 오늘 업데이트</span><strong>노안당과 이로당을 잇는<br />마당 동선을 천천히 걸어보세요.</strong><p>오후에는 처마 그림자가 선명해요.</p></div></ScreenSection><ScreenSection title="지금 현장에서는" action="방금 도착"><div className="onsite-fact-grid"><article><span>관람</span><b>약 20분</b></article><article><span>촬영</span><b>삼각대 사용 제한</b></article></div></ScreenSection></div></main><div className="sticky-actions split onsite-actions"><ActionButton onClick={() => go('complete')}>관람 완료</ActionButton><ActionButton tone="secondary" onClick={() => go('filming-content')}>후기 보기</ActionButton></div></section>;
   if (screen === 'filming-content') return <section className="phone standard-screen filming-content-v3"><main className="page-scroll"><div className="filming-content-hero"><img src="/assets/figma/intro-visual.png" alt="운현궁 촬영지 전경" /><div className="filming-content-controls"><IconButton label="이전" onClick={() => go('onsite')}>‹</IconButton><IconButton label="저장" onClick={() => go('saved')}>♡</IconButton></div></div><div className="filming-content-copy"><p className="eyebrow">촬영지 · 서울 종로</p><h1>운현궁 · 눈물의 여왕</h1><p>tvN · 2024 · EP.03</p><div className="chip-row"><Chip active>현장 일치</Chip><Chip>장면 2개</Chip></div><ScreenSection title="이 장소에서 촬영된 장면"><div className="why-card filming-why-card"><span>공공데이터 위치 확인 · TMDB 작품 정보</span><strong>주인공이 마당을 지나 대화를 나누는 장면이에요.<br />같은 시선 높이에서 처마 끝을 맞춰보세요.</strong><p>TMDB 이미지 · 방송 장면 참고</p></div></ScreenSection><ScreenSection title="촬영 포인트" action="현재 위치"><div className="onsite-fact-grid"><article><span>카메라</span><b>1× 렌즈</b></article><article><span>빛 방향</span><b>오후 3시 추천</b></article></div></ScreenSection></div></main><div className="sticky-actions split filming-content-actions"><ActionButton onClick={() => go('scene-detail')}>구도 맞추기</ActionButton><ActionButton tone="secondary" onClick={() => go('scene-list')}>장면 보기</ActionButton></div></section>;
@@ -380,9 +402,14 @@ const settingsState = {
 };
 
 function MyScreen({ screen, go }) {
+  if (screen === 'location-permission') return <MapPermissionPrompt go={go} title="위치 권한이 필요해요" copy="현재 위치와 도착 감지를 위해 허용해주세요." detail={['앱 사용 중에만 위치 사용', '설정에서 언제든 변경할 수 있어요.']} action="위치 권한 허용" next="map" />;
+  if (screen === 'loading') return <MapLoadingPrompt go={go} />;
   if (screen === 'notifications') return <section className="phone standard-screen notifications-v3"><main className="page-scroll notifications-scroll"><header className="settings-page-heading"><p>알림 설정</p><span>여행 중 알림</span><h1>필요한 순간만 알려드릴게요</h1><small>혼잡 · 주변 장소 · 도착 알림을 선택할 수 있어요.</small></header><ScreenSection title="기본 알림"><div className="settings-row-list"><button type="button"><span>혼잡 변화</span><b>대중교통과 장소 혼잡이 높아질 때&nbsp; ›</b></button><button type="button"><span>주변 장소 추천</span><b>동선 근처에 볼거리가 있을 때&nbsp; ›</b></button></div></ScreenSection><ScreenSection title="알림 빈도"><div className="settings-segment"><button type="button">필수만</button><button type="button" className="selected">적당히</button><button type="button">모두</button></div></ScreenSection><ScreenSection title="도착 알림"><div className="settings-segment"><button type="button" className="selected">진동 켜기</button><button type="button">음성 안내</button></div><p className="settings-hint">장소 100m 이내에서 알려드려요</p></ScreenSection><ScreenSection title="방해 금지 시간"><div className="settings-segment"><button type="button">없음</button><button type="button" className="selected">22-08시</button><button type="button">직접 설정</button></div></ScreenSection><p className="settings-bottom-copy">운영시간 변경도 함께 알려드려요<br /><span>알림은 언제든 이 화면에서 바꿀 수 있어요.</span></p></main><div className="sticky-actions"><ActionButton onClick={() => go('my')}>설정 저장</ActionButton></div></section>;
   if (screen === 'profile-edit') return <section className="phone standard-screen profile-edit-v3"><BackHeader title="프로필 편집" onBack={() => go('my')} /><main className="page-scroll profile-edit-scroll"><header className="profile-edit-heading"><p className="eyebrow">내 정보</p><h1>유진님의 프로필</h1><span>다른 사용자에게 보이는 정보를 관리해요.</span></header><ScreenSection title="기본 정보"><div className="review-setting-list"><button type="button"><span>⌖ 닉네임</span><strong>유진&nbsp; ›</strong></button><button type="button"><span>◷ 한 줄 소개</span><strong>서울의 골목과 촬영지를 걷고 있어요&nbsp; ›</strong></button></div></ScreenSection><ScreenSection title="관심 장소"><div className="review-choice-row"><Chip>촬영지</Chip><Chip active>팝업</Chip><Chip>카페</Chip></div></ScreenSection><ScreenSection title="프로필 공개"><div className="profile-visibility-grid"><button type="button" className="selected"><strong>전체 공개</strong><small>후기와 저장 목록을 보여줘요</small></button><button type="button"><strong>비공개</strong><small>내 활동을 나만 볼 수 있어요</small></button></div></ScreenSection><ScreenSection title="계정 연결"><div className="review-choice-row"><Chip>카카오</Chip><Chip active>Apple</Chip><Chip>이메일</Chip></div></ScreenSection><StatusBanner tone="blue" title="닉네임은 30일에 한 번 바꿀 수 있어요" copy="프로필 사진은 최대 5MB까지 등록할 수 있어요." /></main><div className="sticky-actions"><ActionButton onClick={() => go('my')}>변경사항 저장</ActionButton></div></section>;
-  if (screen === 'server-error') return <section className="phone server-error-v3"><MapStage variant="home"><div className="map-top-fade" /><header className="server-map-heading"><p>안국동 · 내 주변</p><h1>오늘, 어디로 걸어볼까요?</h1><button type="button"><span><SearchIcon /></span>장소 · 지역 · 테마 검색</button><div><Chip active>전체</Chip><Chip>요즘</Chip><Chip>팝업</Chip><Chip>촬영지</Chip></div></header><div className="server-error-dim" /><BottomSheet className="server-error-sheet"><button className="server-error-close" type="button" onClick={() => go('map')} aria-label="닫기">×</button><h1>정보를 불러오지 못했어요</h1><p>서버 연결이 원활하지 않아 최신 정보를 표시할 수 없어요.</p><ActionButton tone="secondary" onClick={() => go('my')}>마지막으로 저장된 정보 보기</ActionButton><small>잠시 후 다시 시도하면 정상적으로 연결될 수 있어요.</small><ActionButton onClick={() => go('map')}>위치 권한 허용</ActionButton></BottomSheet></MapStage></section>;
+  if (screen === 'privacy') return <section className="phone standard-screen privacy-v3"><BackHeader title="개인정보·위치 기록" onBack={() => go('my')} /><main className="page-scroll settings-detail-scroll"><header className="settings-page-heading"><p>데이터 관리</p><span>여행 기록</span><h1>내 위치 기록을 관리해요</h1><small>필요한 순간에만 수집하고, 보관 기간을 직접 정할 수 있어요.</small></header><ScreenSection title="위치 기록"><div className="settings-row-list detail-row-list"><button type="button"><span><strong>여행 중 위치 기록</strong><small>코스 진행 중에만 수집</small></span><b className="row-state active">켜짐</b></button><button type="button"><span><strong>사진 좌표 인증</strong><small>방문 인증할 때만 사용</small></span><b className="row-state active">켜짐</b></button></div></ScreenSection><ScreenSection title="보관 기간"><div className="settings-segment"><button type="button">30일</button><button type="button" className="selected">90일</button><button type="button">1년</button></div></ScreenSection><ScreenSection title="공개 설정"><div className="settings-segment"><button type="button" className="selected">나만</button><button type="button">친구</button><button type="button">전체</button></div></ScreenSection><ScreenSection title="기록 다운로드"><div className="settings-row-list detail-row-list"><button type="button"><span><strong>여행 기록 내보내기</strong><small>사진과 이동 기록을 파일로 받아요</small></span><b className="row-chevron">›</b></button><button type="button"><span><strong>전체 위치 기록 삭제</strong><small>삭제하면 되돌릴 수 없어요</small></span><b className="row-danger">삭제</b></button></div></ScreenSection><StatusBanner tone="blue" title="위치 기록은 추천과 도착 감지에만 사용해요" copy="설정 변경은 현재 진행 중인 코스부터 적용돼요." /></main><div className="sticky-actions"><ActionButton onClick={() => go('my')}>변경사항 저장</ActionButton></div></section>;
+  if (screen === 'app-permissions') return <section className="phone standard-screen permissions-v3"><BackHeader title="앱 권한 설정" onBack={() => go('my')} /><main className="page-scroll settings-detail-scroll"><header className="settings-page-heading"><p>권한 관리</p><span>기능별 설정</span><h1>필요한 순간에만 사용해요</h1><small>각 권한은 여행 기능에 맞춰 언제든 바꿀 수 있어요.</small></header><ScreenSection title="현재 권한"><div className="settings-row-list detail-row-list"><button type="button"><span><strong>위치</strong><small>길 안내와 도착 감지</small></span><b className="row-state active">허용됨</b></button><button type="button"><span><strong>카메라</strong><small>촬영지 구도 맞추기</small></span><b className="row-state">허용 안 함</b></button><button type="button"><span><strong>알림</strong><small>혼잡 변화와 도착 안내</small></span><b className="row-state active">허용됨</b></button><button type="button"><span><strong>사진</strong><small>방문 인증 사진 저장</small></span><b className="row-state">선택 안 함</b></button></div></ScreenSection><ScreenSection title="권한 사용 방식"><div className="permission-note-grid"><article><strong>위치</strong><span>코스 시작부터 종료까지</span></article><article><strong>카메라</strong><span>촬영 화면을 열었을 때만</span></article></div></ScreenSection><StatusBanner tone="blue" title="권한이 없어도 장소 탐색은 계속할 수 있어요" copy="권한이 필요한 기능을 누르면 다시 요청할게요." /></main><div className="sticky-actions"><ActionButton onClick={() => go('my')}>시스템 설정 열기</ActionButton></div></section>;
+  if (screen === 'support') return <section className="phone standard-screen support-v3"><BackHeader title="공지·문의" onBack={() => go('my')} /><main className="page-scroll support-scroll"><header className="support-heading"><span>?</span><p>고객센터</p><h1>무엇을 도와드릴까요?</h1><small>공지와 자주 묻는 질문을 빠르게 확인할 수 있어요.</small></header><div className="support-stats"><button type="button"><strong>2</strong><span>공지</span></button><button type="button"><strong>24</strong><span>FAQ</span></button><button type="button"><strong>1:1</strong><span>문의</span></button></div><ScreenSection title="최근 공지" action="전체보기"><button type="button" className="support-notice-card"><span><b>서비스 안내</b><small>2026.08.08</small></span><strong>촬영지 이미지 제공 정책 안내</strong><p>장면 이미지와 현장 정보의 출처를 더 투명하게 표시해요.</p><i>›</i></button></ScreenSection><ScreenSection title="빠른 도움"><div className="support-help-list"><button type="button"><span><strong>코스가 멈췄어요</strong><small>이동 중 문제가 생겼을 때</small></span><i>›</i></button><button type="button"><span><strong>장소 정보가 달라요</strong><small>운영시간과 위치를 알려주세요</small></span><i>›</i></button><button type="button"><span><strong>내 기록을 찾고 싶어요</strong><small>저장한 코스와 사진 확인</small></span><i>›</i></button></div></ScreenSection><p className="support-footnote">평일 10:00-18:00에 순서대로 답변드려요.</p></main><div className="sticky-actions"><ActionButton onClick={() => go('my')}>1:1 문의하기</ActionButton></div></section>;
+  if (screen === 'server-error') return <section className="phone server-error-v3"><MapStage variant="home"><div className="map-top-fade" /><header className="server-map-heading"><p>안국동 · 내 주변</p><h1>오늘, 어디로 걸어볼까요?</h1><button type="button"><span><SearchIcon /></span>장소 · 지역 · 테마 검색</button><div><Chip active>전체</Chip><Chip>요즘</Chip><Chip>팝업</Chip><Chip>촬영지</Chip></div></header><div className="server-error-dim" /><BottomSheet className="server-error-sheet"><button className="server-error-close" type="button" onClick={() => go('map')} aria-label="닫기">×</button><h1>정보를 불러오지 못했어요</h1><p>서버 연결이 원활하지 않아 최신 정보를 표시할 수 없어요.</p><ActionButton tone="secondary" onClick={() => go('my')}>마지막으로 저장된 정보 보기</ActionButton><small>잠시 후 다시 시도하면 정상적으로 연결될 수 있어요.</small><ActionButton onClick={() => go('map')}>다시 시도</ActionButton></BottomSheet></MapStage></section>;
   if (screen !== 'my') {
     const [title, heading, copy, action, next] = settingsState[screen];
     const isLoading = screen === 'loading';
@@ -411,6 +438,7 @@ function RenderScreen({ screen, go }) {
 
 export default function ProductFlow() {
   const [screen, setScreen] = useState(readHash);
+  const reduceMotion = useReducedMotion();
 
   useEffect(() => {
     const handleHashChange = () => setScreen(readHash());
@@ -424,5 +452,9 @@ export default function ProductFlow() {
     setScreen(next);
   };
 
-  return <main className="app-shell"><RenderScreen screen={screen} go={go} /></main>;
+  const pageMotion = reduceMotion
+    ? { initial: false, animate: { opacity: 1 }, transition: { duration: 0 } }
+    : { initial: { opacity: 0, y: 8, filter: 'blur(3px)' }, animate: { opacity: 1, y: 0, filter: 'blur(0px)' }, transition: { duration: 0.24, ease: [0.23, 1, 0.32, 1] } };
+
+  return <main className="app-shell"><motion.div className="screen-transition" data-screen={screen} key={screen} {...pageMotion}><RenderScreen screen={screen} go={go} /></motion.div></main>;
 }
