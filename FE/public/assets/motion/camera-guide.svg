@@ -1,0 +1,7 @@
+<svg preserveAspectRatio="none" overflow="visible" style="display: block;" width="188" height="136" viewBox="0 0 188 136" fill="none" xmlns="http://www.w3.org/2000/svg">
+<g id="Camera Guide">
+<path id="Vector" d="M40 8H8V40M148 8H180V40M40 128H8V96M148 128H180V96" stroke="#2563EB" stroke-width="7" stroke-linecap="round"/>
+<path id="Vector_2" opacity="0.9" d="M94 42V94M68 68H120" stroke="white" stroke-width="4"/>
+<path id="Vector_3" d="M94 86C103.941 86 112 77.9411 112 68C112 58.0589 103.941 50 94 50C84.0589 50 76 58.0589 76 68C76 77.9411 84.0589 86 94 86Z" stroke="#FFD84D" stroke-width="4"/>
+</g>
+</svg>

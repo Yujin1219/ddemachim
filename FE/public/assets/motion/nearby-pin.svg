@@ -1,0 +1,12 @@
+<svg preserveAspectRatio="none" overflow="visible" style="display: block;" width="96" height="112" viewBox="0 0 96 112" fill="none" xmlns="http://www.w3.org/2000/svg">
+<g id="Nearby Pin">
+<path id="Vector" d="M48 8C27 8 12 24 12 45C12 72 48 104 48 104C48 104 84 72 84 45C84 24 69 8 48 8Z" fill="url(#paint0_linear_0_26)"/>
+<path id="Vector_2" d="M48 57C55.1797 57 61 51.1797 61 44C61 36.8203 55.1797 31 48 31C40.8203 31 35 36.8203 35 44C35 51.1797 40.8203 57 48 57Z" fill="white"/>
+</g>
+<defs>
+<linearGradient id="paint0_linear_0_26" x1="1020" y1="1160" x2="7763.18" y2="7704.85" gradientUnits="userSpaceOnUse">
+<stop stop-color="#60A5FA"/>
+<stop offset="1" stop-color="#2563EB"/>
+</linearGradient>
+</defs>
+</svg>
