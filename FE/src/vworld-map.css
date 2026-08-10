@@ -28,9 +28,5 @@
   text-align: center;
 }
 
-.vworld-user-location-marker { width: 42px; height: 42px; display: grid; place-items: center; border: 1px solid rgb(255 255 255 / 82%); border-radius: 14px; background: rgb(255 255 255 / 72%); box-shadow: 0 8px 22px rgb(24 40 61 / 18%); backdrop-filter: blur(12px) saturate(135%); -webkit-backdrop-filter: blur(12px) saturate(135%); pointer-events: none; }
-.vworld-user-location-target { position: relative; width: 17px; height: 17px; display: block; border: 2px solid #1758bd; border-radius: 50%; }
-.vworld-user-location-target::before, .vworld-user-location-target::after { position: absolute; content: ''; background: #1758bd; }
-.vworld-user-location-target::before { top: -5px; bottom: -5px; left: 6px; width: 2px; }
-.vworld-user-location-target::after { top: 6px; right: -5px; left: -5px; height: 2px; }
-.vworld-user-location-target i { position: absolute; z-index: 1; inset: 4px; border: 2px solid #fff; border-radius: 50%; background: #1758bd; }
+.vworld-user-location-marker { width: 26px; height: 26px; display: grid; place-items: center; border: 3px solid #fff; border-radius: 50%; background: #5b9cf5; box-shadow: 0 3px 10px rgb(24 40 61 / 24%); pointer-events: none; }
+.vworld-user-location-dot { width: 7px; height: 7px; display: block; border-radius: 50%; background: #fff; }

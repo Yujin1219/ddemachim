@@ -112,7 +112,7 @@ export default function VWorldMap({
     const marker = document.createElement('div')
     marker.className = 'vworld-user-location-marker'
     marker.setAttribute('aria-label', '현재 위치')
-    marker.innerHTML = '<span class="vworld-user-location-target"><i></i></span>'
+    marker.innerHTML = '<span class="vworld-user-location-dot"></span>'
 
     const overlay = new Overlay({
       element: marker,
