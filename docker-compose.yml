@@ -1,0 +1,16 @@
+services:
+  db:
+    image: postgis/postgis:18-3.6
+    container_name: ddemachim-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: "0000"
+      POSTGRES_DB: ddemachim
+    ports:
+      - "5432:5432"
+    volumes:
+      - ddemachim-db-data:/var/lib/postgresql
+
+volumes:
+  ddemachim-db-data:
