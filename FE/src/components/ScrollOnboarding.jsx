@@ -10,6 +10,7 @@ import {
   useTransform,
 } from 'motion/react';
 import { ArrivalMotion, MapPlacePulse, RouteMotion } from './MotionAssets';
+import VWorldMap from './VWorldMap';
 
 const enterTransition = {
   duration: 0.58,
@@ -124,7 +125,13 @@ export default function ScrollOnboarding({ go }) {
             viewport={{ once: true, amount: 0.36 }}
             transition={{ ...enterTransition, delay: 0.08 }}
           >
-            <img src="/assets/figma/map-background.png" alt="안국동 주변 지도" />
+            <VWorldMap
+              center={[126.985, 37.579]}
+              zoom={15}
+              interactive={false}
+              ariaLabel="안국동 주변 지도"
+              style={{ position: 'absolute', inset: 0, width: '100%', height: '100%' }}
+            />
             <span className="story-map-label">안국동 · 내 주변</span>
             <span className="story-pulse story-pulse-one" />
             <span className="story-pulse story-pulse-two" />
@@ -147,7 +154,13 @@ export default function ScrollOnboarding({ go }) {
             viewport={{ once: true, amount: 0.34 }}
             transition={{ ...enterTransition, delay: 0.08 }}
           >
-            <img src="/assets/figma/navigation-map.png" alt="안국동에서 성수까지 이동 경로 지도" />
+            <VWorldMap
+              center={[127.02, 37.56]}
+              zoom={13}
+              interactive={false}
+              ariaLabel="안국동에서 성수까지 이동 경로 지도"
+              style={{ position: 'absolute', inset: 0, width: '100%', height: '100%' }}
+            />
             <RouteMotion />
             <i className={`story-route-traveller ${reduceMotion ? 'is-static' : ''}`} aria-hidden="true" />
             <div className="story-route-summary"><span>추천 동선</span><strong>4곳 · 5시간 10분</strong><small>이동 52분 · 걷기 2.4km</small></div>
