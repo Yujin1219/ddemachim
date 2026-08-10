@@ -1,8 +1,15 @@
 import { useEffect, useState } from 'react';
-import { motion, useReducedMotion } from 'motion/react';
+import { motion, useDragControls, useReducedMotion } from 'motion/react';
 import { ChevronLeft, ChevronRight, CircleHelp, Clock3, Heart, Image as ImageIcon, LocateFixed, MapPin, MoreHorizontal, Search, SearchX, SendHorizontal, X } from 'lucide-react';
 import BottomNav from '../components/BottomNav';
 import VWorldMap from '../components/VWorldMap';
+import {
+  fetchEvents,
+  fetchMediaContents,
+  fetchMediaFilmingLocations,
+  fetchPlace,
+  fetchPlaces,
+} from '../api/client';
 import {
   ArrivalMotion,
   BrandLoading,
@@ -48,8 +55,40 @@ const locationRows = [
 ];
 
 function readHash() {
-  const candidate = window.location.hash.replace(/^#\/?/, '');
-  return routes.has(candidate) ? candidate : 'map';
+  const [candidate, hashId] = window.location.hash.replace(/^#\/?/, '').split('/');
+  return { screen: routes.has(candidate) ? candidate : 'map', id: hashId || null };
+}
+
+/** place/media 응답을 카드·행 컴포넌트가 쓰는 { name, meta, image, badge } 모양으로 바꾼다. */
+function placeToCardProps(place) {
+  return {
+    id: place.id,
+    name: place.name,
+    meta: [place.categoryLabel, place.roadAddress].filter(Boolean).join(' · '),
+    image: place.thumbnailUrl || images.cafe,
+    badge: place.categoryLabel,
+  };
+}
+
+function filmingLocationToCardProps(filmingLocation) {
+  const workTitle = filmingLocation.mediaContent?.title;
+  return {
+    id: filmingLocation.placeId,
+    name: filmingLocation.placeName,
+    meta: workTitle ? `${workTitle} 촬영지` : '촬영지',
+    image: images.popup,
+    badge: workTitle || '촬영지',
+  };
+}
+
+function eventToRowProps(event) {
+  return {
+    id: event.id,
+    placeId: event.placeId,
+    name: event.title,
+    meta: [event.venueName, event.startDate].filter(Boolean).join(' · '),
+    image: event.mainImage || images.scene,
+  };
 }
 
 function ActionButton({ children, onClick, tone = 'primary', disabled = false, className = '' }) {
@@ -135,9 +174,9 @@ function ScreenSection({ title, subtitle, action, onAction, children }) {
   </section>;
 }
 
-function MapStage({ children, variant = 'home' }) {
+function MapStage({ children, variant = 'home', mapProps = {} }) {
   const mapLabel = variant === 'navigation' ? '경로 안내 지도' : variant === 'complete' ? '완료한 코스 지도' : '서울과 주변 지도';
-  return <div className={`map-stage ${variant}`}><VWorldMap ariaLabel={mapLabel} style={{ position: 'absolute', inset: 0, width: '100%', height: '100%' }} />{children}</div>;
+  return <div className={`map-stage ${variant}`}><VWorldMap ariaLabel={mapLabel} style={{ position: 'absolute', inset: 0, width: '100%', height: '100%' }} {...mapProps} />{children}</div>;
 }
 
 function BottomSheet({ children, className = '', animated = false }) {
@@ -178,14 +217,59 @@ function AuthScreen({ screen, go }) {
 function MapHome({ go }) {
   const [filter, setFilter] = useState('전체');
   const [isLocated, setIsLocated] = useState(false);
+  const [isNearbySheetCollapsed, setIsNearbySheetCollapsed] = useState(false);
+  const [nearbyPlace, setNearbyPlace] = useState(null);
+  const nearbySheetDragControls = useDragControls();
+
+  useEffect(() => {
+    let cancelled = false;
+    fetchPlaces({ district: '종로구', size: 1 })
+      .then((page) => {
+        const first = page.content?.[0];
+        if (!cancelled && first) setNearbyPlace(placeToCardProps(first));
+      })
+      .catch((error) => console.error('주변 장소를 불러오지 못했어요', error));
+    return () => { cancelled = true; };
+  }, []);
+
+  useEffect(() => {
+    if (!isLocated) return undefined;
+    if (!navigator.geolocation) {
+      setIsLocated(false);
+      return undefined;
+    }
+
+    const watchId = navigator.geolocation.watchPosition(
+      ({ coords }) => {
+        const nextLocation = [coords.longitude, coords.latitude];
+        window.dispatchEvent(new CustomEvent('vworld:user-location', { detail: nextLocation }));
+      },
+      () => {
+        setIsLocated(false);
+      },
+      { enableHighAccuracy: true, timeout: 10000, maximumAge: 5000 },
+    );
+
+    return () => {
+      navigator.geolocation.clearWatch(watchId);
+      window.dispatchEvent(new CustomEvent('vworld:user-location', { detail: null }));
+    };
+  }, [isLocated]);
   const nearbyByFilter = {
-    전체: { title: '지금 가기 좋은 곳', place: { name: '도토리가든', meta: '도보 8분 · 저장 1.2천', image: images.mapPlace, badge: 'D-3 팝업' }, next: 'place' },
-    요즘: { title: '요즘 반응이 좋은 곳', place: { name: '런던베이글뮤지엄', meta: '도보 12분 · 오전이 가장 여유로워요', image: images.cafe, badge: '요즘 인기' }, next: 'place' },
-    팝업: { title: '이번 주 팝업', place: { name: '블루 모먼트 전시 팝업', meta: '도보 14분 · 8월 31일까지', image: images.scene, badge: '이번 주' }, next: 'place' },
-    촬영지: { title: '장면 속 가까운 곳', place: { name: '창덕궁 후원', meta: '도보 10분 · 도깨비 촬영지', image: images.popup, badge: '촬영지' }, next: 'filming-content' },
+    전체: { title: '지금 가기 좋은 곳', place: nearbyPlace || { name: '주변 장소를 불러오는 중', meta: '', image: images.mapPlace, badge: '종로구' }, next: 'place' },
+    요즘: { title: '요즘 반응이 좋은 곳', place: { name: '런던베이글뮤지엄', meta: '오전이 가장 여유로워요', image: images.cafe, badge: '요즘 인기' }, next: 'place' },
+    팝업: { title: '이번 주 팝업', place: { name: '블루 모먼트 전시 팝업', meta: '8월 31일까지', image: images.scene, badge: '이번 주' }, next: 'place' },
+    촬영지: { title: '장면 속 가까운 곳', place: { name: '창덕궁 후원', meta: '도깨비 촬영지', image: images.popup, badge: '촬영지' }, next: 'filming-content' },
   };
   const nearby = nearbyByFilter[filter];
-  return <section className="phone map-home-screen"><MapStage><div className="map-top-fade" /><motion.header className="map-home-header" initial={{ opacity: 0, transform: 'perspective(1100px) translateY(-16px) rotateX(-4deg) translateZ(-18px)' }} animate={{ opacity: 1, transform: 'perspective(1100px) translateY(0px) rotateX(0deg) translateZ(0px)' }} transition={{ duration: 0.28, ease: [0.23, 1, 0.32, 1] }}><p>안국동 · 내 주변</p><h1>오늘, 어디로 걸어볼까요?</h1><button className="map-search-trigger" onClick={() => go('search')} type="button"><span><SearchIcon /></span>장소·지역·테마 검색</button><div className="chip-row">{['전체', '요즘', '팝업', '촬영지'].map((item) => <Chip active={filter === item} key={item} onClick={() => setFilter(item)}>{item}</Chip>)}</div></motion.header><MapPlacePulse /><button className={`map-location-button ${isLocated ? 'is-located' : ''}`} type="button" aria-label="내 위치" aria-pressed={isLocated} onClick={() => setIsLocated((current) => !current)}><LocateFixed aria-hidden="true" size={20} strokeWidth={2.2} /></button>{isLocated && <p className="map-location-status" role="status">현재 위치를 기준으로 보고 있어요</p>}<BottomSheet className="map-nearby-sheet" animated><ScreenSection title={nearby.title} action="전체보기" onAction={() => go('explore')}><PlaceRow place={nearby.place} onClick={() => go(nearby.next)} /></ScreenSection><button type="button" className="map-live-link" onClick={() => go('live-talk')}><span>내 주변 지금톡</span><small>현장 소식 6개&nbsp; ›</small></button></BottomSheet></MapStage><BottomNav active="map" onNavigate={(tab) => go(rootRoutes[tab])} /></section>;
+  const settleNearbySheet = (_, info) => {
+    const swipedDown = info.offset.y > 54 || info.velocity.y > 420;
+    const swipedUp = info.offset.y < -54 || info.velocity.y < -420;
+    if (swipedDown) setIsNearbySheetCollapsed(true);
+    if (swipedUp) setIsNearbySheetCollapsed(false);
+  };
+
+  return <section className="phone map-home-screen"><MapStage><div className="map-top-fade" /><motion.header className="map-home-header" initial={{ opacity: 0, transform: 'perspective(1100px) translateY(-16px) rotateX(-4deg) translateZ(-18px)' }} animate={{ opacity: 1, transform: 'perspective(1100px) translateY(0px) rotateX(0deg) translateZ(0px)' }} transition={{ duration: 0.28, ease: [0.23, 1, 0.32, 1] }}><p>안국동 · 내 주변</p><h1>오늘, 어디로 걸어볼까요?</h1><button className="map-search-trigger" onClick={() => go('search')} type="button"><span><SearchIcon /></span>장소·지역·테마 검색</button><div className="chip-row">{['전체', '요즘', '팝업', '촬영지'].map((item) => <Chip active={filter === item} key={item} onClick={() => setFilter(item)}>{item}</Chip>)}</div></motion.header><MapPlacePulse /><button className={`map-location-button ${isLocated ? 'is-located' : ''}`} type="button" aria-label="내 위치" aria-pressed={isLocated} onClick={() => setIsLocated((current) => !current)}><LocateFixed aria-hidden="true" size={20} strokeWidth={2.2} /></button>{isLocated && <p className="map-location-status" role="status">현재 위치를 기준으로 보고 있어요</p>}<motion.section className="bottom-sheet map-nearby-sheet motion-depth-sheet" data-collapsed={isNearbySheetCollapsed || undefined} initial={{ opacity: 0, y: 42 }} animate={{ opacity: 1, y: isNearbySheetCollapsed ? 176 : 0 }} transition={{ opacity: { duration: 0.28, delay: 0.08 }, y: { type: 'spring', stiffness: 420, damping: 38 } }} drag="y" dragControls={nearbySheetDragControls} dragListener={false} dragConstraints={{ top: 0, bottom: 176 }} dragElastic={0.06} dragMomentum={false} onDragEnd={settleNearbySheet}><button className="map-sheet-handle-button" type="button" aria-label={isNearbySheetCollapsed ? '주변 장소 패널 펼치기' : '주변 장소 패널 접기'} aria-expanded={!isNearbySheetCollapsed} onPointerDown={(event) => nearbySheetDragControls.start(event)} onClick={() => setIsNearbySheetCollapsed((current) => !current)}><span className="sheet-handle" /></button><ScreenSection title={nearby.title} action="전체보기" onAction={() => go('explore')}><PlaceRow place={nearby.place} onClick={() => go(nearby.next, nearby.place.id)} /></ScreenSection><button type="button" className="map-live-link" onClick={() => go('live-talk')}><span>내 주변 지금톡</span><small>현장 소식 6개&nbsp; ›</small></button></motion.section></MapStage><BottomNav active="map" onNavigate={(tab) => go(rootRoutes[tab])} /></section>;
 }
 
 function ExploreReveal({ children, delay = 0 }) {
@@ -203,29 +287,150 @@ function ExploreReveal({ children, delay = 0 }) {
 
 function ExploreScreen({ go }) {
   const [query, setQuery] = useState('');
+  const [trendingPlaces, setTrendingPlaces] = useState([]);
+  const [filmingPlaces, setFilmingPlaces] = useState([]);
+  const [popupEvents, setPopupEvents] = useState([]);
+  const [loadError, setLoadError] = useState(false);
+
+  useEffect(() => {
+    let cancelled = false;
+    async function load() {
+      try {
+        const [placesPage, eventsPage, mediaPage] = await Promise.all([
+          fetchPlaces({ district: '종로구', size: 4 }),
+          fetchEvents({ size: 2 }),
+          fetchMediaContents({ size: 1 }),
+        ]);
+        if (cancelled) return;
+        setTrendingPlaces((placesPage.content ?? []).map(placeToCardProps));
+        setPopupEvents((eventsPage.content ?? []).map(eventToRowProps));
+
+        const firstMedia = mediaPage.content?.[0];
+        if (firstMedia) {
+          const locations = await fetchMediaFilmingLocations(firstMedia.id);
+          if (!cancelled) setFilmingPlaces(locations.slice(0, 2).map(filmingLocationToCardProps));
+        }
+      } catch (error) {
+        console.error('탐색 데이터를 불러오지 못했어요', error);
+        if (!cancelled) setLoadError(true);
+      }
+    }
+    load();
+    return () => { cancelled = true; };
+  }, []);
+
   const normalized = query.trim().toLowerCase();
-  const allPlaces = locationRows.filter((place) => `${place.name} ${place.meta}`.toLowerCase().includes(normalized));
-  return <section className="phone standard-screen tab-screen"><main className="page-scroll explore-scroll"><motion.header className="tab-heading" initial={{ opacity: 0, transform: 'perspective(1000px) translateY(-12px) rotateX(-3deg) translateZ(-14px)' }} animate={{ opacity: 1, transform: 'perspective(1000px) translateY(0px) rotateX(0deg) translateZ(0px)' }} transition={{ duration: 0.28, ease: [0.23, 1, 0.32, 1] }}><h1>탐색</h1><SearchField value={query} onChange={setQuery} onSubmit={() => go(normalized ? (allPlaces.length ? 'search' : 'search-empty') : 'search')} placeholder="장소, 메뉴, 촬영지를 검색해보세요" /></motion.header>{normalized && !allPlaces.length ? <EmptySearch query={query} onClear={() => setQuery('')} /> : <><ExploreReveal delay={0.06}><ScreenSection title="요즘 이곳에서는" subtitle="최근 메뉴·사진·공간이 주목받는 장소" action="전체보기" onAction={() => go('trending')}><div className="horizontal-cards"><PlaceCard place={locationRows[0]} index={0} onClick={() => go('place')} /><PlaceCard place={{ ...locationRows[0], name: '아베베 베이커리', meta: '막 구운 도넛 · 줄 서는 오전' }} index={1} onClick={() => go('place')} /></div></ScreenSection></ExploreReveal><ExploreReveal delay={0.12}><ScreenSection title="장면 속으로" subtitle="드라마와 영화 속 서울의 장소" action="전체보기" onAction={() => go('filming-locations')}><div className="horizontal-cards"><PlaceCard place={locationRows[1]} index={2} onClick={() => go('filming-content')} /><PlaceCard place={{ ...locationRows[1], name: '덕수궁 돌담길', meta: '드라마 도깨비 촬영지' }} index={3} onClick={() => go('filming-content')} /></div></ScreenSection></ExploreReveal><ExploreReveal delay={0.18}><ScreenSection title="이번 주 팝업" action="더보기" onAction={() => go('popups')}><div className="popup-list"><PlaceRow place={{ name: '블루 모먼트 전시 팝업', meta: '성수 · 8월 31일까지', image: images.scene }} onClick={() => go('place')} /><PlaceRow place={{ name: '아무개 서점 여름 마켓', meta: '서촌 · 이번 주말', image: images.cafe }} onClick={() => go('place')} /></div></ScreenSection></ExploreReveal></>}</main><BottomNav active="explore" onNavigate={(tab) => go(rootRoutes[tab])} /></section>;
+  const allPlaces = trendingPlaces.filter((place) => `${place.name} ${place.meta}`.toLowerCase().includes(normalized));
+  return <section className="phone standard-screen tab-screen"><main className="page-scroll explore-scroll"><motion.header className="tab-heading" initial={{ opacity: 0, transform: 'perspective(1000px) translateY(-12px) rotateX(-3deg) translateZ(-14px)' }} animate={{ opacity: 1, transform: 'perspective(1000px) translateY(0px) rotateX(0deg) translateZ(0px)' }} transition={{ duration: 0.28, ease: [0.23, 1, 0.32, 1] }}><h1>탐색</h1><SearchField value={query} onChange={setQuery} onSubmit={() => go(normalized ? 'search' : 'search')} placeholder="장소, 메뉴, 촬영지를 검색해보세요" /></motion.header>{loadError ? <p className="search-empty">데이터를 불러오지 못했어요. 잠시 후 다시 시도해주세요.</p> : normalized && !allPlaces.length ? <EmptySearch query={query} onClear={() => setQuery('')} /> : <><ExploreReveal delay={0.06}><ScreenSection title="요즘 이곳에서는" subtitle="종로구의 장소들" action="전체보기" onAction={() => go('trending')}><div className="horizontal-cards">{trendingPlaces.map((place, index) => <PlaceCard place={place} index={index} key={place.id} onClick={() => go('place', place.id)} />)}</div></ScreenSection></ExploreReveal><ExploreReveal delay={0.12}><ScreenSection title="장면 속으로" subtitle="드라마와 영화 속 서울의 장소" action="전체보기" onAction={() => go('filming-locations')}><div className="horizontal-cards">{filmingPlaces.map((place, index) => <PlaceCard place={place} index={index + 2} key={`${place.id}-${index}`} onClick={() => go('place', place.id)} />)}</div></ScreenSection></ExploreReveal><ExploreReveal delay={0.18}><ScreenSection title="이번 주 행사" action="더보기" onAction={() => go('popups')}><div className="popup-list">{popupEvents.map((event) => <PlaceRow key={event.id} place={event} onClick={() => event.placeId && go('place', event.placeId)} />)}</div></ScreenSection></ExploreReveal></>}</main><BottomNav active="explore" onNavigate={(tab) => go(rootRoutes[tab])} /></section>;
 }
 
 function EmptySearch({ query, onClear }) {
   return <section className="empty-search"><div className="empty-search-icon"><SearchX aria-hidden="true" size={28} strokeWidth={1.8} /></div><h2>검색 결과가 없어요</h2><p>{query ? `'${query}'` : '입력한'}와 일치하는 장소를 찾지 못했어요.</p><button type="button" onClick={onClear}>검색어 지우기</button></section>;
 }
 
-function PlaceDetail({ go }) {
-  return <section className="phone standard-screen place-detail-screen"><main className="page-scroll"><div className="detail-hero"><img src={images.detail} alt="도토리가든 외관" /><div className="detail-controls"><IconButton label="이전" onClick={() => go('explore')}>‹</IconButton><IconButton label="저장" onClick={() => go('saved')}>♡</IconButton></div></div><div className="detail-content detail-content-v3"><p className="eyebrow">안국 · 카페</p><h1>도토리가든</h1><p className="detail-meta">매일 10:00-21:00</p><div className="chip-row"><Chip active>지금 여유</Chip><Chip>도보 8분</Chip></div><ScreenSection title="지금 가야 하는 이유"><div className="why-card place-why-card"><span>최근 후기 기반 · 오늘 업데이트</span><strong>최근 3일간 소금빵과 정원 사진을<br />저장한 사람이 빠르게 늘고 있어요.</strong><p>오후 2-4시는 사진 후기가 특히 많아요</p></div></ScreenSection><ScreenSection title="지금 현장에서는" action="12분 전"><div className="place-live-grid"><article><span>대기</span><b>약 10분</b></article><article><span>메뉴</span><b>소금빵 재고 있음</b></article></div></ScreenSection></div></main><div className="sticky-actions split place-actions"><ActionButton onClick={() => go('course-conditions')}>코스에 추가</ActionButton><ActionButton tone="secondary" onClick={() => go('write-review')}>후기 남기기</ActionButton></div></section>;
+const WEEKDAY_LABEL = ['월', '화', '수', '목', '금', '토', '일'];
+
+function formatOperatingHours(hours) {
+  if (!hours || hours.length === 0) return null;
+  return hours
+    .slice()
+    .sort((a, b) => a.dayOfWeek - b.dayOfWeek)
+    .map((h) => `${WEEKDAY_LABEL[h.dayOfWeek]} ${h.closed ? '휴무' : `${h.openTime ?? '?'}-${h.closeTime ?? '?'}`}`)
+    .join(' · ');
+}
+
+function PlaceDetail({ go, placeId }) {
+  const [place, setPlace] = useState(null);
+  const [status, setStatus] = useState(placeId ? 'loading' : 'mock');
+
+  useEffect(() => {
+    if (!placeId) {
+      setStatus('mock');
+      return undefined;
+    }
+    let cancelled = false;
+    setStatus('loading');
+    fetchPlace(placeId)
+      .then((data) => {
+        if (!cancelled) {
+          setPlace(data);
+          setStatus('ready');
+        }
+      })
+      .catch((error) => {
+        console.error('장소 상세를 불러오지 못했어요', error);
+        if (!cancelled) setStatus('error');
+      });
+    return () => { cancelled = true; };
+  }, [placeId]);
+
+  if (status === 'mock') {
+    return <section className="phone standard-screen place-detail-screen"><main className="page-scroll"><div className="detail-hero"><img src={images.detail} alt="도토리가든 외관" /><div className="detail-controls"><IconButton label="이전" onClick={() => go('explore')}>‹</IconButton><IconButton label="저장" onClick={() => go('saved')}>♡</IconButton></div></div><div className="detail-content detail-content-v3"><p className="eyebrow">안국 · 카페</p><h1>도토리가든</h1><p className="detail-meta">매일 10:00-21:00</p><div className="chip-row"><Chip active>지금 여유</Chip><Chip>도보 8분</Chip></div><ScreenSection title="지금 가야 하는 이유"><div className="why-card place-why-card"><span>최근 후기 기반 · 오늘 업데이트</span><strong>최근 3일간 소금빵과 정원 사진을<br />저장한 사람이 빠르게 늘고 있어요.</strong><p>오후 2-4시는 사진 후기가 특히 많아요</p></div></ScreenSection><ScreenSection title="지금 현장에서는" action="12분 전"><div className="place-live-grid"><article><span>대기</span><b>약 10분</b></article><article><span>메뉴</span><b>소금빵 재고 있음</b></article></div></ScreenSection></div></main><div className="sticky-actions split place-actions"><ActionButton onClick={() => go('course-conditions')}>코스에 추가</ActionButton><ActionButton tone="secondary" onClick={() => go('write-review')}>후기 남기기</ActionButton></div></section>;
+  }
+
+  if (status === 'loading') {
+    return <section className="phone standard-screen place-detail-screen"><main className="page-scroll centered-state"><BrandLoading /><h1>장소 정보를 불러오고 있어요</h1></main></section>;
+  }
+
+  if (status === 'error' || !place) {
+    return <section className="phone standard-screen place-detail-screen"><BackHeader title="장소" onBack={() => go('explore')} /><main className="page-scroll centered-state"><h1>정보를 불러오지 못했어요</h1><p>잠시 후 다시 시도해주세요.</p></main></section>;
+  }
+
+  const heroImage = place.images?.[0]?.sourceUrl || images.detail;
+  const hoursLabel = formatOperatingHours(place.operatingHours) || place.operatingHoursRaw || '운영시간 정보 없음';
+
+  return <section className="phone standard-screen place-detail-screen"><main className="page-scroll"><div className="detail-hero"><img src={heroImage} alt={`${place.name} 외관`} /><div className="detail-controls"><IconButton label="이전" onClick={() => go('explore')}>‹</IconButton><IconButton label="저장" onClick={() => go('saved')}>♡</IconButton></div></div><div className="detail-content detail-content-v3"><p className="eyebrow">{[place.district, place.categoryLabel].filter(Boolean).join(' · ')}</p><h1>{place.name}</h1><p className="detail-meta">{hoursLabel}</p><div className="chip-row">{place.phone && <Chip active>{place.phone}</Chip>}<Chip>{place.roadAddress || place.lotAddress || '주소 정보 없음'}</Chip></div>{place.description && <ScreenSection title="장소 소개"><div className="why-card place-why-card"><p>{place.description}</p></div></ScreenSection>}{place.images?.length > 0 && <ScreenSection title="사진"><div className="horizontal-cards">{place.images.map((img) => <div className="place-card-image" key={img.id} style={{ width: 120, height: 120, flex: '0 0 auto' }}><img src={img.sourceUrl} alt="" /></div>)}</div></ScreenSection>}</div></main><div className="sticky-actions split place-actions"><ActionButton onClick={() => go('course-conditions')}>코스에 추가</ActionButton><ActionButton tone="secondary" onClick={() => go('write-review')}>후기 남기기</ActionButton></div></section>;
+}
+
+function mediaContentToRowProps(media) {
+  return {
+    id: media.id,
+    name: media.title,
+    meta: [media.mediaType === 'movie' ? '영화' : '드라마', media.releaseDate].filter(Boolean).join(' · '),
+    image: images.onsite,
+  };
 }
 
 function SearchResults({ screen, go }) {
-  const [query, setQuery] = useState(screen === 'search-empty' ? '없는 장소' : '운현궁');
+  const [query, setQuery] = useState(screen === 'search-empty' ? '없는 장소' : '');
   const [activeTab, setActiveTab] = useState('장소');
-  const resultSets = {
-    장소: [locationRows[2], locationRows[1], locationRows[0]],
-    코스: [{ name: '안국동 궁궐 산책', meta: '3곳 · 2시간 10분 · 도보 중심', image: images.myMap, badge: '추천 코스' }, { name: '드라마 속 종로', meta: '4곳 · 3시간 30분 · 촬영지', image: images.popup, badge: '촬영지 코스' }],
-    콘텐츠: [{ name: '운현궁 · 눈물의 여왕', meta: 'EP.03 · 구도 가이드 제공', image: images.onsite, badge: '촬영지 콘텐츠' }, { name: '창덕궁 후원 · 도깨비', meta: '연못가 장면 · 도보 10분', image: images.popup, badge: '촬영지 콘텐츠' }],
+  const [placeResults, setPlaceResults] = useState([]);
+  const [mediaResults, setMediaResults] = useState([]);
+  const [searched, setSearched] = useState(false);
+  const courseResults = [{ name: '안국동 궁궐 산책', meta: '3곳 · 2시간 10분 · 도보 중심', image: images.myMap, badge: '추천 코스' }, { name: '드라마 속 종로', meta: '4곳 · 3시간 30분 · 촬영지', image: images.popup, badge: '촬영지 코스' }];
+  const resultSets = { 장소: placeResults, 코스: courseResults, 콘텐츠: mediaResults };
+
+  const runSearch = async (keyword) => {
+    setSearched(true);
+    try {
+      const [placesPage, mediaPage] = await Promise.all([
+        fetchPlaces({ keyword, size: 20 }),
+        fetchMediaContents({ size: 20 }),
+      ]);
+      setPlaceResults((placesPage.content ?? []).map(placeToCardProps));
+      const normalizedKeyword = keyword.trim().toLowerCase();
+      setMediaResults(
+        (mediaPage.content ?? [])
+          .filter((media) => !normalizedKeyword || media.title.toLowerCase().includes(normalizedKeyword))
+          .map(mediaContentToRowProps),
+      );
+    } catch (error) {
+      console.error('검색에 실패했어요', error);
+      setPlaceResults([]);
+      setMediaResults([]);
+    }
   };
-  if (screen === 'search-empty') return <section className="phone standard-screen search-screen"><BackHeader title="검색" onBack={() => go('explore')} /><main className="page-scroll"><div className="search-page-field"><SearchField value={query} onChange={setQuery} onSubmit={() => go('search')} placeholder="장소·지역·테마 검색" autoFocus /></div><EmptySearch query={query} onClear={() => setQuery('')} /></main></section>;
-  return <section className="phone standard-screen search-screen"><BackHeader title="검색" onBack={() => go('explore')} /><main className="page-scroll"><div className="search-page-field"><SearchField value={query} onChange={setQuery} onSubmit={() => go(query ? 'search' : 'search-empty')} placeholder="장소·지역·테마 검색" autoFocus /></div><div className="search-result-copy"><strong>'{query}' 검색 결과</strong><span>안국동 주변에서 찾았어요</span></div><div className="result-tabs">{[['장소', '12'], ['코스', '3'], ['콘텐츠', '5']].map(([name, count]) => <Chip active={activeTab === name} key={name} onClick={() => setActiveTab(name)}>{name} {count}</Chip>)}</div><div className="search-result-list">{resultSets[activeTab].map((place) => <PlaceRow key={place.name} place={place} onClick={() => go(activeTab === '콘텐츠' || place.name === '창덕궁 후원' ? 'filming-content' : activeTab === '코스' ? 'route-map' : 'place')} />)}</div></main></section>;
+
+  const submit = () => {
+    if (!query.trim()) { go('search-empty'); return; }
+    runSearch(query.trim());
+    go('search');
+  };
+
+  const isEmptyResult = searched && screen === 'search' && activeTab === '장소' && !placeResults.length && !mediaResults.length;
+
+  if (screen === 'search-empty') return <section className="phone standard-screen search-screen"><BackHeader title="검색" onBack={() => go('explore')} /><main className="page-scroll"><div className="search-page-field"><SearchField value={query} onChange={setQuery} onSubmit={submit} placeholder="장소·지역·테마 검색" autoFocus /></div><EmptySearch query={query} onClear={() => setQuery('')} /></main></section>;
+  return <section className="phone standard-screen search-screen"><BackHeader title="검색" onBack={() => go('explore')} /><main className="page-scroll"><div className="search-page-field"><SearchField value={query} onChange={setQuery} onSubmit={submit} placeholder="장소·지역·테마 검색" autoFocus /></div>{searched && <div className="search-result-copy"><strong>'{query}' 검색 결과</strong><span>종로구에서 찾았어요</span></div>}{isEmptyResult ? <EmptySearch query={query} onClear={() => setQuery('')} /> : <><div className="result-tabs">{[['장소', placeResults.length], ['코스', courseResults.length], ['콘텐츠', mediaResults.length]].map(([name, count]) => <Chip active={activeTab === name} key={name} onClick={() => setActiveTab(name)}>{name} {count}</Chip>)}</div><div className="search-result-list">{resultSets[activeTab].map((place, index) => <PlaceRow key={place.id ?? `${place.name}-${index}`} place={place} onClick={() => go(activeTab === '코스' ? 'route-map' : 'place', activeTab === '장소' ? place.id : undefined)} />)}</div></>}</main></section>;
 }
 
 function SavedConfirmation({ go }) {
@@ -467,11 +672,11 @@ function MyScreen({ screen, go }) {
   return <section className="phone standard-screen tab-screen my-screen"><main className="page-scroll my-scroll"><header className="my-title"><h1>MY</h1></header><section className="profile-hero"><div className="profile-row"><span className="avatar">Y</span><div><h2>유진</h2><p>이번 달 7곳을 걸었어요</p></div></div><div className="profile-stats"><span><b>3</b>내 코스</span><span><b>18</b>저장</span><span><b>6</b>후기</span></div></section><ScreenSection title="내 코스"><button type="button" className="my-course-card" onClick={() => go('active-course')}><VWorldMap ariaLabel="안국동 코스 지도" interactive={false} style={{ width: '100%', height: 122 }} /><span><strong>안국에서 성수까지, 여름 하루</strong><small>4곳 · 5시간 10분 · 8월 3일</small></span></button></ScreenSection><ScreenSection title="내 활동"><div className="activity-grid"><button type="button" onClick={() => go('saved-courses')}><span>저장한 장소</span><strong>18</strong></button><button type="button" onClick={() => go('reviews')}><span>내 후기</span><strong>6</strong></button></div></ScreenSection></main><BottomNav active="my" onNavigate={(tab) => go(rootRoutes[tab])} /></section>;
 }
 
-function RenderScreen({ screen, go }) {
+function RenderScreen({ screen, id, go }) {
   if (routeGroups.auth.includes(screen)) return <AuthScreen screen={screen} go={go} />;
   if (screen === 'map') return <MapHome go={go} />;
   if (screen === 'explore') return <ExploreScreen go={go} />;
-  if (screen === 'place') return <PlaceDetail go={go} />;
+  if (screen === 'place') return <PlaceDetail go={go} placeId={id} />;
   if (screen === 'search' || screen === 'search-empty') return <SearchResults screen={screen} go={go} />;
   if (screen === 'saved') return <SavedConfirmation go={go} />;
   if (screen === 'trending' || screen === 'filming-locations' || screen === 'popups') return <CollectionScreen screen={screen} go={go} />;
@@ -486,19 +691,19 @@ function RenderScreen({ screen, go }) {
 }
 
 export default function ProductFlow() {
-  const [screen, setScreen] = useState(readHash);
+  const [{ screen, id }, setRoute] = useState(readHash);
   const reduceMotion = useReducedMotion();
 
   useEffect(() => {
-    const handleHashChange = () => setScreen(readHash());
+    const handleHashChange = () => setRoute(readHash());
     window.addEventListener('hashchange', handleHashChange);
     return () => window.removeEventListener('hashchange', handleHashChange);
   }, []);
 
-  const go = (next) => {
+  const go = (next, nextId) => {
     if (!routes.has(next)) return;
-    window.location.hash = `/${next}`;
-    setScreen(next);
+    window.location.hash = nextId ? `/${next}/${nextId}` : `/${next}`;
+    setRoute({ screen: next, id: nextId || null });
   };
 
   const pageMotion = reduceMotion
@@ -509,5 +714,5 @@ export default function ProductFlow() {
         transition: { duration: 0.28, ease: [0.23, 1, 0.32, 1] },
       };
 
-  return <main className="app-shell"><motion.div className="screen-transition" data-screen={screen} key={screen} {...pageMotion}><RenderScreen screen={screen} go={go} /></motion.div></main>;
+  return <main className="app-shell"><motion.div className="screen-transition" data-screen={screen} key={screen} {...pageMotion}><RenderScreen screen={screen} id={id} go={go} /></motion.div></main>;
 }

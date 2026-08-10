@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import Map from 'ol/Map.js'
+import Overlay from 'ol/Overlay.js'
 import View from 'ol/View.js'
 import TileLayer from 'ol/layer/Tile.js'
 import XYZ from 'ol/source/XYZ.js'
@@ -26,13 +27,34 @@ export default function VWorldMap({
   className = '',
   style,
   ariaLabel = 'Map',
+  userLocation = null,
 }) {
   const targetRef = useRef(null)
   const mapRef = useRef(null)
+  const locationOverlayRef = useRef(null)
+  const [liveUserLocation, setLiveUserLocation] = useState(userLocation)
   const [tileError, setTileError] = useState(false)
   const apiKey = import.meta.env.VITE_VWORLD_API_KEY?.trim()
   const [longitude, latitude] = normalizeCenter(center)
   const safeZoom = Number.isFinite(Number(zoom)) ? Number(zoom) : 15
+
+  useEffect(() => {
+    const handleLocation = (event) => {
+      const location = event.detail || null
+      setLiveUserLocation(location)
+      if (location && mapRef.current) {
+        const view = mapRef.current.getView()
+        view.setCenter(fromLonLat(normalizeCenter(location)))
+        view.setZoom(17)
+      }
+    }
+    window.addEventListener('vworld:user-location', handleLocation)
+    return () => window.removeEventListener('vworld:user-location', handleLocation)
+  }, [])
+
+  useEffect(() => {
+    if (userLocation) setLiveUserLocation(userLocation)
+  }, [userLocation?.[0], userLocation?.[1]])
 
   useEffect(() => {
     if (!apiKey || !targetRef.current) return undefined
@@ -75,6 +97,37 @@ export default function VWorldMap({
     view.setCenter(fromLonLat([longitude, latitude]))
     view.setZoom(safeZoom)
   }, [longitude, latitude, safeZoom])
+
+  useEffect(() => {
+    const map = mapRef.current
+    if (!map) return undefined
+
+    if (locationOverlayRef.current) {
+      map.removeOverlay(locationOverlayRef.current)
+      locationOverlayRef.current = null
+    }
+
+    if (!Array.isArray(liveUserLocation) || liveUserLocation.length < 2) return undefined
+    const location = normalizeCenter(liveUserLocation)
+    const marker = document.createElement('div')
+    marker.className = 'vworld-user-location-marker'
+    marker.setAttribute('aria-label', '현재 위치')
+    marker.innerHTML = '<span class="vworld-user-location-target"><i></i></span>'
+
+    const overlay = new Overlay({
+      element: marker,
+      position: fromLonLat(location),
+      positioning: 'center-center',
+      stopEvent: false,
+    })
+    map.addOverlay(overlay)
+    locationOverlayRef.current = overlay
+
+    return () => {
+      map.removeOverlay(overlay)
+      if (locationOverlayRef.current === overlay) locationOverlayRef.current = null
+    }
+  }, [liveUserLocation?.[0], liveUserLocation?.[1]])
 
   const statusMessage = !apiKey
     ? 'VWorld API key is not configured.'
