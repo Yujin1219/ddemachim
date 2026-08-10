@@ -2,6 +2,7 @@ import { useEffect, useRef } from 'react';
 import { animate, createScope } from 'animejs';
 import {
   motion,
+  useInView,
   useMotionTemplate,
   useReducedMotion,
   useScroll,
@@ -15,7 +16,7 @@ const enterTransition = {
   ease: [0.23, 1, 0.32, 1],
 };
 
-function StorySection({ number, eyebrow, title, copy, children, reduceMotion, className = '' }) {
+function StorySection({ title, copy, children, reduceMotion, className = '' }) {
   const initial = reduceMotion ? false : { opacity: 0, transform: 'translateY(24px)' };
   const visible = { opacity: 1, transform: 'translateY(0px)' };
 
@@ -28,7 +29,6 @@ function StorySection({ number, eyebrow, title, copy, children, reduceMotion, cl
       transition={enterTransition}
     >
       <div className="story-section-copy">
-        <span>{number} · {eyebrow}</span>
         <h2>{title}</h2>
         <p>{copy}</p>
       </div>
@@ -41,12 +41,16 @@ export default function ScrollOnboarding({ go }) {
   const scrollRef = useRef(null);
   const sceneRef = useRef(null);
   const animeScope = useRef(null);
+  const routeStageRef = useRef(null);
   const reduceMotion = useReducedMotion();
+  const routeStageInView = useInView(routeStageRef, { once: true, amount: 0.45, root: scrollRef });
   const { scrollYProgress } = useScroll({ container: scrollRef });
   const softenedProgress = useSpring(scrollYProgress, { stiffness: 120, damping: 28, mass: 0.55 });
   const heroY = useTransform(softenedProgress, [0, 0.24], ['0%', '12%']);
   const heroScale = useTransform(softenedProgress, [0, 0.24], [1, 1.055]);
-  const heroTransform = useMotionTemplate`translateY(${heroY}) scale(${heroScale})`;
+  const heroRotateX = useTransform(softenedProgress, [0, 0.24], [0, 5]);
+  const heroRotateY = useTransform(softenedProgress, [0, 0.24], [0, -2.5]);
+  const heroTransform = useMotionTemplate`perspective(1200px) translateY(${heroY}) scale(${heroScale}) rotateX(${heroRotateX}deg) rotateY(${heroRotateY}deg)`;
   const progressTransform = useMotionTemplate`scaleX(${softenedProgress})`;
 
   useEffect(() => {
@@ -68,21 +72,6 @@ export default function ScrollOnboarding({ go }) {
         ease: 'out(4)',
         loop: true,
       });
-      animate('.story-route-traveller', {
-        x: 154,
-        y: -58,
-        duration: 2100,
-        loop: true,
-        alternate: true,
-        ease: 'inOut(3)',
-      });
-      animate('.story-route-traveller', {
-        opacity: 0.36,
-        duration: 700,
-        loop: true,
-        alternate: true,
-        ease: 'inOut(2)',
-      });
     });
 
     return () => animeScope.current?.revert();
@@ -90,6 +79,8 @@ export default function ScrollOnboarding({ go }) {
 
   const revealInitial = reduceMotion ? false : { opacity: 0, transform: 'translateY(18px)' };
   const revealVisible = { opacity: 1, transform: 'translateY(0px)' };
+  const stageInitial = reduceMotion ? false : { opacity: 0, transform: 'perspective(1100px) translateY(26px) rotateX(5deg) rotateY(-2deg) translateZ(-20px) scale(.985)' };
+  const stageVisible = { opacity: 1, transform: 'perspective(1100px) translateY(0px) rotateX(0deg) rotateY(0deg) translateZ(0px) scale(1)' };
 
   return (
     <section className="phone auth-screen story-onboarding-screen" ref={sceneRef}>
@@ -107,25 +98,20 @@ export default function ScrollOnboarding({ go }) {
             animate={revealVisible}
             transition={enterTransition}
           >
-            <span>서울을 걷는 새로운 방법</span>
-            <h1>오늘 서울을,<br />때마침</h1>
-            <p>지금 가기 좋은 장소를 발견하고<br />하루의 흐름으로 자연스럽게 이어드려요.</p>
+            <h1>오늘 서울을, 때마침</h1>
+            <p>지금 가기 좋은 장소를 발견하고 하루의 흐름으로 자연스럽게 이어드려요.</p>
           </motion.div>
           <motion.div className="story-hero-scene" style={reduceMotion ? undefined : { transform: heroTransform }}>
             <img src="/assets/figma/intro-visual.png" alt="안국동 궁궐 연못 풍경" />
-            <div className="story-hero-card">
-              <span>지금의 코스</span>
-              <strong>안국에서 성수까지</strong>
-              <small>4곳 · 5시간 10분</small>
-            </div>
-            <div className="story-hero-route" aria-hidden="true"><i /><b /><em /></div>
           </motion.div>
-          <div className="story-scroll-cue" aria-hidden="true"><i />아래로 내려 서비스 살펴보기</div>
+          <motion.div className="story-hero-summary" initial={stageInitial} animate={stageVisible} transition={{ ...enterTransition, delay: 0.14 }}>
+            <span>오늘의 코스</span>
+            <strong>안국에서 성수까지</strong>
+            <small>4곳 · 5시간 10분</small>
+          </motion.div>
         </section>
 
         <StorySection
-          number="01"
-          eyebrow="발견"
           title={<>지금 눈앞의<br />서울을 먼저 찾아요</>}
           copy="사진과 후기, 운영 정보가 만나는 순간을 모아 지금 가기 좋은 곳부터 보여줘요."
           reduceMotion={reduceMotion}
@@ -133,8 +119,8 @@ export default function ScrollOnboarding({ go }) {
         >
           <motion.div
             className="story-map-stage"
-            initial={revealInitial}
-            whileInView={revealVisible}
+            initial={stageInitial}
+            whileInView={stageVisible}
             viewport={{ once: true, amount: 0.36 }}
             transition={{ ...enterTransition, delay: 0.08 }}
           >
@@ -148,23 +134,22 @@ export default function ScrollOnboarding({ go }) {
         </StorySection>
 
         <StorySection
-          number="02"
-          eyebrow="구성"
           title={<>흩어진 장소를<br />하루의 흐름으로 엮어요</>}
           copy="예약 시간과 운영 마감, 걷는 거리까지 살펴 가장 자연스러운 이동 순서를 만들어요."
           reduceMotion={reduceMotion}
           className="story-route-section"
         >
           <motion.div
-            className="story-route-stage"
-            initial={revealInitial}
-            whileInView={revealVisible}
+            ref={routeStageRef}
+            className={`story-route-stage ${routeStageInView ? 'is-route-revealed' : ''}`}
+            initial={stageInitial}
+            whileInView={stageVisible}
             viewport={{ once: true, amount: 0.34 }}
             transition={{ ...enterTransition, delay: 0.08 }}
           >
             <img src="/assets/figma/navigation-map.png" alt="안국동에서 성수까지 이동 경로 지도" />
             <RouteMotion />
-            <i className="story-route-traveller" aria-hidden="true" />
+            <i className={`story-route-traveller ${reduceMotion ? 'is-static' : ''}`} aria-hidden="true" />
             <div className="story-route-summary"><span>추천 동선</span><strong>4곳 · 5시간 10분</strong><small>이동 52분 · 걷기 2.4km</small></div>
           </motion.div>
           <div className="story-route-list" aria-label="추천 이동 순서">
@@ -177,8 +162,6 @@ export default function ScrollOnboarding({ go }) {
         </StorySection>
 
         <StorySection
-          number="03"
-          eyebrow="도착"
           title={<>도착한 순간부터<br />여행은 더 선명해져요</>}
           copy="혼잡도와 현장 이야기, 촬영 포인트를 먼저 확인하고 나만의 기록으로 남겨보세요."
           reduceMotion={reduceMotion}
@@ -186,8 +169,8 @@ export default function ScrollOnboarding({ go }) {
         >
           <motion.div
             className="story-arrival-stage"
-            initial={revealInitial}
-            whileInView={revealVisible}
+            initial={stageInitial}
+            whileInView={stageVisible}
             viewport={{ once: true, amount: 0.32 }}
             transition={{ ...enterTransition, delay: 0.08 }}
           >

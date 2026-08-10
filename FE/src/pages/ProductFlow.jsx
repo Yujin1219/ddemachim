@@ -1,8 +1,7 @@
 import { useEffect, useState } from 'react';
 import { motion, useReducedMotion } from 'motion/react';
-import { ChevronLeft, ChevronRight, CircleHelp, Clock3, Heart, Image as ImageIcon, LocateFixed, MapPin, MoreHorizontal, SearchX, SendHorizontal, X } from 'lucide-react';
+import { ChevronLeft, ChevronRight, CircleHelp, Clock3, Heart, Image as ImageIcon, LocateFixed, MapPin, MoreHorizontal, Search, SearchX, SendHorizontal, X } from 'lucide-react';
 import BottomNav from '../components/BottomNav';
-import { SearchIcon } from '../components/Icons';
 import {
   ArrivalMotion,
   BrandLoading,
@@ -39,6 +38,10 @@ const images = {
   completePhoto: '/assets/figma/complete-photo.png',
   myMap: '/assets/figma/my-map.png',
 };
+
+function SearchIcon() {
+  return <Search aria-hidden="true" size={20} strokeWidth={2} />;
+}
 
 const locationRows = [
   { name: '도토리가든', meta: '안국 · 정원 사진이 요즘 인기', image: images.cafe, badge: '요즘 핫한 장소' },
@@ -98,8 +101,29 @@ function PlaceRow({ place, onClick, action, onAction }) {
   return <article className="place-row">{content}{action ? <button className="row-action" onClick={onAction} type="button">{action}</button> : <ChevronRight className="row-next" aria-hidden="true" size={20} />}</article>;
 }
 
-function PlaceCard({ place, onClick }) {
-  return <button className="place-card-v3" onClick={onClick} type="button"><div className="place-card-image"><img src={place.image} alt="" />{place.badge && <span>{place.badge}</span>}</div><h3>{place.name}</h3><p>{place.meta}</p></button>;
+function PlaceCard({ place, onClick, index = 0 }) {
+  const entryTilt = index % 2 ? 'rotateY(2.5deg)' : 'rotateY(-2.5deg)';
+  const hoverTilt = index % 2 ? 'rotateY(-1.2deg)' : 'rotateY(1.2deg)';
+
+  return (
+    <motion.button
+      className="place-card-v3 motion-place-card"
+      type="button"
+      onClick={onClick}
+      initial={{ opacity: 0, transform: `perspective(1000px) translateY(20px) rotateX(4deg) ${entryTilt} translateZ(-18px) scale(.985)` }}
+      animate={{ opacity: 1, transform: 'perspective(1000px) translateY(0px) rotateX(0deg) rotateY(0deg) translateZ(0px) scale(1)' }}
+      whileHover={{ transform: `perspective(1000px) translateY(-6px) rotateX(2deg) ${hoverTilt} translateZ(14px) scale(1.01)` }}
+      whileTap={{ transform: 'perspective(1000px) translateY(0px) rotateX(0deg) rotateY(0deg) translateZ(0px) scale(.975)' }}
+      transition={{ duration: 0.28, delay: index * 0.06, ease: [0.23, 1, 0.32, 1] }}
+    >
+      <div className="place-card-image"><img src={place.image} alt="" /></div>
+      <div className="place-card-copy">
+        {place.badge && <span className="place-card-kicker">{place.badge}</span>}
+        <h3>{place.name}</h3>
+        <p>{place.meta}</p>
+      </div>
+    </motion.button>
+  );
 }
 
 function ScreenSection({ title, subtitle, action, onAction, children }) {
@@ -115,8 +139,19 @@ function MapStage({ children, variant = 'home' }) {
   return <div className={`map-stage ${variant}`}><img src={source} alt="안국동 주변 지도" />{children}</div>;
 }
 
-function BottomSheet({ children, className = '' }) {
-  return <section className={`bottom-sheet ${className}`}><span className="sheet-handle" />{children}</section>;
+function BottomSheet({ children, className = '', animated = false }) {
+  const sheetClassName = `bottom-sheet ${className} ${animated ? 'motion-depth-sheet' : ''}`;
+  const sheetMotion = {
+    initial: { opacity: 0, transform: 'perspective(1000px) translateY(42px) rotateX(-6deg) translateZ(-24px) scale(.985)' },
+    animate: { opacity: 1, transform: 'perspective(1000px) translateY(0px) rotateX(0deg) translateZ(0px) scale(1)' },
+    transition: { duration: 0.28, delay: 0.08, ease: [0.23, 1, 0.32, 1] },
+  };
+
+  if (animated) {
+    return <motion.section className={sheetClassName} {...sheetMotion}><span className="sheet-handle" />{children}</motion.section>;
+  }
+
+  return <section className={sheetClassName}><span className="sheet-handle" />{children}</section>;
 }
 
 function AuthScreen({ screen, go }) {
@@ -149,14 +184,27 @@ function MapHome({ go }) {
     촬영지: { title: '장면 속 가까운 곳', place: { name: '창덕궁 후원', meta: '도보 10분 · 도깨비 촬영지', image: images.popup, badge: '촬영지' }, next: 'filming-content' },
   };
   const nearby = nearbyByFilter[filter];
-  return <section className="phone map-home-screen"><MapStage><div className="map-top-fade" /><header className="map-home-header"><p>안국동 · 내 주변</p><h1>오늘, 어디로 걸어볼까요?</h1><button className="map-search-trigger" onClick={() => go('search')} type="button"><span><SearchIcon /></span>장소·지역·테마 검색</button><div className="chip-row">{['전체', '요즘', '팝업', '촬영지'].map((item) => <Chip active={filter === item} key={item} onClick={() => setFilter(item)}>{item}</Chip>)}</div></header><MapPlacePulse /><button className={`map-location-button ${isLocated ? 'is-located' : ''}`} type="button" aria-label="내 위치" aria-pressed={isLocated} onClick={() => setIsLocated((current) => !current)}><LocateFixed aria-hidden="true" size={20} strokeWidth={2.2} /></button>{isLocated && <p className="map-location-status" role="status">현재 위치를 기준으로 보고 있어요</p>}<BottomSheet className="map-nearby-sheet"><ScreenSection title={nearby.title} action="전체보기" onAction={() => go('explore')}><PlaceRow place={nearby.place} onClick={() => go(nearby.next)} /></ScreenSection><button type="button" className="map-live-link" onClick={() => go('live-talk')}><span>내 주변 지금톡</span><small>현장 소식 6개&nbsp; ›</small></button></BottomSheet></MapStage><BottomNav active="map" onNavigate={(tab) => go(rootRoutes[tab])} /></section>;
+  return <section className="phone map-home-screen"><MapStage><div className="map-top-fade" /><motion.header className="map-home-header" initial={{ opacity: 0, transform: 'perspective(1100px) translateY(-16px) rotateX(-4deg) translateZ(-18px)' }} animate={{ opacity: 1, transform: 'perspective(1100px) translateY(0px) rotateX(0deg) translateZ(0px)' }} transition={{ duration: 0.28, ease: [0.23, 1, 0.32, 1] }}><p>안국동 · 내 주변</p><h1>오늘, 어디로 걸어볼까요?</h1><button className="map-search-trigger" onClick={() => go('search')} type="button"><span><SearchIcon /></span>장소·지역·테마 검색</button><div className="chip-row">{['전체', '요즘', '팝업', '촬영지'].map((item) => <Chip active={filter === item} key={item} onClick={() => setFilter(item)}>{item}</Chip>)}</div></motion.header><MapPlacePulse /><button className={`map-location-button ${isLocated ? 'is-located' : ''}`} type="button" aria-label="내 위치" aria-pressed={isLocated} onClick={() => setIsLocated((current) => !current)}><LocateFixed aria-hidden="true" size={20} strokeWidth={2.2} /></button>{isLocated && <p className="map-location-status" role="status">현재 위치를 기준으로 보고 있어요</p>}<BottomSheet className="map-nearby-sheet" animated><ScreenSection title={nearby.title} action="전체보기" onAction={() => go('explore')}><PlaceRow place={nearby.place} onClick={() => go(nearby.next)} /></ScreenSection><button type="button" className="map-live-link" onClick={() => go('live-talk')}><span>내 주변 지금톡</span><small>현장 소식 6개&nbsp; ›</small></button></BottomSheet></MapStage><BottomNav active="map" onNavigate={(tab) => go(rootRoutes[tab])} /></section>;
+}
+
+function ExploreReveal({ children, delay = 0 }) {
+  return (
+    <motion.div
+      className="explore-reveal"
+      initial={{ opacity: 0, transform: 'perspective(1000px) translateY(22px) rotateX(4deg) translateZ(-18px)' }}
+      animate={{ opacity: 1, transform: 'perspective(1000px) translateY(0px) rotateX(0deg) translateZ(0px)' }}
+      transition={{ duration: 0.28, delay, ease: [0.23, 1, 0.32, 1] }}
+    >
+      {children}
+    </motion.div>
+  );
 }
 
 function ExploreScreen({ go }) {
   const [query, setQuery] = useState('');
   const normalized = query.trim().toLowerCase();
   const allPlaces = locationRows.filter((place) => `${place.name} ${place.meta}`.toLowerCase().includes(normalized));
-  return <section className="phone standard-screen tab-screen"><main className="page-scroll explore-scroll"><header className="tab-heading"><h1>탐색</h1><SearchField value={query} onChange={setQuery} onSubmit={() => go(normalized ? (allPlaces.length ? 'search' : 'search-empty') : 'search')} placeholder="장소, 메뉴, 촬영지를 검색해보세요" /></header>{normalized && !allPlaces.length ? <EmptySearch query={query} onClear={() => setQuery('')} /> : <><ScreenSection title="요즘 이곳에서는" subtitle="최근 메뉴·사진·공간이 주목받는 장소" action="전체보기" onAction={() => go('trending')}><div className="horizontal-cards"><PlaceCard place={locationRows[0]} onClick={() => go('place')} /><PlaceCard place={{ ...locationRows[0], name: '아베베 베이커리', meta: '막 구운 도넛 · 줄 서는 오전' }} onClick={() => go('place')} /></div></ScreenSection><ScreenSection title="장면 속으로" subtitle="드라마와 영화 속 서울의 장소" action="전체보기" onAction={() => go('filming-locations')}><div className="horizontal-cards"><PlaceCard place={locationRows[1]} onClick={() => go('filming-content')} /><PlaceCard place={{ ...locationRows[1], name: '덕수궁 돌담길', meta: '드라마 도깨비 촬영지' }} onClick={() => go('filming-content')} /></div></ScreenSection><ScreenSection title="이번 주 팝업" action="더보기" onAction={() => go('popups')}><div className="popup-list"><PlaceRow place={{ name: '블루 모먼트 전시 팝업', meta: '성수 · 8월 31일까지', image: images.scene }} onClick={() => go('place')} /><PlaceRow place={{ name: '아무개 서점 여름 마켓', meta: '서촌 · 이번 주말', image: images.cafe }} onClick={() => go('place')} /></div></ScreenSection></>}</main><BottomNav active="explore" onNavigate={(tab) => go(rootRoutes[tab])} /></section>;
+  return <section className="phone standard-screen tab-screen"><main className="page-scroll explore-scroll"><motion.header className="tab-heading" initial={{ opacity: 0, transform: 'perspective(1000px) translateY(-12px) rotateX(-3deg) translateZ(-14px)' }} animate={{ opacity: 1, transform: 'perspective(1000px) translateY(0px) rotateX(0deg) translateZ(0px)' }} transition={{ duration: 0.28, ease: [0.23, 1, 0.32, 1] }}><h1>탐색</h1><SearchField value={query} onChange={setQuery} onSubmit={() => go(normalized ? (allPlaces.length ? 'search' : 'search-empty') : 'search')} placeholder="장소, 메뉴, 촬영지를 검색해보세요" /></motion.header>{normalized && !allPlaces.length ? <EmptySearch query={query} onClear={() => setQuery('')} /> : <><ExploreReveal delay={0.06}><ScreenSection title="요즘 이곳에서는" subtitle="최근 메뉴·사진·공간이 주목받는 장소" action="전체보기" onAction={() => go('trending')}><div className="horizontal-cards"><PlaceCard place={locationRows[0]} index={0} onClick={() => go('place')} /><PlaceCard place={{ ...locationRows[0], name: '아베베 베이커리', meta: '막 구운 도넛 · 줄 서는 오전' }} index={1} onClick={() => go('place')} /></div></ScreenSection></ExploreReveal><ExploreReveal delay={0.12}><ScreenSection title="장면 속으로" subtitle="드라마와 영화 속 서울의 장소" action="전체보기" onAction={() => go('filming-locations')}><div className="horizontal-cards"><PlaceCard place={locationRows[1]} index={2} onClick={() => go('filming-content')} /><PlaceCard place={{ ...locationRows[1], name: '덕수궁 돌담길', meta: '드라마 도깨비 촬영지' }} index={3} onClick={() => go('filming-content')} /></div></ScreenSection></ExploreReveal><ExploreReveal delay={0.18}><ScreenSection title="이번 주 팝업" action="더보기" onAction={() => go('popups')}><div className="popup-list"><PlaceRow place={{ name: '블루 모먼트 전시 팝업', meta: '성수 · 8월 31일까지', image: images.scene }} onClick={() => go('place')} /><PlaceRow place={{ name: '아무개 서점 여름 마켓', meta: '서촌 · 이번 주말', image: images.cafe }} onClick={() => go('place')} /></div></ScreenSection></ExploreReveal></>}</main><BottomNav active="explore" onNavigate={(tab) => go(rootRoutes[tab])} /></section>;
 }
 
 function EmptySearch({ query, onClear }) {
@@ -454,7 +502,11 @@ export default function ProductFlow() {
 
   const pageMotion = reduceMotion
     ? { initial: false, animate: { opacity: 1 }, transition: { duration: 0 } }
-    : { initial: { opacity: 0, y: 8, filter: 'blur(3px)' }, animate: { opacity: 1, y: 0, filter: 'blur(0px)' }, transition: { duration: 0.24, ease: [0.23, 1, 0.32, 1] } };
+    : {
+        initial: { opacity: 0, transform: 'perspective(1300px) translateY(18px) rotateX(3deg) rotateY(-1.5deg) translateZ(-22px) scale(.985)' },
+        animate: { opacity: 1, transform: 'perspective(1300px) translateY(0px) rotateX(0deg) rotateY(0deg) translateZ(0px) scale(1)' },
+        transition: { duration: 0.28, ease: [0.23, 1, 0.32, 1] },
+      };
 
   return <main className="app-shell"><motion.div className="screen-transition" data-screen={screen} key={screen} {...pageMotion}><RenderScreen screen={screen} go={go} /></motion.div></main>;
 }
