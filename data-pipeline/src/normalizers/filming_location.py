@@ -19,8 +19,10 @@ TARGET_DISTRICT = "종로구"
 # 미디어타입 실관찰값: drama / movie / show / artist
 # 장소타입 실관찰값(종로구 1,086건 전수): playground 563, restaurant 288, stay 101, cafe 80,
 # store 38, station 16. restaurant/cafe/store처럼 명확한 것만 내부 카테고리로 매핑하고,
-# playground/stay/station처럼 이 서비스 카테고리로 단정하기 애매한 값은 FILMING_LOCATION으로
-# 남긴다(추측성 매핑 금지 — 이미 명확한 것만 반영).
+# playground/stay/station처럼 이 서비스 카테고리로 단정하기 애매한 값은 ETC로 둔다.
+# 촬영지 여부는 카테고리가 아니라 place.tags의 FILMING_LOCATION 태그로 보존한다.
+FILMING_LOCATION_TAG = "FILMING_LOCATION"
+
 PLACE_TYPE_CATEGORY_MAP: dict[str, str] = {
     "restaurant": "RESTAURANT",
     "cafe": "CAFE",
@@ -30,8 +32,8 @@ PLACE_TYPE_CATEGORY_MAP: dict[str, str] = {
 
 def map_place_type_category(place_type_raw: str | None) -> str:
     if place_type_raw is None:
-        return "FILMING_LOCATION"
-    return PLACE_TYPE_CATEGORY_MAP.get(place_type_raw.strip(), "FILMING_LOCATION")
+        return "ETC"
+    return PLACE_TYPE_CATEGORY_MAP.get(place_type_raw.strip(), "ETC")
 
 
 def normalize_record(raw: dict[str, Any]) -> PlaceDTO | None:
@@ -43,9 +45,10 @@ def normalize_record(raw: dict[str, Any]) -> PlaceDTO | None:
     행마다 별도로 남아 촬영지-작품 조인에 쓰인다).
 
     카테고리는 장소타입(restaurant/cafe/store)이 명확할 때만 내부 카테고리로 매핑하고,
-    그 외(playground/stay/station 등 애매한 값)는 FILMING_LOCATION으로 남긴다
-    (`map_place_type_category` 참고). description은 이 소스가 주는 게 "특정 장면 설명"이라
-    일반 장소 설명과 성격이 달라 공용 description 컬럼을 오염시키지 않으려고 extra에만 담는다.
+    그 외(playground/stay/station 등 애매한 값)는 ETC로 둔다. 촬영지 여부는
+    FILMING_LOCATION 태그로 남긴다(`map_place_type_category` 참고). description은 이 소스가
+    주는 게 "특정 장면 설명"이라 일반 장소 설명과 성격이 달라 공용 description 컬럼을
+    오염시키지 않으려고 extra에만 담는다.
     """
     name = clean_text(raw.get("장소명"))
     seq = clean_text(raw.get("연번"))
@@ -76,6 +79,7 @@ def normalize_record(raw: dict[str, Any]) -> PlaceDTO | None:
         district=district,
         normalized_name=normalize_place_name(name),
         category_code=map_place_type_category(clean_text(raw.get("장소타입"))),
+        tags=[FILMING_LOCATION_TAG],
         has_coordinates=valid_coord,
         extra={
             "title": title,

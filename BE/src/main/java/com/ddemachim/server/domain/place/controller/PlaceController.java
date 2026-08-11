@@ -1,12 +1,14 @@
 package com.ddemachim.server.domain.place.controller;
 
 import com.ddemachim.server.domain.place.dto.PlaceDetailResponse;
+import com.ddemachim.server.domain.place.dto.PlaceMapResponse;
 import com.ddemachim.server.domain.place.dto.PlaceSummaryResponse;
 import com.ddemachim.server.domain.place.service.PlaceQueryService;
 import com.ddemachim.server.global.apiPayload.ApiResponse;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.Parameter;
 import io.swagger.v3.oas.annotations.tags.Tag;
+import java.util.List;
 import lombok.RequiredArgsConstructor;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
@@ -34,10 +36,32 @@ public class PlaceController {
             @RequestParam(required = false) String category,
             @Parameter(description = "자치구명 (예: 종로구)")
             @RequestParam(required = false) String district,
+            @Parameter(description = "태그 코드 (예: FILMING_LOCATION)")
+            @RequestParam(required = false) String tag,
             @Parameter(description = "장소명 검색 키워드 (부분 일치)")
             @RequestParam(required = false) String keyword,
             Pageable pageable) {
-        return ApiResponse.onSuccess(placeQueryService.search(category, district, keyword, pageable));
+        return ApiResponse.onSuccess(placeQueryService.search(category, district, tag, keyword, pageable));
+    }
+
+    @Operation(
+            summary = "지도 영역 내 장소 조회",
+            description = "지도에 표시할 장소를 위도/경도 bbox 범위로 조회합니다. "
+                    + "좌표가 없는 장소는 제외되며, limit을 비우면 최대 300건을 반환합니다.")
+    @GetMapping("/map")
+    public ApiResponse<List<PlaceMapResponse>> getPlacesInBounds(
+            @Parameter(description = "카테고리 코드 (예: RESTAURANT, CAFE)")
+                    @RequestParam(required = false) String category,
+            @Parameter(description = "태그 코드 (예: FILMING_LOCATION)")
+                    @RequestParam(required = false) String tag,
+            @Parameter(description = "최소 위도 (-90 이상)") @RequestParam Double minLat,
+            @Parameter(description = "최대 위도 (90 이하)") @RequestParam Double maxLat,
+            @Parameter(description = "최소 경도 (-180 이상)") @RequestParam Double minLng,
+            @Parameter(description = "최대 경도 (180 이하)") @RequestParam Double maxLng,
+            @Parameter(description = "최대 반환 건수 (기본 300, 최대 500)")
+                    @RequestParam(required = false) Integer limit) {
+        return ApiResponse.onSuccess(
+                placeQueryService.getPlacesInBounds(category, tag, minLat, maxLat, minLng, maxLng, limit));
     }
 
     @Operation(

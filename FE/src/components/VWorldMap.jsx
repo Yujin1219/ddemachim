@@ -4,11 +4,13 @@ import Overlay from 'ol/Overlay.js'
 import View from 'ol/View.js'
 import TileLayer from 'ol/layer/Tile.js'
 import XYZ from 'ol/source/XYZ.js'
-import { fromLonLat } from 'ol/proj.js'
+import { fromLonLat, transformExtent } from 'ol/proj.js'
 import 'ol/ol.css'
 import '../vworld-map.css'
 
 const DEFAULT_CENTER = [126.978, 37.5665]
+const CLUSTER_ZOOM_MAX = 14.5
+const CLUSTER_PIXEL_RADIUS = 44
 
 function normalizeCenter(center) {
   if (!Array.isArray(center) || center.length < 2) return DEFAULT_CENTER
@@ -20,6 +22,38 @@ function normalizeCenter(center) {
     : DEFAULT_CENTER
 }
 
+function hasPlaceTag(place, tagCode) {
+  const normalize = (value) => (typeof value === 'string' ? value.trim().toUpperCase() : '')
+  const tags = Array.isArray(place.tags)
+    ? place.tags.map((tag) => normalize(typeof tag === 'string' ? tag : tag?.code))
+    : [normalize(place.tags)]
+  return tags.includes(normalize(tagCode))
+}
+
+function placeMarkerTone(place) {
+  if (hasPlaceTag(place, 'FILMING_LOCATION')) return 'filming'
+
+  const categoryCode = typeof place.categoryCode === 'string' ? place.categoryCode.trim().toUpperCase() : ''
+  if (categoryCode === 'RESTAURANT') return 'restaurant'
+  if (categoryCode === 'CAFE' || categoryCode === 'DESSERT') return 'cafe-dessert'
+  if (categoryCode === 'ATTRACTION') return 'attraction'
+  if (categoryCode === 'CULTURE') return 'culture'
+  if (categoryCode === 'EXHIBITION') return 'exhibition'
+  if (categoryCode === 'SHOPPING') return 'shopping'
+  if (categoryCode === 'POPUP') return 'popup'
+  if (categoryCode === 'PARK') return 'park'
+  if (categoryCode === 'WALK') return 'walk'
+  if (categoryCode === 'PHOTO_SPOT') return 'photo-spot'
+  return 'default'
+}
+
+function markerSizeClass(map) {
+  const zoomLevel = map.getView().getZoom() ?? 15
+  if (zoomLevel >= 17) return 'is-zoom-near'
+  if (zoomLevel >= 15) return 'is-zoom-mid'
+  return 'is-zoom-far'
+}
+
 export default function VWorldMap({
   center = DEFAULT_CENTER,
   zoom = 15,
@@ -28,15 +62,147 @@ export default function VWorldMap({
   style,
   ariaLabel = 'Map',
   userLocation = null,
+  loadPlacesInBounds = null,
+  placeMarkerFilter = null,
+  placeMarkerFilterKey = '',
+  placeRequestKey = '',
+  placeLimit = 300,
+  onPlaceClick = null,
+  onPlacesChange = null,
 }) {
   const targetRef = useRef(null)
   const mapRef = useRef(null)
   const locationOverlayRef = useRef(null)
+  const placeOverlaysRef = useRef([])
+  const rawPlacesRef = useRef([])
+  const placeAbortRef = useRef(null)
+  const loadVisiblePlacesRef = useRef(null)
+  const loadPlacesRef = useRef(loadPlacesInBounds)
+  const placeMarkerFilterRef = useRef(placeMarkerFilter)
+  const onPlaceClickRef = useRef(onPlaceClick)
+  const onPlacesChangeRef = useRef(onPlacesChange)
   const [liveUserLocation, setLiveUserLocation] = useState(userLocation)
   const [tileError, setTileError] = useState(false)
   const apiKey = import.meta.env.VITE_VWORLD_API_KEY?.trim()
   const [longitude, latitude] = normalizeCenter(center)
   const safeZoom = Number.isFinite(Number(zoom)) ? Number(zoom) : 15
+
+  useEffect(() => {
+    loadPlacesRef.current = loadPlacesInBounds
+    placeMarkerFilterRef.current = placeMarkerFilter
+    onPlaceClickRef.current = onPlaceClick
+    onPlacesChangeRef.current = onPlacesChange
+  }, [loadPlacesInBounds, placeMarkerFilter, onPlaceClick, onPlacesChange])
+
+  function clearPlaceOverlays(map) {
+    placeOverlaysRef.current.forEach((overlay) => map.removeOverlay(overlay))
+    placeOverlaysRef.current = []
+  }
+
+  function getPlaceCoordinate(place) {
+    const longitude = Number(place.longitude)
+    const latitude = Number(place.latitude)
+    return Number.isFinite(longitude) && Number.isFinite(latitude) ? [longitude, latitude] : null
+  }
+
+  function addPlaceOverlay(map, place) {
+    const coordinate = getPlaceCoordinate(place)
+    if (!coordinate) return
+
+    const marker = document.createElement('button')
+    marker.className = `vworld-place-marker is-${placeMarkerTone(place)} ${markerSizeClass(map)}`
+    marker.type = 'button'
+    marker.setAttribute('aria-label', `${place.name} 장소 보기`)
+    marker.title = place.name
+    marker.innerHTML = '<span></span>'
+    marker.addEventListener('click', () => onPlaceClickRef.current?.(place))
+
+    const overlay = new Overlay({
+      element: marker,
+      position: fromLonLat(coordinate),
+      positioning: 'center-center',
+      stopEvent: true,
+    })
+    map.addOverlay(overlay)
+    placeOverlaysRef.current.push(overlay)
+  }
+
+  function buildClusters(map, places) {
+    const clusters = []
+    places.forEach((place) => {
+      const coordinate = getPlaceCoordinate(place)
+      if (!coordinate) return
+      const position = fromLonLat(coordinate)
+      const pixel = map.getPixelFromCoordinate(position)
+      if (!pixel) return
+
+      const cluster = clusters.find(({ pixel: clusterPixel }) => {
+        const x = pixel[0] - clusterPixel[0]
+        const y = pixel[1] - clusterPixel[1]
+        return Math.hypot(x, y) <= CLUSTER_PIXEL_RADIUS
+      })
+
+      if (cluster) {
+        cluster.places.push(place)
+        const count = cluster.places.length
+        cluster.pixel = [
+          (cluster.pixel[0] * (count - 1) + pixel[0]) / count,
+          (cluster.pixel[1] * (count - 1) + pixel[1]) / count,
+        ]
+        cluster.coordinate = [
+          (cluster.coordinate[0] * (count - 1) + coordinate[0]) / count,
+          (cluster.coordinate[1] * (count - 1) + coordinate[1]) / count,
+        ]
+      } else {
+        clusters.push({ coordinate, pixel, places: [place] })
+      }
+    })
+    return clusters
+  }
+
+  function addClusterOverlay(map, cluster) {
+    const marker = document.createElement('button')
+    marker.className = `vworld-place-cluster is-${placeMarkerTone(cluster.places[0])} ${markerSizeClass(map)}`
+    marker.type = 'button'
+    marker.setAttribute('aria-label', `${cluster.places.length}개 장소 모아보기`)
+    marker.title = `${cluster.places.length}개 장소`
+    marker.textContent = cluster.places.length
+    marker.addEventListener('click', () => {
+      const view = map.getView()
+      const currentZoom = view.getZoom() ?? CLUSTER_ZOOM_MAX
+      view.animate({
+        center: fromLonLat(cluster.coordinate),
+        zoom: Math.min(currentZoom + 2, 19),
+        duration: 240,
+      })
+    })
+
+    const overlay = new Overlay({
+      element: marker,
+      position: fromLonLat(cluster.coordinate),
+      positioning: 'center-center',
+      stopEvent: true,
+    })
+    map.addOverlay(overlay)
+    placeOverlaysRef.current.push(overlay)
+  }
+
+  function renderPlaceOverlays(map, places) {
+    clearPlaceOverlays(map)
+    const filterPlace = placeMarkerFilterRef.current
+    const visiblePlaces = typeof filterPlace === 'function' ? places.filter(filterPlace) : places
+    const zoomLevel = map.getView().getZoom() ?? safeZoom
+
+    if (zoomLevel <= CLUSTER_ZOOM_MAX) {
+      buildClusters(map, visiblePlaces).forEach((cluster) => {
+        if (cluster.places.length > 1) addClusterOverlay(map, cluster)
+        else addPlaceOverlay(map, cluster.places[0])
+      })
+      return
+    }
+
+    visiblePlaces.forEach((place) => addPlaceOverlay(map, place))
+  }
 
   useEffect(() => {
     const handleLocation = (event) => {
@@ -82,13 +248,59 @@ export default function VWorldMap({
     })
     mapRef.current = map
 
+    const loadVisiblePlaces = () => {
+      const loader = loadPlacesRef.current
+      const size = map.getSize()
+      if (!loader || !size) return
+
+      const extent = map.getView().calculateExtent(size)
+      const [minLng, minLat, maxLng, maxLat] = transformExtent(extent, 'EPSG:3857', 'EPSG:4326')
+      placeAbortRef.current?.abort()
+      const controller = new AbortController()
+      placeAbortRef.current = controller
+
+      loader({ minLat, maxLat, minLng, maxLng, limit: placeLimit, signal: controller.signal })
+        .then((places = []) => {
+          if (controller.signal.aborted) return
+          rawPlacesRef.current = Array.isArray(places) ? places : []
+          onPlacesChangeRef.current?.(rawPlacesRef.current)
+          renderPlaceOverlays(map, rawPlacesRef.current)
+        })
+        .catch((error) => {
+          if (error?.name === 'AbortError') return
+          console.error('지도 장소 정보를 불러오지 못했어요.', error)
+          rawPlacesRef.current = []
+          onPlacesChangeRef.current?.([])
+          clearPlaceOverlays(map)
+        })
+    }
+    loadVisiblePlacesRef.current = loadVisiblePlaces
+
+    map.once('postrender', loadVisiblePlaces)
+    map.on('moveend', loadVisiblePlaces)
+
     return () => {
+      map.un('moveend', loadVisiblePlaces)
+      if (loadVisiblePlacesRef.current === loadVisiblePlaces) loadVisiblePlacesRef.current = null
+      placeAbortRef.current?.abort()
+      clearPlaceOverlays(map)
       source.un('tileloaderror', handleTileError)
       source.un('tileloadend', handleTileSuccess)
       map.setTarget(undefined)
       mapRef.current = null
     }
-  }, [apiKey, interactive])
+  }, [apiKey, interactive, Boolean(loadPlacesInBounds), placeLimit])
+
+  useEffect(() => {
+    loadVisiblePlacesRef.current?.()
+  }, [placeRequestKey])
+
+  useEffect(() => {
+    const map = mapRef.current
+    if (!map) return
+
+    renderPlaceOverlays(map, rawPlacesRef.current)
+  }, [placeMarkerFilterKey])
 
   useEffect(() => {
     const view = mapRef.current?.getView()

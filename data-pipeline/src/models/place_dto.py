@@ -21,6 +21,7 @@ class PlaceDTO:
     district: str | None = None
     normalized_name: str | None = None
     category_code: str | None = None
+    tags: list[str] = field(default_factory=list)
     has_coordinates: bool = False
     # 공통 컬럼에 안 맞는 소스별 부가 정보(운영시간 원문, 태그 등). enrichment-only 소스(좌표 없음)에서
     # 매칭이 REVIEW_REQUIRED로 빠질 때 검토 큐에 그대로 실려서 나중에 확정 시 유실되지 않게 한다.
