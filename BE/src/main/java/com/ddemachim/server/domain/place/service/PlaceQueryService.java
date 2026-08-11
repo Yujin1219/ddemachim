@@ -2,10 +2,12 @@ package com.ddemachim.server.domain.place.service;
 
 import com.ddemachim.server.domain.place.dto.PlaceDetailResponse;
 import com.ddemachim.server.domain.place.dto.PlaceImageResponse;
+import com.ddemachim.server.domain.place.dto.PlaceMapResponse;
 import com.ddemachim.server.domain.place.dto.PlaceOperatingHoursResponse;
 import com.ddemachim.server.domain.place.dto.PlaceSummaryResponse;
 import com.ddemachim.server.domain.place.entity.Place;
 import com.ddemachim.server.domain.place.entity.PlaceImage;
+import com.ddemachim.server.domain.place.exception.InvalidPlaceBoundsException;
 import com.ddemachim.server.domain.place.exception.PlaceNotFoundException;
 import com.ddemachim.server.domain.place.repository.PlaceImageRepository;
 import com.ddemachim.server.domain.place.repository.PlaceOperatingHoursRepository;
@@ -23,6 +25,10 @@ import org.springframework.transaction.annotation.Transactional;
 @RequiredArgsConstructor
 @Transactional(readOnly = true)
 public class PlaceQueryService {
+
+    private static final int DEFAULT_MAP_LIMIT = 300;
+    private static final int MIN_MAP_LIMIT = 1;
+    private static final int MAX_MAP_LIMIT = 500;
 
     private final PlaceRepository placeRepository;
     private final PlaceImageRepository placeImageRepository;
@@ -53,6 +59,16 @@ public class PlaceQueryService {
         return PlaceDetailResponse.of(place, operatingHours, images);
     }
 
+    public List<PlaceMapResponse> getPlacesInBounds(
+            Double minLat, Double maxLat, Double minLng, Double maxLng, Integer limit) {
+        validateBounds(minLat, maxLat, minLng, maxLng);
+        int safeLimit = normalizeLimit(limit);
+
+        return placeRepository.findInBounds(minLat, maxLat, minLng, maxLng, safeLimit).stream()
+                .map(PlaceMapResponse::from)
+                .toList();
+    }
+
     private Map<Long, String> firstImageUrlByPlaceId(List<Long> placeIds) {
         if (placeIds.isEmpty()) {
             return Map.of();
@@ -66,5 +82,32 @@ public class PlaceQueryService {
             }
         }
         return result;
+    }
+
+    private void validateBounds(Double minLat, Double maxLat, Double minLng, Double maxLng) {
+        if (minLat == null || maxLat == null || minLng == null || maxLng == null) {
+            throw new InvalidPlaceBoundsException();
+        }
+        if (!isLatitude(minLat) || !isLatitude(maxLat) || !isLongitude(minLng) || !isLongitude(maxLng)) {
+            throw new InvalidPlaceBoundsException();
+        }
+        if (minLat > maxLat || minLng > maxLng) {
+            throw new InvalidPlaceBoundsException();
+        }
+    }
+
+    private boolean isLatitude(Double latitude) {
+        return Double.isFinite(latitude) && latitude >= -90 && latitude <= 90;
+    }
+
+    private boolean isLongitude(Double longitude) {
+        return Double.isFinite(longitude) && longitude >= -180 && longitude <= 180;
+    }
+
+    private int normalizeLimit(Integer limit) {
+        if (limit == null) {
+            return DEFAULT_MAP_LIMIT;
+        }
+        return Math.max(MIN_MAP_LIMIT, Math.min(MAX_MAP_LIMIT, limit));
     }
 }

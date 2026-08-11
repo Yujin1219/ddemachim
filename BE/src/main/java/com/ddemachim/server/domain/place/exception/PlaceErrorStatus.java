@@ -10,6 +10,7 @@ import org.springframework.http.HttpStatus;
 @RequiredArgsConstructor
 public enum PlaceErrorStatus implements BaseErrorCode {
 
+    INVALID_PLACE_BOUNDS(HttpStatus.BAD_REQUEST, "PLACE4001", "잘못된 지도 영역 요청입니다."),
     PLACE_NOT_FOUND(HttpStatus.NOT_FOUND, "PLACE4041", "찾을 수 없는 장소입니다."),
     ;
 
