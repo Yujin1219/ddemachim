@@ -32,6 +32,16 @@ def _get_category_id(conn: psycopg.Connection, code: str) -> int | None:
     return row[0] if row else None
 
 
+def _dto_tags(dto: PlaceDTO) -> list[str] | None:
+    cleaned = []
+    for tag in dto.tags:
+        if isinstance(tag, str):
+            normalized = tag.strip()
+            if normalized and normalized not in cleaned:
+                cleaned.append(normalized)
+    return cleaned or None
+
+
 def _find_existing_source(conn: psycopg.Connection, source: str, source_id: str) -> int | None:
     with conn.cursor() as cur:
         cur.execute(
@@ -44,18 +54,19 @@ def _find_existing_source(conn: psycopg.Connection, source: str, source_id: str)
 
 def _insert_place(conn: psycopg.Connection, dto: PlaceDTO) -> int:
     category_id = _get_category_id(conn, dto.category_code) if dto.category_code else None
+    tags = _dto_tags(dto)
     with conn.cursor() as cur:
         cur.execute(
             """
             INSERT INTO place (
                 name, normalized_name, category_id, road_address, lot_address,
-                district, location, phone, description
+                district, location, phone, description, tags
             ) VALUES (
                 %s, %s, %s, %s, %s, %s,
                 CASE WHEN %s IS NOT NULL AND %s IS NOT NULL
                      THEN ST_SetSRID(ST_MakePoint(%s, %s), 4326)
                      ELSE NULL END,
-                %s, %s
+                %s, %s, %s
             )
             RETURNING id
             """,
@@ -63,7 +74,7 @@ def _insert_place(conn: psycopg.Connection, dto: PlaceDTO) -> int:
                 dto.name, dto.normalized_name, category_id, dto.road_address, dto.lot_address,
                 dto.district,
                 dto.longitude, dto.latitude, dto.longitude, dto.latitude,
-                dto.phone, dto.description,
+                dto.phone, dto.description, tags,
             ),
         )
         (place_id,) = cur.fetchone()
@@ -78,6 +89,7 @@ def _update_place(conn: psycopg.Connection, place_id: int, dto: PlaceDTO, refres
     COALESCE로만 채운다.
     """
     category_id = _get_category_id(conn, dto.category_code) if dto.category_code else None
+    tags = _dto_tags(dto)
     with conn.cursor() as cur:
         cur.execute(
             """
@@ -87,12 +99,21 @@ def _update_place(conn: psycopg.Connection, place_id: int, dto: PlaceDTO, refres
                 lot_address = COALESCE(lot_address, %s),
                 description = COALESCE(description, %s),
                 category_id = CASE WHEN %s THEN COALESCE(%s, category_id) ELSE COALESCE(category_id, %s) END,
+                tags = CASE
+                    WHEN %s::text[] IS NULL THEN tags
+                    ELSE ARRAY(
+                        SELECT DISTINCT merged.tag
+                        FROM unnest(COALESCE(tags, ARRAY[]::text[]) || %s::text[]) AS merged(tag)
+                        ORDER BY merged.tag
+                    )
+                END,
                 updated_at = now()
             WHERE id = %s
             """,
             (
                 dto.phone, dto.road_address, dto.lot_address, dto.description,
                 refresh_category, category_id, category_id,
+                tags, tags,
                 place_id,
             ),
         )
@@ -146,6 +167,7 @@ def load_place(conn: psycopg.Connection, dto: PlaceDTO, stats: LoadStats) -> int
                 "district": dto.district,
                 "candidate_place_id": match.place_id,
                 "road_address": dto.road_address,
+                "tags": dto.tags,
                 "extra": dto.extra,
             }
         )
@@ -164,6 +186,7 @@ def load_place(conn: psycopg.Connection, dto: PlaceDTO, stats: LoadStats) -> int
                 "district": dto.district,
                 "candidate_place_id": None,
                 "road_address": dto.road_address,
+                "tags": dto.tags,
                 "extra": dto.extra,
             }
         )

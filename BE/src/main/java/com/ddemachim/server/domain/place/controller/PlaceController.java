@@ -36,10 +36,12 @@ public class PlaceController {
             @RequestParam(required = false) String category,
             @Parameter(description = "자치구명 (예: 종로구)")
             @RequestParam(required = false) String district,
+            @Parameter(description = "태그 코드 (예: FILMING_LOCATION)")
+            @RequestParam(required = false) String tag,
             @Parameter(description = "장소명 검색 키워드 (부분 일치)")
             @RequestParam(required = false) String keyword,
             Pageable pageable) {
-        return ApiResponse.onSuccess(placeQueryService.search(category, district, keyword, pageable));
+        return ApiResponse.onSuccess(placeQueryService.search(category, district, tag, keyword, pageable));
     }
 
     @Operation(
@@ -48,13 +50,18 @@ public class PlaceController {
                     + "좌표가 없는 장소는 제외되며, limit을 비우면 최대 300건을 반환합니다.")
     @GetMapping("/map")
     public ApiResponse<List<PlaceMapResponse>> getPlacesInBounds(
+            @Parameter(description = "카테고리 코드 (예: RESTAURANT, CAFE)")
+                    @RequestParam(required = false) String category,
+            @Parameter(description = "태그 코드 (예: FILMING_LOCATION)")
+                    @RequestParam(required = false) String tag,
             @Parameter(description = "최소 위도 (-90 이상)") @RequestParam Double minLat,
             @Parameter(description = "최대 위도 (90 이하)") @RequestParam Double maxLat,
             @Parameter(description = "최소 경도 (-180 이상)") @RequestParam Double minLng,
             @Parameter(description = "최대 경도 (180 이하)") @RequestParam Double maxLng,
             @Parameter(description = "최대 반환 건수 (기본 300, 최대 500)")
                     @RequestParam(required = false) Integer limit) {
-        return ApiResponse.onSuccess(placeQueryService.getPlacesInBounds(minLat, maxLat, minLng, maxLng, limit));
+        return ApiResponse.onSuccess(
+                placeQueryService.getPlacesInBounds(category, tag, minLat, maxLat, minLng, maxLng, limit));
     }
 
     @Operation(

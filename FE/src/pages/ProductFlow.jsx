@@ -1,10 +1,12 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { motion, useDragControls, useReducedMotion } from 'motion/react';
 import { ChevronLeft, ChevronRight, CircleHelp, Clock3, Heart, Image as ImageIcon, LocateFixed, MapPin, MoreHorizontal, Search, SearchX, SendHorizontal, X } from 'lucide-react';
+import AppHeader from '../components/AppHeader';
 import BottomNav from '../components/BottomNav';
 import VWorldMap from '../components/VWorldMap';
 import {
   fetchEvents,
+  fetchMapPlaces,
   fetchMediaContents,
   fetchMediaFilmingLocations,
   fetchPlace,
@@ -214,8 +216,37 @@ function AuthScreen({ screen, go }) {
   return <section className="phone standard-screen onboarding-screen onboarding-v3"><main className="page-scroll onboarding-scroll"><div className="onboarding-progress"><strong>{step} / 3</strong><span><i style={{ transform: `scaleX(${step / 3})` }} /></span></div>{screen === 'onboarding' && <><div className="onboarding-copy"><h1>어떤 장소를 좋아하세요?</h1><p>관심 있는 테마를 고르면 첫 코스를 더 잘 추천할 수 있어요.</p></div><div className="onboarding-topic-list">{[['촬영지', '영화와 드라마 속 장면'], ['요즘 뜨는 곳', '저장과 사진 반응이 빠른 장소'], ['팝업·전시', '이번 주에만 만날 수 있는 공간'], ['골목·산책', '천천히 걷기 좋은 서울의 길'], ['카페·디저트', '메뉴와 공간이 함께 좋은 곳']].map(([name, copy]) => { const selected = themes.includes(name); return <button type="button" className={selected ? 'selected' : ''} key={name} onClick={() => setThemes((current) => selected ? current.filter((item) => item !== name) : [...current, name])}><i /><span><strong>{name}</strong><small>{copy}</small></span></button>; })}</div></>}{screen === 'onboarding-schedule' && <><div className="onboarding-copy"><h1>오늘 여행은 어떤 느낌이 좋아요?</h1><p>일정 밀도와 사용할 수 있는 시간을 알려주세요.</p></div><section className="onboarding-group"><h2>일정 밀도</h2><div className="onboarding-density-grid">{[['여유롭게', '장소마다 충분히 머물고 싶어요'], ['촘촘하게', '더 많은 장소를 방문하고 싶어요']].map(([name, copy]) => <button type="button" className={pace === name ? 'selected' : ''} key={name} onClick={() => setPace(name)}><strong>{name}</strong><small>{copy}</small></button>)}</div></section><section className="onboarding-group"><h2>여행 시간</h2><div className="onboarding-duration-grid">{[['3시간', '가볍게 반나절 걷기'], ['5시간', '점심부터 저녁 전까지'], ['하루 종일', '여유 있는 서울 여행']].map(([name, copy]) => <button type="button" className={tripTime === name ? 'selected' : ''} key={name} onClick={() => setTripTime(name)}><strong>{name}</strong><small>{copy}</small></button>)}</div></section></>}{screen === 'onboarding-permissions' && <><div className="onboarding-copy"><h1>필요한 순간에 알려드릴게요</h1><p>권한은 해당 기능을 사용할 때만 요청해요.</p></div><div className="onboarding-permission-list">{[['위치', '길 안내와 도착 감지에 사용'], ['알림', '혼잡 변화와 주변 장소 안내'], ['카메라', '촬영 장면 구도 맞추기'], ['사진', '방문 인증 사진 저장']].map(([name, copy]) => { const selected = permissions.includes(name); return <button type="button" className={selected ? 'selected' : ''} key={name} onClick={() => setPermissions((current) => selected ? current.filter((item) => item !== name) : [...current, name])}><i>{selected ? '✓' : ''}</i><span><strong>{name}</strong><small>{copy}</small></span></button>; })}</div><button type="button" className="onboarding-later" onClick={goNext}>나중에 설정<span>MY에서 언제든 변경 가능</span></button></>}</main><div className="sticky-actions"><ActionButton onClick={goNext}>{screen === 'onboarding-permissions' ? '때마침 시작' : '다음'}</ActionButton></div></section>;
 }
 
+const ALL_MAP_FILTER = { type: 'all', code: 'ALL', label: '전체' };
+const FIXED_MAP_FILTERS = [
+  { type: 'category', code: 'RESTAURANT', label: '음식점', tone: 'restaurant' },
+  { type: 'category', code: 'CAFE_DESSERT', codes: ['CAFE', 'DESSERT'], label: '카페/디저트', tone: 'cafe-dessert' },
+  { type: 'category', code: 'ATTRACTION', label: '관광지', tone: 'attraction' },
+  { type: 'category', code: 'CULTURE', label: '문화시설', tone: 'culture' },
+  { type: 'category', code: 'EXHIBITION', label: '전시', tone: 'exhibition' },
+  { type: 'category', code: 'SHOPPING', label: '쇼핑', tone: 'shopping' },
+  { type: 'category', code: 'POPUP', label: '팝업스토어', tone: 'popup' },
+  { type: 'category', code: 'PARK', label: '공원', tone: 'park' },
+  { type: 'category', code: 'WALK', label: '산책로', tone: 'walk' },
+  { type: 'category', code: 'PHOTO_SPOT', label: '포토스팟', tone: 'photo-spot' },
+  { type: 'tag', code: 'FILMING_LOCATION', label: '촬영지', tone: 'filming' },
+];
+
+function normalizeMapCode(value) {
+  return typeof value === 'string' ? value.trim().toUpperCase() : '';
+}
+
+function normalizeMapTags(tags) {
+  if (Array.isArray(tags)) {
+    return tags.map((tag) => normalizeMapCode(typeof tag === 'string' ? tag : tag?.code)).filter(Boolean);
+  }
+  return normalizeMapCode(tags) ? [normalizeMapCode(tags)] : [];
+}
+
 function MapHome({ go }) {
   const [filter, setFilter] = useState('전체');
+  const [activeMapFilter, setActiveMapFilter] = useState(ALL_MAP_FILTER);
+  const [isMapFilterOpen, setIsMapFilterOpen] = useState(false);
+  const [categorySourcePlaces, setCategorySourcePlaces] = useState([]);
   const [isLocated, setIsLocated] = useState(false);
   const [isNearbySheetCollapsed, setIsNearbySheetCollapsed] = useState(false);
   const [nearbyPlace, setNearbyPlace] = useState(null);
@@ -223,9 +254,10 @@ function MapHome({ go }) {
 
   useEffect(() => {
     let cancelled = false;
-    fetchPlaces({ district: '종로구', size: 1 })
+    fetchPlaces({ district: '종로구', size: 1000 })
       .then((page) => {
         const first = page.content?.[0];
+        if (!cancelled) setCategorySourcePlaces(page.content ?? []);
         if (!cancelled && first) setNearbyPlace(placeToCardProps(first));
       })
       .catch((error) => console.error('주변 장소를 불러오지 못했어요', error));
@@ -255,13 +287,70 @@ function MapHome({ go }) {
       window.dispatchEvent(new CustomEvent('vworld:user-location', { detail: null }));
     };
   }, [isLocated]);
+
+  const sourceCategoryByPlaceId = useMemo(() => {
+    const categories = new Map();
+    categorySourcePlaces.forEach((place) => {
+      if (!place.id || !place.categoryCode) return;
+      categories.set(place.id, {
+        code: normalizeMapCode(place.categoryCode),
+        label: place.categoryLabel || place.categoryCode,
+      });
+    });
+    return categories;
+  }, [categorySourcePlaces]);
+
+  const getMapPlaceCategory = (place) => {
+    if (place.categoryCode) {
+      return {
+        code: normalizeMapCode(place.categoryCode),
+        label: place.categoryLabel || place.categoryCode,
+      };
+    }
+    return sourceCategoryByPlaceId.get(place.id) || null;
+  };
+
+  const visibleMapFilters = isMapFilterOpen
+    ? FIXED_MAP_FILTERS
+    : activeMapFilter.type === 'all'
+      ? []
+      : [activeMapFilter];
+
   const nearbyByFilter = {
     전체: { title: '지금 가기 좋은 곳', place: nearbyPlace || { name: '주변 장소를 불러오는 중', meta: '', image: images.mapPlace, badge: '종로구' }, next: 'place' },
-    요즘: { title: '요즘 반응이 좋은 곳', place: { name: '런던베이글뮤지엄', meta: '오전이 가장 여유로워요', image: images.cafe, badge: '요즘 인기' }, next: 'place' },
-    팝업: { title: '이번 주 팝업', place: { name: '블루 모먼트 전시 팝업', meta: '8월 31일까지', image: images.scene, badge: '이번 주' }, next: 'place' },
     촬영지: { title: '장면 속 가까운 곳', place: { name: '창덕궁 후원', meta: '도깨비 촬영지', image: images.popup, badge: '촬영지' }, next: 'filming-content' },
   };
-  const nearby = nearbyByFilter[filter];
+  const nearby = nearbyByFilter[filter] || nearbyByFilter.전체;
+  const filterMapPlace = (place) => {
+    if (activeMapFilter.type === 'category') {
+      const categoryCode = getMapPlaceCategory(place)?.code;
+      const targetCodes = activeMapFilter.codes || [activeMapFilter.code];
+      return targetCodes.map(normalizeMapCode).includes(categoryCode);
+    }
+    if (activeMapFilter.type === 'tag') {
+      return normalizeMapTags(place.tags).includes(normalizeMapCode(activeMapFilter.code));
+    }
+    return true;
+  };
+  const mapApiFilterParams = () => {
+    if (activeMapFilter.type === 'category') {
+      return { category: activeMapFilter.codes?.join(',') || activeMapFilter.code };
+    }
+    if (activeMapFilter.type === 'tag') {
+      return { tag: activeMapFilter.code };
+    }
+    return {};
+  };
+  const selectMapFilter = (option) => {
+    setActiveMapFilter(option);
+    setIsMapFilterOpen(false);
+    setFilter(option.type === 'tag' && option.code === 'FILMING_LOCATION' ? '촬영지' : '전체');
+  };
+  const toggleAllFilters = () => {
+    setActiveMapFilter(ALL_MAP_FILTER);
+    setFilter('전체');
+    setIsMapFilterOpen((current) => !current);
+  };
   const settleNearbySheet = (_, info) => {
     const swipedDown = info.offset.y > 54 || info.velocity.y > 420;
     const swipedUp = info.offset.y < -54 || info.velocity.y < -420;
@@ -269,7 +358,61 @@ function MapHome({ go }) {
     if (swipedUp) setIsNearbySheetCollapsed(false);
   };
 
-  return <section className="phone map-home-screen"><MapStage><div className="map-top-fade" /><motion.header className="map-home-header" initial={{ opacity: 0, transform: 'perspective(1100px) translateY(-16px) rotateX(-4deg) translateZ(-18px)' }} animate={{ opacity: 1, transform: 'perspective(1100px) translateY(0px) rotateX(0deg) translateZ(0px)' }} transition={{ duration: 0.28, ease: [0.23, 1, 0.32, 1] }}><p>안국동 · 내 주변</p><h1>오늘, 어디로 걸어볼까요?</h1><button className="map-search-trigger" onClick={() => go('search')} type="button"><span><SearchIcon /></span>장소·지역·테마 검색</button><div className="chip-row">{['전체', '요즘', '팝업', '촬영지'].map((item) => <Chip active={filter === item} key={item} onClick={() => setFilter(item)}>{item}</Chip>)}</div></motion.header><MapPlacePulse /><button className={`map-location-button ${isLocated ? 'is-located' : ''}`} type="button" aria-label="내 위치" aria-pressed={isLocated} onClick={() => setIsLocated((current) => !current)}><LocateFixed aria-hidden="true" size={20} strokeWidth={2.2} /></button>{isLocated && <p className="map-location-status" role="status">현재 위치를 기준으로 보고 있어요</p>}<motion.section className="bottom-sheet map-nearby-sheet motion-depth-sheet" data-collapsed={isNearbySheetCollapsed || undefined} initial={{ opacity: 0, y: 42 }} animate={{ opacity: 1, y: isNearbySheetCollapsed ? 176 : 0 }} transition={{ opacity: { duration: 0.28, delay: 0.08 }, y: { type: 'spring', stiffness: 420, damping: 38 } }} drag="y" dragControls={nearbySheetDragControls} dragListener={false} dragConstraints={{ top: 0, bottom: 176 }} dragElastic={0.06} dragMomentum={false} onDragEnd={settleNearbySheet}><button className="map-sheet-handle-button" type="button" aria-label={isNearbySheetCollapsed ? '주변 장소 패널 펼치기' : '주변 장소 패널 접기'} aria-expanded={!isNearbySheetCollapsed} onPointerDown={(event) => nearbySheetDragControls.start(event)} onClick={() => setIsNearbySheetCollapsed((current) => !current)}><span className="sheet-handle" /></button><ScreenSection title={nearby.title} action="전체보기" onAction={() => go('explore')}><PlaceRow place={nearby.place} onClick={() => go(nearby.next, nearby.place.id)} /></ScreenSection><button type="button" className="map-live-link" onClick={() => go('live-talk')}><span>내 주변 지금톡</span><small>현장 소식 6개&nbsp; ›</small></button></motion.section></MapStage><BottomNav active="map" onNavigate={(tab) => go(rootRoutes[tab])} /></section>;
+  return (
+    <section className="phone map-home-screen">
+      <MapStage
+        mapProps={{
+          loadPlacesInBounds: (bounds) => fetchMapPlaces({ ...bounds, ...mapApiFilterParams() }),
+          placeMarkerFilter: filterMapPlace,
+          placeMarkerFilterKey: `${activeMapFilter.type}:${activeMapFilter.codes?.join(',') || activeMapFilter.code}`,
+          placeRequestKey: `${activeMapFilter.type}:${activeMapFilter.codes?.join(',') || activeMapFilter.code}`,
+          onPlaceClick: (place) => go('place', place.id),
+        }}
+      >
+        <div className="map-top-fade" />
+        <motion.header
+          className="map-home-header"
+          initial={{ opacity: 0, transform: 'perspective(1100px) translateY(-16px) rotateX(-4deg) translateZ(-18px)' }}
+          animate={{ opacity: 1, transform: 'perspective(1100px) translateY(0px) rotateX(0deg) translateZ(0px)' }}
+          transition={{ duration: 0.28, ease: [0.23, 1, 0.32, 1] }}
+        >
+          <p>안국동 · 내 주변</p>
+          <h1>오늘, 어디로 걸어볼까요?</h1>
+          <button className="map-search-trigger" onClick={() => go('search')} type="button"><span><SearchIcon /></span>장소·지역·테마 검색</button>
+          <div className="map-filter-bar">
+            <button
+              className={`map-filter-toggle ${activeMapFilter.type === 'all' ? 'is-active' : ''}`}
+              onClick={toggleAllFilters}
+              type="button"
+              aria-expanded={isMapFilterOpen}
+            >
+              전체
+            </button>
+            {visibleMapFilters.map((item) => (
+              <button
+                className={`map-filter-chip is-${item.tone} ${activeMapFilter.type === item.type && activeMapFilter.code === item.code ? 'is-active' : ''}`}
+                key={`${item.type}:${item.code}`}
+                onClick={() => selectMapFilter(item)}
+                type="button"
+                aria-pressed={activeMapFilter.type === item.type && activeMapFilter.code === item.code}
+              >
+                {item.label}
+              </button>
+            ))}
+          </div>
+        </motion.header>
+        <MapPlacePulse />
+        <button className={`map-location-button ${isLocated ? 'is-located' : ''}`} type="button" aria-label="내 위치" aria-pressed={isLocated} onClick={() => setIsLocated((current) => !current)}><LocateFixed aria-hidden="true" size={20} strokeWidth={2.2} /></button>
+        {isLocated && <p className="map-location-status" role="status">현재 위치를 기준으로 보고 있어요</p>}
+        <motion.section className="bottom-sheet map-nearby-sheet motion-depth-sheet" data-collapsed={isNearbySheetCollapsed || undefined} initial={{ opacity: 0, y: 42 }} animate={{ opacity: 1, y: isNearbySheetCollapsed ? 176 : 0 }} transition={{ opacity: { duration: 0.28, delay: 0.08 }, y: { type: 'spring', stiffness: 420, damping: 38 } }} drag="y" dragControls={nearbySheetDragControls} dragListener={false} dragConstraints={{ top: 0, bottom: 176 }} dragElastic={0.06} dragMomentum={false} onDragEnd={settleNearbySheet}>
+          <button className="map-sheet-handle-button" type="button" aria-label={isNearbySheetCollapsed ? '주변 장소 패널 펼치기' : '주변 장소 패널 접기'} aria-expanded={!isNearbySheetCollapsed} onPointerDown={(event) => nearbySheetDragControls.start(event)} onClick={() => setIsNearbySheetCollapsed((current) => !current)}><span className="sheet-handle" /></button>
+          <ScreenSection title={nearby.title} action="전체보기" onAction={() => go('explore')}><PlaceRow place={nearby.place} onClick={() => go(nearby.next, nearby.place.id)} /></ScreenSection>
+          <button type="button" className="map-live-link" onClick={() => go('live-talk')}><span>내 주변 지금톡</span><small>현장 소식 6개&nbsp; ›</small></button>
+        </motion.section>
+      </MapStage>
+      <BottomNav active="map" onNavigate={(tab) => go(rootRoutes[tab])} />
+    </section>
+  );
 }
 
 function ExploreReveal({ children, delay = 0 }) {
@@ -672,22 +815,34 @@ function MyScreen({ screen, go }) {
   return <section className="phone standard-screen tab-screen my-screen"><main className="page-scroll my-scroll"><header className="my-title"><h1>MY</h1></header><section className="profile-hero"><div className="profile-row"><span className="avatar">Y</span><div><h2>유진</h2><p>이번 달 7곳을 걸었어요</p></div></div><div className="profile-stats"><span><b>3</b>내 코스</span><span><b>18</b>저장</span><span><b>6</b>후기</span></div></section><ScreenSection title="내 코스"><button type="button" className="my-course-card" onClick={() => go('active-course')}><VWorldMap ariaLabel="안국동 코스 지도" interactive={false} style={{ width: '100%', height: 122 }} /><span><strong>안국에서 성수까지, 여름 하루</strong><small>4곳 · 5시간 10분 · 8월 3일</small></span></button></ScreenSection><ScreenSection title="내 활동"><div className="activity-grid"><button type="button" onClick={() => go('saved-courses')}><span>저장한 장소</span><strong>18</strong></button><button type="button" onClick={() => go('reviews')}><span>내 후기</span><strong>6</strong></button></div></ScreenSection></main><BottomNav active="my" onNavigate={(tab) => go(rootRoutes[tab])} /></section>;
 }
 
+function AppScreenFrame({ children, go }) {
+  return (
+    <div className="screen-frame">
+      <AppHeader onNotifications={() => go('notifications')} onProfile={() => go('my')} />
+      <div className="screen-frame-content with-app-header">{children}</div>
+    </div>
+  );
+}
+
 function RenderScreen({ screen, id, go }) {
-  if (routeGroups.auth.includes(screen)) return <AuthScreen screen={screen} go={go} />;
-  if (screen === 'map') return <MapHome go={go} />;
-  if (screen === 'explore') return <ExploreScreen go={go} />;
-  if (screen === 'place') return <PlaceDetail go={go} placeId={id} />;
-  if (screen === 'search' || screen === 'search-empty') return <SearchResults screen={screen} go={go} />;
-  if (screen === 'saved') return <SavedConfirmation go={go} />;
-  if (screen === 'trending' || screen === 'filming-locations' || screen === 'popups') return <CollectionScreen screen={screen} go={go} />;
-  if (screen === 'live-talk') return <LiveTalk go={go} />;
-  if (screen === 'course-conditions') return <CourseConditions go={go} />;
-  if (screen === 'basket' || screen === 'basket-natural' || screen === 'basket-glass') return <CourseBasket screen={screen} go={go} />;
-  if (screen === 'compare' || screen === 'route-map') return <CourseCompare screen={screen} go={go} />;
-  if (routeGroups.travel.includes(screen)) return <TravelScreen screen={screen} go={go} />;
-  if (routeGroups.filming.includes(screen)) return <FilmingScreen screen={screen} go={go} />;
-  if (routeGroups.record.includes(screen)) return <RecordScreen screen={screen} go={go} />;
-  return <MyScreen screen={screen} go={go} />;
+  let renderedScreen;
+  if (routeGroups.auth.includes(screen)) renderedScreen = <AuthScreen screen={screen} go={go} />;
+  else if (screen === 'map') renderedScreen = <MapHome go={go} />;
+  else if (screen === 'explore') renderedScreen = <ExploreScreen go={go} />;
+  else if (screen === 'place') renderedScreen = <PlaceDetail go={go} placeId={id} />;
+  else if (screen === 'search' || screen === 'search-empty') renderedScreen = <SearchResults screen={screen} go={go} />;
+  else if (screen === 'saved') renderedScreen = <SavedConfirmation go={go} />;
+  else if (screen === 'trending' || screen === 'filming-locations' || screen === 'popups') renderedScreen = <CollectionScreen screen={screen} go={go} />;
+  else if (screen === 'live-talk') renderedScreen = <LiveTalk go={go} />;
+  else if (screen === 'course-conditions') renderedScreen = <CourseConditions go={go} />;
+  else if (screen === 'basket' || screen === 'basket-natural' || screen === 'basket-glass') renderedScreen = <CourseBasket screen={screen} go={go} />;
+  else if (screen === 'compare' || screen === 'route-map') renderedScreen = <CourseCompare screen={screen} go={go} />;
+  else if (routeGroups.travel.includes(screen)) renderedScreen = <TravelScreen screen={screen} go={go} />;
+  else if (routeGroups.filming.includes(screen)) renderedScreen = <FilmingScreen screen={screen} go={go} />;
+  else if (routeGroups.record.includes(screen)) renderedScreen = <RecordScreen screen={screen} go={go} />;
+  else renderedScreen = <MyScreen screen={screen} go={go} />;
+
+  return <AppScreenFrame go={go}>{renderedScreen}</AppScreenFrame>;
 }
 
 export default function ProductFlow() {

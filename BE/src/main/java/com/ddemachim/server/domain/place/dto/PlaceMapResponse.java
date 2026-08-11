@@ -6,6 +6,8 @@ import com.ddemachim.server.domain.place.entity.Place;
 public record PlaceMapResponse(
         Long id,
         String name,
+        String categoryCode,
+        String categoryLabel,
         Double latitude,
         Double longitude,
         String[] tags) {
@@ -17,6 +19,8 @@ public record PlaceMapResponse(
         return new PlaceMapResponse(
                 place.getId(),
                 place.getName(),
+                place.getCategory() != null ? place.getCategory().getCode() : null,
+                place.getCategory() != null ? place.getCategory().getLabelKo() : null,
                 latitude,
                 longitude,
                 place.getTags());

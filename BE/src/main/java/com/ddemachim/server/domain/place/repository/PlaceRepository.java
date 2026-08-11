@@ -11,15 +11,32 @@ import org.springframework.data.repository.query.Param;
 public interface PlaceRepository extends JpaRepository<Place, Long> {
 
     @Query(
-            "select p from Place p "
-                    + "left join p.category c "
-                    + "where (:category is null or c.code = :category) "
-                    + "and (:district is null or p.district = :district) "
-                    + "and (:keyword is null or p.normalizedName like concat('%', cast(:keyword as string), '%')) "
-                    + "order by p.id")
+            value =
+                    """
+                    select p.*
+                    from place p
+                    left join place_category c on p.category_id = c.id
+                    where (:category is null or c.code = :category)
+                    and (:district is null or p.district = :district)
+                    and (:tag is null or :tag = any(p.tags))
+                    and (:keyword is null or p.normalized_name like concat('%', cast(:keyword as text), '%'))
+                    order by p.id
+                    """,
+            countQuery =
+                    """
+                    select count(*)
+                    from place p
+                    left join place_category c on p.category_id = c.id
+                    where (:category is null or c.code = :category)
+                    and (:district is null or p.district = :district)
+                    and (:tag is null or :tag = any(p.tags))
+                    and (:keyword is null or p.normalized_name like concat('%', cast(:keyword as text), '%'))
+                    """,
+            nativeQuery = true)
     Page<Place> search(
             @Param("category") String category,
             @Param("district") String district,
+            @Param("tag") String tag,
             @Param("keyword") String keyword,
             Pageable pageable);
 
@@ -28,13 +45,18 @@ public interface PlaceRepository extends JpaRepository<Place, Long> {
                     """
                     select p.*
                     from place p
+                    left join place_category c on p.category_id = c.id
                     where p.location is not null
+                    and (:category is null or c.code = any(string_to_array(:category, ',')))
+                    and (:tag is null or :tag = any(p.tags))
                     and ST_Intersects(p.location, ST_MakeEnvelope(:minLng, :minLat, :maxLng, :maxLat, 4326))
                     order by p.id
                     limit :limit
                     """,
             nativeQuery = true)
     List<Place> findInBounds(
+            @Param("category") String category,
+            @Param("tag") String tag,
             @Param("minLat") Double minLat,
             @Param("maxLat") Double maxLat,
             @Param("minLng") Double minLng,

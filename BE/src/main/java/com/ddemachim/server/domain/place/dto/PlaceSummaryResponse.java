@@ -13,6 +13,7 @@ public record PlaceSummaryResponse(
         Double latitude,
         Double longitude,
         String phone,
+        String[] tags,
         String thumbnailUrl) {
 
     public static PlaceSummaryResponse of(Place place, String thumbnailUrl) {
@@ -29,6 +30,7 @@ public record PlaceSummaryResponse(
                 latitude,
                 longitude,
                 place.getPhone(),
+                place.getTags(),
                 thumbnailUrl);
     }
 }

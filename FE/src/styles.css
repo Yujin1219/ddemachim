@@ -42,7 +42,19 @@ img { max-width: 100%; display: block; }
 }
 
 .screen-transition { width: min(390px, 100vw); height: min(844px, 100dvh); }
-.screen-transition > .phone { width: 100%; height: 100%; }
+.screen-frame {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  --app-header-height: 64px;
+  overflow: hidden;
+  border: 1px solid rgba(132, 148, 169, .22);
+  border-radius: 20px;
+  background: var(--color-bg-app);
+  box-shadow: 0 20px 54px rgba(24, 40, 61, .14);
+}
+.screen-frame-content, .screen-frame-content > .phone { width: 100%; height: 100%; }
+.screen-frame-content > .phone { border: 0; border-radius: 0; box-shadow: none; }
 
 .phone {
   position: relative;
@@ -555,6 +567,22 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, [role='button
 .map-home-header .chip-row { gap: 6px; margin-top: 10px; }
 .map-home-header .ui-chip { border-color: rgba(219,228,238,.9); background: rgba(255,255,255,.82); backdrop-filter: blur(10px); }
 .map-home-header .ui-chip.is-active { border-color: rgba(23,88,189,.28); background: rgba(232,240,253,.96); }
+.map-filter-bar { width: 100%; min-height: 32px; display: flex; align-items: center; gap: 6px; margin-top: 10px; overflow-x: auto; scrollbar-width: none; }
+.map-filter-bar::-webkit-scrollbar { display: none; }
+.map-filter-toggle, .map-filter-chip { flex: 0 0 auto; min-height: 30px; max-width: 150px; overflow: hidden; padding: 5px 10px; border: 1px solid var(--filter-border, rgba(219,228,238,.9)); border-radius: 10px; color: var(--filter-text, var(--color-text-secondary)); background: var(--filter-bg, rgba(255,255,255,.82)); backdrop-filter: blur(10px); font-size: 13px; font-weight: 500; line-height: 18px; text-overflow: ellipsis; white-space: nowrap; box-shadow: 0 4px 14px rgba(24,40,61,.05); transition: color 160ms ease, background-color 160ms ease, border-color 160ms ease, transform 150ms var(--ease-out); }
+.map-filter-toggle.is-active, .map-filter-chip.is-active { border-color: var(--filter-active-border, rgba(23,88,189,.28)); color: var(--filter-active-text, var(--color-text-brand)); background: var(--filter-active-bg, rgba(232,240,253,.96)); }
+.map-filter-toggle:active, .map-filter-chip:active { transform: scale(.97); }
+.map-filter-chip.is-restaurant { --filter-text: #b91c1c; --filter-bg: rgba(254,242,242,.9); --filter-border: rgba(248,113,113,.28); --filter-active-text: #991b1b; --filter-active-bg: rgba(254,226,226,.98); --filter-active-border: rgba(239,68,68,.45); }
+.map-filter-chip.is-cafe-dessert { --filter-text: #9a5a16; --filter-bg: rgba(255,247,237,.92); --filter-border: rgba(196,122,44,.28); --filter-active-text: #7c3f0f; --filter-active-bg: rgba(255,237,213,.98); --filter-active-border: rgba(196,122,44,.45); }
+.map-filter-chip.is-attraction { --filter-text: #1d4ed8; --filter-bg: rgba(239,246,255,.92); --filter-border: rgba(59,130,246,.28); --filter-active-text: #1e40af; --filter-active-bg: rgba(219,234,254,.98); --filter-active-border: rgba(37,99,235,.45); }
+.map-filter-chip.is-culture { --filter-text: #0e7490; --filter-bg: rgba(236,254,255,.92); --filter-border: rgba(8,145,178,.28); --filter-active-text: #155e75; --filter-active-bg: rgba(207,250,254,.98); --filter-active-border: rgba(8,145,178,.45); }
+.map-filter-chip.is-exhibition { --filter-text: #6d28d9; --filter-bg: rgba(245,243,255,.92); --filter-border: rgba(124,58,237,.28); --filter-active-text: #5b21b6; --filter-active-bg: rgba(237,233,254,.98); --filter-active-border: rgba(124,58,237,.45); }
+.map-filter-chip.is-shopping { --filter-text: #be185d; --filter-bg: rgba(253,242,248,.92); --filter-border: rgba(219,39,119,.28); --filter-active-text: #9d174d; --filter-active-bg: rgba(252,231,243,.98); --filter-active-border: rgba(219,39,119,.45); }
+.map-filter-chip.is-popup { --filter-text: #c2410c; --filter-bg: rgba(255,247,237,.92); --filter-border: rgba(234,88,12,.3); --filter-active-text: #9a3412; --filter-active-bg: rgba(254,215,170,.98); --filter-active-border: rgba(234,88,12,.48); }
+.map-filter-chip.is-park { --filter-text: #15803d; --filter-bg: rgba(240,253,244,.92); --filter-border: rgba(34,197,94,.3); --filter-active-text: #166534; --filter-active-bg: rgba(220,252,231,.98); --filter-active-border: rgba(22,163,74,.46); }
+.map-filter-chip.is-walk { --filter-text: #0f766e; --filter-bg: rgba(240,253,250,.92); --filter-border: rgba(20,184,166,.3); --filter-active-text: #115e59; --filter-active-bg: rgba(204,251,241,.98); --filter-active-border: rgba(15,118,110,.46); }
+.map-filter-chip.is-photo-spot { --filter-text: #4338ca; --filter-bg: rgba(238,242,255,.92); --filter-border: rgba(79,70,229,.28); --filter-active-text: #3730a3; --filter-active-bg: rgba(224,231,255,.98); --filter-active-border: rgba(79,70,229,.45); }
+.map-filter-chip.is-filming { --filter-text: #7e22ce; --filter-bg: rgba(250,245,255,.92); --filter-border: rgba(147,51,234,.3); --filter-active-text: #6b21a8; --filter-active-bg: rgba(243,232,255,.98); --filter-active-border: rgba(147,51,234,.48); }
 .map-location-button { border-radius: var(--radius-control); box-shadow: 0 7px 18px rgba(24,40,61,.10); }
 .bottom-sheet { padding-top: 26px; border-radius: 20px 20px 0 0; background: rgba(246,248,251,.97); box-shadow: 0 -10px 24px rgba(24,40,61,.08); }
 .sheet-handle { width: 36px; height: 3px; border-radius: 2px; background: #b9c5d3; }
@@ -607,6 +635,174 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, [role='button
 .story-route-traveller.is-static { opacity: 1; transform: translate(154px, -58px); animation: none; }
 .story-primary-action, .story-secondary-action { transition: transform 150ms var(--ease-out), background-color 180ms var(--ease-out), border-color 180ms var(--ease-out), box-shadow 180ms var(--ease-out), color 180ms var(--ease-out); }
 
+/* Shared Figma AppHeader. Rendered once by the ProductFlow screen frame. */
+.app-header {
+  position: absolute;
+  z-index: 80;
+  top: 0;
+  right: 0;
+  left: 0;
+  height: var(--app-header-height);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 10px 16px 10px 20px;
+  box-shadow: 0 8px 24px -8px rgba(23,51,140,.08);
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+}
+
+.app-header-brand {
+  min-width: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 9px;
+  color: #172033;
+}
+
+.app-header-brand strong {
+  overflow: hidden;
+  font-family: "Noto Sans KR", "Pretendard Variable", Pretendard, "Apple SD Gothic Neo", sans-serif;
+  font-size: 22px;
+  font-weight: 700;
+  line-height: 32px;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.app-header-logo {
+  position: relative;
+  width: 32px;
+  height: 32px;
+  flex: 0 0 32px;
+  display: grid;
+  place-items: center;
+  filter: drop-shadow(-1.231px .985px 2.215px rgba(41,125,255,.18)) drop-shadow(0 2.215px 3.446px rgba(74,56,217,.22));
+}
+
+.app-header-logo-mark {
+  width: 23.9427px;
+  height: 23.8197px;
+}
+
+.app-header-logo-spark {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 6.4px;
+  height: 6.4px;
+  transform: translate(-50%, -50%);
+}
+
+.app-header-actions {
+  height: 44px;
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.app-header-action,
+.app-header-profile {
+  position: relative;
+  background: transparent;
+  width: 44px;
+  height: 44px;
+  flex: 0 0 44px;
+  display: grid;
+  place-items: center;
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius-control);
+}
+
+.app-header-action img {
+  width: 44px;
+  height: 44px;
+}
+
+.app-header-profile img {
+  position: absolute;
+  inset: 4px;
+  width: 36px;
+  height: 36px;
+}
+
+.app-header-profile span {
+  position: relative;
+  z-index: 1;
+  color: #fff;
+  font-size: 14px;
+  font-weight: 700;
+  line-height: 20px;
+}
+
+.with-app-header > .phone > .screen-header {
+  margin-top: var(--app-header-height);
+}
+
+.with-app-header > .phone > .screen-header + .page-scroll {
+  height: calc(100% - var(--app-header-height) - 72px);
+}
+
+.with-app-header .map-home-header,
+.with-app-header .story-topbar,
+.with-app-header .detail-controls,
+.with-app-header .onsite-overlay-actions,
+.with-app-header .filming-content-controls,
+.with-app-header .camera-header {
+  top: calc(var(--app-header-height) + 16px);
+}
+
+.with-app-header .navigation-top-card,
+.with-app-header .arrival-top-card {
+  top: calc(var(--app-header-height) + 12px);
+}
+
+.with-app-header .navigation-instruction {
+  top: calc(var(--app-header-height) + 101px);
+}
+
+.with-app-header .map-top-fade {
+  height: 292px;
+}
+
+.with-app-header .explore-scroll,
+.with-app-header .my-scroll,
+.with-app-header .auth-form-scroll,
+.with-app-header .onboarding-screen .page-scroll,
+.with-app-header .notifications-scroll,
+.with-app-header .route-overview-scroll,
+.with-app-header .compare-screen .page-scroll,
+.with-app-header .scene-detail-v3 .page-scroll {
+  padding-top: calc(var(--app-header-height) + 24px);
+}
+
+.with-app-header .course-condition-screen .page-scroll {
+  padding-top: calc(var(--app-header-height) + 20px);
+}
+
+.with-app-header .course-condition-screen .progress-pill {
+  top: calc(var(--app-header-height) + 27px);
+}
+
+.with-app-header .search-page-field {
+  padding-top: 18px;
+}
+
+.with-app-header .save-confirmation-toast {
+  top: calc(var(--app-header-height) + 182px);
+}
+
+.with-app-header .server-map-heading {
+  top: calc(var(--app-header-height) + 16px);
+}
+
+.with-app-header .intro-screen {
+  padding-top: 84px;
+}
+
 @keyframes story-route-traveller {
   0% { opacity: 0; transform: translate(0, 0); }
   16% { opacity: 1; }
@@ -622,6 +818,7 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, [role='button
 @media (max-width: 430px) {
   .app-shell { padding: 0; }
   .screen-transition { width: 100vw; height: 100dvh; }
+  .screen-frame { border: 0; border-radius: 0; box-shadow: none; }
   .phone { width: 100vw; height: 100dvh; border: 0; border-radius: 0; box-shadow: none; }
   .bottom-nav { height: calc(68px + env(safe-area-inset-bottom)); padding-bottom: env(safe-area-inset-bottom); }
   .tab-screen .page-scroll { height: calc(100% - 68px - env(safe-area-inset-bottom)); }

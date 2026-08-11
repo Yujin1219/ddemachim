@@ -63,7 +63,7 @@ def main() -> int:
                         extra.get("closed_days_raw"),
                         extra.get("transit_info"),
                         extra.get("accessibility"),
-                        extra.get("tags") or None,
+                        dto.tags or extra.get("tags") or None,
                         extra.get("website"),
                         place_id,
                     ),

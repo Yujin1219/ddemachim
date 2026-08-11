@@ -10,6 +10,5 @@ INSERT INTO place_category (code, label_ko) VALUES
     ('PARK', '공원'),
     ('WALK', '산책로'),
     ('PHOTO_SPOT', '포토스팟'),
-    ('FILMING_LOCATION', '촬영지'),
     ('ETC', '기타')
 ON CONFLICT (code) DO NOTHING;

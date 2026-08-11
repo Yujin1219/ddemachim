@@ -47,6 +47,7 @@ def normalize_record(raw: dict[str, Any]) -> PlaceDTO | None:
         district=district,
         normalized_name=normalize_place_name(name),
         category_code="ATTRACTION",
+        tags=tags,
         has_coordinates=False,
         extra={
             "content_url": clean_text(raw.get("콘텐츠URL")),
@@ -56,7 +57,6 @@ def normalize_record(raw: dict[str, Any]) -> PlaceDTO | None:
             "operating_days_raw": clean_text(raw.get("운영요일")),
             "closed_days_raw": clean_text(raw.get("휴무일")),
             "transit_info": clean_text(raw.get("교통정보")),
-            "tags": tags,
             "accessibility": clean_text(raw.get("장애인편의시설")),
         },
     )

@@ -1,0 +1,9 @@
+<svg preserveAspectRatio="none" overflow="visible" style="display: block;" width="44" height="44" viewBox="0 0 44 44" fill="none" xmlns="http://www.w3.org/2000/svg">
+<g id="Notification">
+<g id="Bell Icon">
+<path id="Vector" d="M28 18C28 16.4087 27.3679 14.8826 26.2426 13.7574C25.1174 12.6321 23.5913 12 22 12C20.4087 12 18.8826 12.6321 17.7574 13.7574C16.6321 14.8826 16 16.4087 16 18C16 25 13 26 13 26H31C31 26 28 25 28 18Z" stroke="#172033" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
+<path id="Vector_2" d="M23.73 31C23.5542 31.3031 23.3018 31.5547 22.9982 31.7295C22.6946 31.9044 22.3504 31.9965 22 31.9965C21.6496 31.9965 21.3054 31.9044 21.0018 31.7295C20.6982 31.5547 20.4458 31.3031 20.27 31" stroke="#172033" stroke-width="1.8" stroke-linecap="round"/>
+</g>
+<circle id="Unread Badge" cx="31" cy="11" r="3" fill="#DC2626" stroke="white" stroke-width="2"/>
+</g>
+</svg>

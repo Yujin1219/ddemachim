@@ -35,8 +35,8 @@ public class PlaceQueryService {
     private final PlaceOperatingHoursRepository placeOperatingHoursRepository;
 
     public Page<PlaceSummaryResponse> search(
-            String category, String district, String keyword, Pageable pageable) {
-        Page<Place> places = placeRepository.search(category, district, keyword, pageable);
+            String category, String district, String tag, String keyword, Pageable pageable) {
+        Page<Place> places = placeRepository.search(category, district, tag, keyword, pageable);
 
         List<Long> placeIds = places.getContent().stream().map(Place::getId).toList();
         Map<Long, String> thumbnailByPlaceId = firstImageUrlByPlaceId(placeIds);
@@ -60,11 +60,13 @@ public class PlaceQueryService {
     }
 
     public List<PlaceMapResponse> getPlacesInBounds(
-            Double minLat, Double maxLat, Double minLng, Double maxLng, Integer limit) {
+            String category, String tag, Double minLat, Double maxLat, Double minLng, Double maxLng, Integer limit) {
         validateBounds(minLat, maxLat, minLng, maxLng);
         int safeLimit = normalizeLimit(limit);
+        String safeCategory = normalizeFilter(category);
+        String safeTag = normalizeFilter(tag);
 
-        return placeRepository.findInBounds(minLat, maxLat, minLng, maxLng, safeLimit).stream()
+        return placeRepository.findInBounds(safeCategory, safeTag, minLat, maxLat, minLng, maxLng, safeLimit).stream()
                 .map(PlaceMapResponse::from)
                 .toList();
     }
@@ -109,5 +111,12 @@ public class PlaceQueryService {
             return DEFAULT_MAP_LIMIT;
         }
         return Math.max(MIN_MAP_LIMIT, Math.min(MAX_MAP_LIMIT, limit));
+    }
+
+    private String normalizeFilter(String value) {
+        if (value == null || value.isBlank()) {
+            return null;
+        }
+        return value.trim().replaceAll("\\s*,\\s*", ",");
     }
 }
