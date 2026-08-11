@@ -128,6 +128,7 @@ CREATE TABLE IF NOT EXISTS filming_location (
     media_content_id    bigint REFERENCES media_content(id) ON DELETE SET NULL, -- null이면 TMDB 매칭 전
     match_confidence    numeric(4,3),  -- 0.000 ~ 1.000, null이면 미계산
     match_status        varchar(20) NOT NULL DEFAULT 'REVIEW_REQUIRED', -- AUTO_MATCH / REVIEW_REQUIRED / NO_MATCH
+    scene_description   text,
     source              varchar(30) NOT NULL,
     source_id           varchar(100) NOT NULL,
     UNIQUE (source, source_id)

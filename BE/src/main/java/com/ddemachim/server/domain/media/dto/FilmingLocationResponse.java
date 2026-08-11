@@ -9,6 +9,7 @@ public record FilmingLocationResponse(
         Long placeId,
         String placeName,
         MediaContentSummaryResponse mediaContent,
+        String sceneDescription,
         String matchStatus,
         BigDecimal matchConfidence) {
 
@@ -20,6 +21,7 @@ public record FilmingLocationResponse(
                 filmingLocation.getMediaContent() != null
                         ? MediaContentSummaryResponse.from(filmingLocation.getMediaContent())
                         : null,
+                filmingLocation.getSceneDescription(),
                 filmingLocation.getMatchStatus(),
                 filmingLocation.getMatchConfidence());
     }

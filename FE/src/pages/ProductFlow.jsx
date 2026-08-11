@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { motion, useDragControls, useReducedMotion } from 'motion/react';
 import { ChevronLeft, ChevronRight, CircleHelp, Clock3, Heart, Image as ImageIcon, LocateFixed, MapPin, MoreHorizontal, Search, SearchX, SendHorizontal, X } from 'lucide-react';
 import AppHeader from '../components/AppHeader';
@@ -8,8 +8,8 @@ import {
   fetchEvents,
   fetchMapPlaces,
   fetchMediaContents,
-  fetchMediaFilmingLocations,
   fetchPlace,
+  fetchPlaceFilmingLocations,
   fetchPlaces,
 } from '../api/client';
 import {
@@ -46,6 +46,8 @@ const images = {
   myMap: '/assets/figma/my-map.png',
 };
 
+const EXPLORE_PAGE_SIZE = 6;
+
 function SearchIcon() {
   return <Search aria-hidden="true" size={20} strokeWidth={2} />;
 }
@@ -54,6 +56,12 @@ const locationRows = [
   { name: '도토리가든', meta: '안국 · 정원 사진이 요즘 인기', image: images.cafe, badge: '요즘 핫한 장소' },
   { name: '창덕궁 후원', meta: '종로 · 도깨비 촬영지', image: images.popup, badge: '도깨비 촬영지' },
   { name: '운현궁', meta: '안국 · 관람 약 20분', image: images.onsite, badge: '지금 여유' },
+];
+
+const CURATED_TRENDING_PLACES = [
+  { id: 'curated-dotori', name: '도토리가든', meta: '큐레이션 준비 중 · 요즘 핫한 장소', image: images.cafe, badge: '큐레이션 예정' },
+  { id: 'curated-bagel', name: '런던베이글뮤지엄', meta: '큐레이션 준비 중 · 안국 인기 장소', image: images.mapPlace, badge: '큐레이션 예정' },
+  { id: 'curated-unhyeongung', name: '운현궁', meta: '큐레이션 준비 중 · 종로 산책 코스', image: images.onsite, badge: '큐레이션 예정' },
 ];
 
 function readHash() {
@@ -72,14 +80,11 @@ function placeToCardProps(place) {
   };
 }
 
-function filmingLocationToCardProps(filmingLocation) {
-  const workTitle = filmingLocation.mediaContent?.title;
+function filmingPlaceToCardProps(place) {
   return {
-    id: filmingLocation.placeId,
-    name: filmingLocation.placeName,
-    meta: workTitle ? `${workTitle} 촬영지` : '촬영지',
-    image: images.popup,
-    badge: workTitle || '촬영지',
+    ...placeToCardProps(place),
+    image: place.thumbnailUrl || images.popup,
+    badge: '촬영지',
   };
 }
 
@@ -91,6 +96,105 @@ function eventToRowProps(event) {
     meta: [event.venueName, event.startDate].filter(Boolean).join(' · '),
     image: event.mainImage || images.scene,
   };
+}
+
+function eventToCardProps(event) {
+  return {
+    ...eventToRowProps(event),
+    badge: event.startDate || '행사',
+  };
+}
+
+function hasNextPage(page, size) {
+  if (typeof page?.last === 'boolean') return !page.last;
+  if (Number.isFinite(page?.totalPages) && Number.isFinite(page?.number)) return page.number + 1 < page.totalPages;
+  return (page?.content?.length ?? 0) >= size;
+}
+
+function appendUniqueItems(current, next) {
+  const seen = new Set(current.map((item) => item.id ?? item.name));
+  return [...current, ...next.filter((item) => {
+    const key = item.id ?? item.name;
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  })];
+}
+
+function useHorizontalPagedList({ loadPage, mapItem, size = EXPLORE_PAGE_SIZE }) {
+  const [items, setItems] = useState([]);
+  const [page, setPage] = useState(0);
+  const [hasMore, setHasMore] = useState(true);
+  const [isLoading, setIsLoading] = useState(false);
+  const [error, setError] = useState(false);
+  const loadingRef = useRef(false);
+  const didLoadInitialPageRef = useRef(false);
+
+  const loadMore = useCallback(async () => {
+    if (loadingRef.current || !hasMore) return;
+    loadingRef.current = true;
+    setIsLoading(true);
+    setError(false);
+    try {
+      const nextPage = page;
+      const result = await loadPage({ page: nextPage, size });
+      const nextItems = (result.content ?? []).map(mapItem);
+      setItems((current) => appendUniqueItems(current, nextItems));
+      setPage(nextPage + 1);
+      setHasMore(hasNextPage(result, size));
+    } catch (requestError) {
+      console.error('탐색 목록을 불러오지 못했어요', requestError);
+      setError(true);
+    } finally {
+      loadingRef.current = false;
+      setIsLoading(false);
+    }
+  }, [hasMore, loadPage, mapItem, page, size]);
+
+  useEffect(() => {
+    if (didLoadInitialPageRef.current) return;
+    didLoadInitialPageRef.current = true;
+    loadMore();
+  }, [loadMore]);
+
+  return { items, hasMore, isLoading, error, loadMore };
+}
+
+function HorizontalInfiniteCards({ items, hasMore, isLoading, onLoadMore, onCardClick, emptyLabel }) {
+  const scrollerRef = useRef(null);
+  const requestedAtEndRef = useRef(false);
+
+  useEffect(() => {
+    if (scrollerRef.current) scrollerRef.current.scrollLeft = 0;
+  }, []);
+
+  const handleScroll = () => {
+    const scroller = scrollerRef.current;
+    if (!scroller || !hasMore || isLoading) return;
+    const distanceToEnd = scroller.scrollWidth - scroller.scrollLeft - scroller.clientWidth;
+    if (distanceToEnd > 220) {
+      requestedAtEndRef.current = false;
+      return;
+    }
+    if (scroller.scrollLeft <= 0 || requestedAtEndRef.current) return;
+    requestedAtEndRef.current = true;
+    onLoadMore();
+  };
+
+  useEffect(() => {
+    requestedAtEndRef.current = false;
+  }, [items.length]);
+
+  return (
+    <div className="horizontal-cards" ref={scrollerRef} onScroll={handleScroll}>
+      {items.map((item, index) => (
+        <PlaceCard place={item} index={index} key={item.id ?? `${item.name}-${index}`} onClick={() => onCardClick(item)} />
+      ))}
+      {!items.length && !isLoading && <p className="explore-inline-state">{emptyLabel}</p>}
+      {hasMore && <span className="horizontal-load-sentinel" aria-hidden="true" />}
+      {isLoading && <span className="horizontal-loading-card" aria-label="목록 불러오는 중" />}
+    </div>
+  );
 }
 
 function ActionButton({ children, onClick, tone = 'primary', disabled = false, className = '' }) {
@@ -230,6 +334,21 @@ const FIXED_MAP_FILTERS = [
   { type: 'category', code: 'PHOTO_SPOT', label: '포토스팟', tone: 'photo-spot' },
   { type: 'tag', code: 'FILMING_LOCATION', label: '촬영지', tone: 'filming' },
 ];
+
+const FILMING_COLLECTION_FILTERS = [
+  { label: '전체', category: null },
+  { label: '음식점', category: 'RESTAURANT' },
+  { label: '카페/디저트', category: 'CAFE,DESSERT' },
+  { label: '관광지', category: 'ATTRACTION' },
+  { label: '문화시설', category: 'CULTURE' },
+  { label: '전시', category: 'EXHIBITION' },
+  { label: '쇼핑', category: 'SHOPPING' },
+  { label: '공원', category: 'PARK' },
+  { label: '산책로', category: 'WALK' },
+  { label: '포토스팟', category: 'PHOTO_SPOT' },
+];
+
+const FILMING_COLLECTION_PAGE_SIZE = 12;
 
 function normalizeMapCode(value) {
   return typeof value === 'string' ? value.trim().toUpperCase() : '';
@@ -430,41 +549,64 @@ function ExploreReveal({ children, delay = 0 }) {
 
 function ExploreScreen({ go }) {
   const [query, setQuery] = useState('');
-  const [trendingPlaces, setTrendingPlaces] = useState([]);
-  const [filmingPlaces, setFilmingPlaces] = useState([]);
-  const [popupEvents, setPopupEvents] = useState([]);
-  const [loadError, setLoadError] = useState(false);
-
-  useEffect(() => {
-    let cancelled = false;
-    async function load() {
-      try {
-        const [placesPage, eventsPage, mediaPage] = await Promise.all([
-          fetchPlaces({ district: '종로구', size: 4 }),
-          fetchEvents({ size: 2 }),
-          fetchMediaContents({ size: 1 }),
-        ]);
-        if (cancelled) return;
-        setTrendingPlaces((placesPage.content ?? []).map(placeToCardProps));
-        setPopupEvents((eventsPage.content ?? []).map(eventToRowProps));
-
-        const firstMedia = mediaPage.content?.[0];
-        if (firstMedia) {
-          const locations = await fetchMediaFilmingLocations(firstMedia.id);
-          if (!cancelled) setFilmingPlaces(locations.slice(0, 2).map(filmingLocationToCardProps));
-        }
-      } catch (error) {
-        console.error('탐색 데이터를 불러오지 못했어요', error);
-        if (!cancelled) setLoadError(true);
-      }
-    }
-    load();
-    return () => { cancelled = true; };
-  }, []);
+  const loadFilmingPlaces = useCallback(
+    ({ page, size }) => fetchPlaces({ district: '종로구', tag: 'FILMING_LOCATION', page, size }),
+    [],
+  );
+  const loadPopupEvents = useCallback(
+    ({ page, size }) => fetchEvents({ page, size }),
+    [],
+  );
+  const filming = useHorizontalPagedList({ loadPage: loadFilmingPlaces, mapItem: filmingPlaceToCardProps });
+  const popups = useHorizontalPagedList({ loadPage: loadPopupEvents, mapItem: eventToCardProps });
 
   const normalized = query.trim().toLowerCase();
-  const allPlaces = trendingPlaces.filter((place) => `${place.name} ${place.meta}`.toLowerCase().includes(normalized));
-  return <section className="phone standard-screen tab-screen"><main className="page-scroll explore-scroll"><motion.header className="tab-heading" initial={{ opacity: 0, transform: 'perspective(1000px) translateY(-12px) rotateX(-3deg) translateZ(-14px)' }} animate={{ opacity: 1, transform: 'perspective(1000px) translateY(0px) rotateX(0deg) translateZ(0px)' }} transition={{ duration: 0.28, ease: [0.23, 1, 0.32, 1] }}><h1>탐색</h1><SearchField value={query} onChange={setQuery} onSubmit={() => go(normalized ? 'search' : 'search')} placeholder="장소, 메뉴, 촬영지를 검색해보세요" /></motion.header>{loadError ? <p className="search-empty">데이터를 불러오지 못했어요. 잠시 후 다시 시도해주세요.</p> : normalized && !allPlaces.length ? <EmptySearch query={query} onClear={() => setQuery('')} /> : <><ExploreReveal delay={0.06}><ScreenSection title="요즘 이곳에서는" subtitle="종로구의 장소들" action="전체보기" onAction={() => go('trending')}><div className="horizontal-cards">{trendingPlaces.map((place, index) => <PlaceCard place={place} index={index} key={place.id} onClick={() => go('place', place.id)} />)}</div></ScreenSection></ExploreReveal><ExploreReveal delay={0.12}><ScreenSection title="장면 속으로" subtitle="드라마와 영화 속 서울의 장소" action="전체보기" onAction={() => go('filming-locations')}><div className="horizontal-cards">{filmingPlaces.map((place, index) => <PlaceCard place={place} index={index + 2} key={`${place.id}-${index}`} onClick={() => go('place', place.id)} />)}</div></ScreenSection></ExploreReveal><ExploreReveal delay={0.18}><ScreenSection title="이번 주 행사" action="더보기" onAction={() => go('popups')}><div className="popup-list">{popupEvents.map((event) => <PlaceRow key={event.id} place={event} onClick={() => event.placeId && go('place', event.placeId)} />)}</div></ScreenSection></ExploreReveal></>}</main><BottomNav active="explore" onNavigate={(tab) => go(rootRoutes[tab])} /></section>;
+  const exploreItems = [...CURATED_TRENDING_PLACES, ...filming.items, ...popups.items];
+  const hasQueryResult = exploreItems.some((item) => `${item.name} ${item.meta}`.toLowerCase().includes(normalized));
+  const loadError = filming.error && popups.error;
+  return (
+    <section className="phone standard-screen tab-screen">
+      <main className="page-scroll explore-scroll">
+        <motion.header
+          className="tab-heading"
+          initial={{ opacity: 0, transform: 'perspective(1000px) translateY(-12px) rotateX(-3deg) translateZ(-14px)' }}
+          animate={{ opacity: 1, transform: 'perspective(1000px) translateY(0px) rotateX(0deg) translateZ(0px)' }}
+          transition={{ duration: 0.28, ease: [0.23, 1, 0.32, 1] }}
+        >
+          <h1>탐색</h1>
+          <SearchField value={query} onChange={setQuery} onSubmit={() => go(normalized ? 'search' : 'search')} placeholder="장소, 메뉴, 촬영지를 검색해보세요" />
+        </motion.header>
+        {loadError ? (
+          <p className="search-empty">데이터를 불러오지 못했어요. 잠시 후 다시 시도해주세요.</p>
+        ) : normalized && !hasQueryResult ? (
+          <EmptySearch query={query} onClear={() => setQuery('')} />
+        ) : (
+          <>
+            <ExploreReveal delay={0.06}>
+              <ScreenSection title="요즘 이곳에서는" subtitle="큐레이션 준비 중" action="전체보기" onAction={() => go('trending')}>
+                <div className="horizontal-cards">
+                  {CURATED_TRENDING_PLACES.map((place, index) => (
+                    <PlaceCard place={place} index={index} key={place.id} onClick={() => go('place')} />
+                  ))}
+                </div>
+              </ScreenSection>
+            </ExploreReveal>
+            <ExploreReveal delay={0.12}>
+              <ScreenSection title="장면 속으로" subtitle="드라마와 영화 속 서울의 장소" action="전체보기" onAction={() => go('filming-locations')}>
+                <HorizontalInfiniteCards items={filming.items} hasMore={filming.hasMore} isLoading={filming.isLoading} onLoadMore={filming.loadMore} emptyLabel="촬영지 장소가 아직 없어요" onCardClick={(place) => go('place', place.id)} />
+              </ScreenSection>
+            </ExploreReveal>
+            <ExploreReveal delay={0.18}>
+              <ScreenSection title="이번 주 행사" action="더보기" onAction={() => go('popups')}>
+                <HorizontalInfiniteCards items={popups.items} hasMore={popups.hasMore} isLoading={popups.isLoading} onLoadMore={popups.loadMore} emptyLabel="행사가 아직 없어요" onCardClick={(event) => event.placeId && go('place', event.placeId)} />
+              </ScreenSection>
+            </ExploreReveal>
+          </>
+        )}
+      </main>
+      <BottomNav active="explore" onNavigate={(tab) => go(rootRoutes[tab])} />
+    </section>
+  );
 }
 
 function EmptySearch({ query, onClear }) {
@@ -482,27 +624,71 @@ function formatOperatingHours(hours) {
     .join(' · ');
 }
 
+function filmingMediaLabel(mediaContent) {
+  if (!mediaContent) return '작품 정보 확인 중';
+  const mediaType = mediaContent.mediaType === 'movie' ? '영화' : '드라마';
+  return [mediaType, mediaContent.releaseDate].filter(Boolean).join(' · ');
+}
+
+function FilmingSceneSection({ filmingLocations }) {
+  if (!filmingLocations.length) return null;
+
+  return (
+    <ScreenSection title="이 장소에서 촬영된 장면" action={`${filmingLocations.length}개`}>
+      <div className="place-filming-scene-list">
+        {filmingLocations.map((item) => {
+          const title = item.mediaContent?.title || '작품 정보 확인 중';
+          const description = item.sceneDescription || '장면 설명을 준비 중이에요.';
+          return (
+            <article className="place-filming-scene-card" key={item.id}>
+              <span>{filmingMediaLabel(item.mediaContent)}</span>
+              <strong>{title}</strong>
+              <p>{description}</p>
+            </article>
+          );
+        })}
+      </div>
+    </ScreenSection>
+  );
+}
+
 function PlaceDetail({ go, placeId }) {
   const [place, setPlace] = useState(null);
+  const [filmingLocations, setFilmingLocations] = useState([]);
   const [status, setStatus] = useState(placeId ? 'loading' : 'mock');
 
   useEffect(() => {
     if (!placeId) {
       setStatus('mock');
+      setFilmingLocations([]);
       return undefined;
     }
     let cancelled = false;
     setStatus('loading');
-    fetchPlace(placeId)
-      .then((data) => {
-        if (!cancelled) {
-          setPlace(data);
+    setFilmingLocations([]);
+    Promise.allSettled([
+      fetchPlace(placeId),
+      fetchPlaceFilmingLocations(placeId),
+    ])
+      .then(([placeResult, filmingResult]) => {
+        if (cancelled) return;
+        if (placeResult.status === 'fulfilled') {
+          setPlace(placeResult.value);
           setStatus('ready');
+        } else {
+          throw placeResult.reason;
+        }
+        if (filmingResult.status === 'fulfilled') {
+          setFilmingLocations(filmingResult.value ?? []);
+        } else {
+          console.error('촬영지 장면 정보를 불러오지 못했어요', filmingResult.reason);
         }
       })
       .catch((error) => {
-        console.error('장소 상세를 불러오지 못했어요', error);
-        if (!cancelled) setStatus('error');
+        if (!cancelled) {
+          console.error('장소 상세를 불러오지 못했어요', error);
+          setStatus('error');
+        }
       });
     return () => { cancelled = true; };
   }, [placeId]);
@@ -522,7 +708,7 @@ function PlaceDetail({ go, placeId }) {
   const heroImage = place.images?.[0]?.sourceUrl || images.detail;
   const hoursLabel = formatOperatingHours(place.operatingHours) || place.operatingHoursRaw || '운영시간 정보 없음';
 
-  return <section className="phone standard-screen place-detail-screen"><main className="page-scroll"><div className="detail-hero"><img src={heroImage} alt={`${place.name} 외관`} /><div className="detail-controls"><IconButton label="이전" onClick={() => go('explore')}>‹</IconButton><IconButton label="저장" onClick={() => go('saved')}>♡</IconButton></div></div><div className="detail-content detail-content-v3"><p className="eyebrow">{[place.district, place.categoryLabel].filter(Boolean).join(' · ')}</p><h1>{place.name}</h1><p className="detail-meta">{hoursLabel}</p><div className="chip-row">{place.phone && <Chip active>{place.phone}</Chip>}<Chip>{place.roadAddress || place.lotAddress || '주소 정보 없음'}</Chip></div>{place.description && <ScreenSection title="장소 소개"><div className="why-card place-why-card"><p>{place.description}</p></div></ScreenSection>}{place.images?.length > 0 && <ScreenSection title="사진"><div className="horizontal-cards">{place.images.map((img) => <div className="place-card-image" key={img.id} style={{ width: 120, height: 120, flex: '0 0 auto' }}><img src={img.sourceUrl} alt="" /></div>)}</div></ScreenSection>}</div></main><div className="sticky-actions split place-actions"><ActionButton onClick={() => go('course-conditions')}>코스에 추가</ActionButton><ActionButton tone="secondary" onClick={() => go('write-review')}>후기 남기기</ActionButton></div></section>;
+  return <section className="phone standard-screen place-detail-screen"><main className="page-scroll"><div className="detail-hero"><img src={heroImage} alt={`${place.name} 외관`} /><div className="detail-controls"><IconButton label="이전" onClick={() => go('explore')}>‹</IconButton><IconButton label="저장" onClick={() => go('saved')}>♡</IconButton></div></div><div className="detail-content detail-content-v3"><p className="eyebrow">{[place.district, place.categoryLabel].filter(Boolean).join(' · ')}</p><h1>{place.name}</h1><p className="detail-meta">{hoursLabel}</p><div className="chip-row">{place.phone && <Chip active>{place.phone}</Chip>}<Chip>{place.roadAddress || place.lotAddress || '주소 정보 없음'}</Chip></div>{place.description && <ScreenSection title="장소 소개"><div className="why-card place-why-card"><p>{place.description}</p></div></ScreenSection>}<FilmingSceneSection filmingLocations={filmingLocations} />{place.images?.length > 0 && <ScreenSection title="사진"><div className="horizontal-cards">{place.images.map((img) => <div className="place-card-image" key={img.id} style={{ width: 120, height: 120, flex: '0 0 auto' }}><img src={img.sourceUrl} alt="" /></div>)}</div></ScreenSection>}</div></main><div className="sticky-actions split place-actions"><ActionButton onClick={() => go('course-conditions')}>코스에 추가</ActionButton><ActionButton tone="secondary" onClick={() => go('write-review')}>후기 남기기</ActionButton></div></section>;
 }
 
 function mediaContentToRowProps(media) {
@@ -586,7 +772,128 @@ const collectionInfo = {
   popups: ['이번 주 팝업', '지금 서울에서만 만날 수 있는 장소', [{ name: '블루 모먼트 전시 팝업', meta: '성수 · 8월 31일까지', image: images.scene, badge: '이번 주' }, { name: '아무개 서점 여름 마켓', meta: '서촌 · 이번 주말', image: images.cafe, badge: '주말' }]],
 };
 
+function FilmingLocationsCollection({ go }) {
+  const scrollRef = useRef(null);
+  const loadingRef = useRef(false);
+  const requestIdRef = useRef(0);
+  const pageRef = useRef(0);
+  const hasMoreRef = useRef(true);
+  const activeFilterRef = useRef(FILMING_COLLECTION_FILTERS[0]);
+  const [activeFilter, setActiveFilter] = useState(FILMING_COLLECTION_FILTERS[0]);
+  const [places, setPlaces] = useState([]);
+  const [hasMore, setHasMore] = useState(true);
+  const [isLoading, setIsLoading] = useState(false);
+  const [hasError, setHasError] = useState(false);
+
+  const loadPlaces = useCallback(async ({ pageNumber = pageRef.current, reset = false } = {}) => {
+    if (loadingRef.current || (!reset && !hasMoreRef.current)) return;
+    const requestId = requestIdRef.current + 1;
+    requestIdRef.current = requestId;
+    loadingRef.current = true;
+    setIsLoading(true);
+    setHasError(false);
+    try {
+      const result = await fetchPlaces({
+        district: '종로구',
+        tag: 'FILMING_LOCATION',
+        category: activeFilterRef.current.category,
+        page: pageNumber,
+        size: FILMING_COLLECTION_PAGE_SIZE,
+      });
+      if (requestId !== requestIdRef.current) return;
+      const nextPlaces = (result.content ?? []).map(filmingPlaceToCardProps);
+      setPlaces((current) => reset ? nextPlaces : appendUniqueItems(current, nextPlaces));
+      const nextPage = pageNumber + 1;
+      const nextHasMore = hasNextPage(result, FILMING_COLLECTION_PAGE_SIZE);
+      pageRef.current = nextPage;
+      hasMoreRef.current = nextHasMore;
+      setHasMore(nextHasMore);
+    } catch (error) {
+      console.error('촬영지 장소를 불러오지 못했어요', error);
+      if (requestId === requestIdRef.current) setHasError(true);
+    } finally {
+      if (requestId === requestIdRef.current) {
+        loadingRef.current = false;
+        setIsLoading(false);
+      }
+    }
+  }, []);
+
+  useEffect(() => {
+    requestIdRef.current += 1;
+    loadingRef.current = false;
+    activeFilterRef.current = activeFilter;
+    pageRef.current = 0;
+    hasMoreRef.current = true;
+    setPlaces([]);
+    setHasMore(true);
+    setHasError(false);
+    if (scrollRef.current) scrollRef.current.scrollTop = 0;
+    loadPlaces({ pageNumber: 0, reset: true });
+  }, [activeFilter, loadPlaces]);
+
+  const handleScroll = () => {
+    const scroll = scrollRef.current;
+    if (!scroll || isLoading || !hasMore) return;
+    const distanceToBottom = scroll.scrollHeight - scroll.scrollTop - scroll.clientHeight;
+    if (scroll.scrollTop > 0 && distanceToBottom < 320) loadPlaces({ pageNumber: pageRef.current });
+  };
+
+  return (
+    <section className="phone standard-screen list-screen collection-screen-v3 filming-collection-screen">
+      <BackHeader title="장면 속으로" onBack={() => go('explore')} />
+      <main className="page-scroll filming-collection-scroll" ref={scrollRef} onScroll={handleScroll}>
+        <header className="collection-heading filming-collection-heading">
+          <p>서울의 장면들</p>
+          <h1>촬영지 장소</h1>
+          <small>드라마와 영화 속, 직접 걸어볼 수 있는 장소를 종류별로 모았어요.</small>
+        </header>
+        <div className="collection-filters filming-filter-bar">
+          {FILMING_COLLECTION_FILTERS.map((item) => (
+            <Chip
+              key={item.label}
+              active={activeFilter.label === item.label}
+              onClick={() => setActiveFilter(item)}
+            >
+              {item.label}
+            </Chip>
+          ))}
+        </div>
+        {hasError && !places.length ? (
+          <section className="collection-state">
+            <h2>촬영지를 불러오지 못했어요</h2>
+            <p>잠시 후 다시 시도해주세요.</p>
+            <ActionButton onClick={() => loadPlaces({ pageNumber: 0, reset: true })}>다시 불러오기</ActionButton>
+          </section>
+        ) : (
+          <div className="collection-list filming-place-list">
+            {places.map((place) => (
+              <PlaceRow key={place.id} place={place} onClick={() => go('place', place.id)} />
+            ))}
+            {!places.length && !isLoading && (
+              <section className="collection-state compact">
+                <h2>해당 종류의 촬영지가 아직 없어요</h2>
+                <p>다른 필터를 선택해보세요.</p>
+              </section>
+            )}
+            {isLoading && <div className="collection-loading" role="status">불러오는 중</div>}
+            {!hasMore && places.length > 0 && <p className="collection-end">마지막 촬영지까지 확인했어요</p>}
+          </div>
+        )}
+      </main>
+    </section>
+  );
+}
+
 function CollectionScreen({ screen, go }) {
+  if (screen === 'filming-locations') {
+    return <FilmingLocationsCollection go={go} />;
+  }
+
+  return <StaticCollectionScreen screen={screen} go={go} />;
+}
+
+function StaticCollectionScreen({ screen, go }) {
   const [title, subtitle, places] = collectionInfo[screen];
   const [filter, setFilter] = useState('전체');
   const filters = screen === 'popups' ? ['전체', '이번 주', '무료'] : screen === 'filming-locations' ? ['전체', '드라마', '영화'] : ['전체', '안국', '지금 여유'];

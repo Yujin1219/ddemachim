@@ -26,6 +26,7 @@ def upsert_filming_location(
     place_id: int,
     source: str,
     source_id: str,
+    scene_description: str | None = None,
 ) -> None:
     """place x 작품 조합 1건을 filming_location에 idempotent하게 적재한다.
 
@@ -36,12 +37,16 @@ def upsert_filming_location(
     with conn.cursor() as cur:
         cur.execute(
             """
-            INSERT INTO filming_location (place_id, media_content_id, match_confidence, match_status, source, source_id)
-            VALUES (%s, NULL, NULL, 'REVIEW_REQUIRED', %s, %s)
+            INSERT INTO filming_location (
+                place_id, media_content_id, match_confidence, match_status, scene_description, source, source_id
+            )
+            VALUES (%s, NULL, NULL, 'REVIEW_REQUIRED', %s, %s, %s)
             ON CONFLICT (source, source_id)
-            DO UPDATE SET place_id = EXCLUDED.place_id
+            DO UPDATE SET
+                place_id = EXCLUDED.place_id,
+                scene_description = COALESCE(EXCLUDED.scene_description, filming_location.scene_description)
             """,
-            (place_id, source, source_id),
+            (place_id, scene_description, source, source_id),
         )
 
 

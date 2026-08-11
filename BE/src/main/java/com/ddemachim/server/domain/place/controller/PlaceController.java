@@ -32,7 +32,7 @@ public class PlaceController {
                     + "필터 파라미터는 전부 선택값이며, 비워두면 전체 대상으로 조회합니다.")
     @GetMapping
     public ApiResponse<Page<PlaceSummaryResponse>> search(
-            @Parameter(description = "카테고리 코드 (예: RESTAURANT, CAFE, ATTRACTION 등 place_category.code 값)")
+            @Parameter(description = "카테고리 코드 (예: RESTAURANT, CAFE 또는 CAFE,DESSERT 등 place_category.code 값)")
             @RequestParam(required = false) String category,
             @Parameter(description = "자치구명 (예: 종로구)")
             @RequestParam(required = false) String district,

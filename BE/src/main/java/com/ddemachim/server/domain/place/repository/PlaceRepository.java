@@ -16,7 +16,7 @@ public interface PlaceRepository extends JpaRepository<Place, Long> {
                     select p.*
                     from place p
                     left join place_category c on p.category_id = c.id
-                    where (:category is null or c.code = :category)
+                    where (:category is null or c.code = any(string_to_array(:category, ',')))
                     and (:district is null or p.district = :district)
                     and (:tag is null or :tag = any(p.tags))
                     and (:keyword is null or p.normalized_name like concat('%', cast(:keyword as text), '%'))
@@ -27,7 +27,7 @@ public interface PlaceRepository extends JpaRepository<Place, Long> {
                     select count(*)
                     from place p
                     left join place_category c on p.category_id = c.id
-                    where (:category is null or c.code = :category)
+                    where (:category is null or c.code = any(string_to_array(:category, ',')))
                     and (:district is null or p.district = :district)
                     and (:tag is null or :tag = any(p.tags))
                     and (:keyword is null or p.normalized_name like concat('%', cast(:keyword as text), '%'))
