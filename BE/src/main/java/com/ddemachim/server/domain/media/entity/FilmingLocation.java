@@ -44,6 +44,9 @@ public class FilmingLocation {
     @Column(name = "match_status", nullable = false, length = 20)
     private String matchStatus;
 
+    @Column(name = "scene_description")
+    private String sceneDescription;
+
     @Column(nullable = false, length = 30)
     private String source;
 

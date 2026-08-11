@@ -36,7 +36,9 @@ public class PlaceQueryService {
 
     public Page<PlaceSummaryResponse> search(
             String category, String district, String tag, String keyword, Pageable pageable) {
-        Page<Place> places = placeRepository.search(category, district, tag, keyword, pageable);
+        String safeCategory = normalizeFilter(category);
+        String safeTag = normalizeFilter(tag);
+        Page<Place> places = placeRepository.search(safeCategory, district, safeTag, keyword, pageable);
 
         List<Long> placeIds = places.getContent().stream().map(Place::getId).toList();
         Map<Long, String> thumbnailByPlaceId = firstImageUrlByPlaceId(placeIds);

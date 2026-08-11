@@ -21,8 +21,8 @@ function toQuery(params = {}) {
   return query ? `?${query}` : '';
 }
 
-export function fetchPlaces({ category, district, keyword, page = 0, size = 10 } = {}) {
-  return request(`/places${toQuery({ category, district, keyword, page, size })}`);
+export function fetchPlaces({ category, district, tag, keyword, page = 0, size = 10 } = {}) {
+  return request(`/places${toQuery({ category, district, tag, keyword, page, size })}`);
 }
 
 export function fetchMapPlaces({ category, tag, minLat, maxLat, minLng, maxLng, limit = 300, signal } = {}) {

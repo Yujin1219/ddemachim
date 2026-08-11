@@ -24,7 +24,7 @@ public class FilmingLocationController {
     @Operation(
             summary = "장소별 촬영지(출연 작품) 목록 조회",
             description = "해당 장소가 등장한 작품 목록을 조회합니다. TMDB 매칭 신뢰도가 낮아 검토 대기 중인 항목은 제외하고, "
-                    + "자동 확정(AUTO_MATCH)된 작품만 반환합니다.")
+                    + "자동 확정(AUTO_MATCH)된 작품과 원천 촬영지 장면 설명을 반환합니다.")
     @GetMapping
     public ApiResponse<List<FilmingLocationResponse>> getFilmingLocations(
             @Parameter(description = "장소 id (place.id)") @PathVariable Long placeId) {
