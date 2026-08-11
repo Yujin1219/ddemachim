@@ -117,6 +117,6 @@ public class PlaceQueryService {
         if (value == null || value.isBlank()) {
             return null;
         }
-        return value.trim();
+        return value.trim().replaceAll("\\s*,\\s*", ",");
     }
 }

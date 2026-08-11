@@ -77,6 +77,7 @@ export default function VWorldMap({
   const rawPlacesRef = useRef([])
   const placeAbortRef = useRef(null)
   const loadVisiblePlacesRef = useRef(null)
+  const lastPlaceRequestKeyRef = useRef(placeRequestKey)
   const loadPlacesRef = useRef(loadPlacesInBounds)
   const placeMarkerFilterRef = useRef(placeMarkerFilter)
   const onPlaceClickRef = useRef(onPlaceClick)
@@ -292,6 +293,8 @@ export default function VWorldMap({
   }, [apiKey, interactive, Boolean(loadPlacesInBounds), placeLimit])
 
   useEffect(() => {
+    if (lastPlaceRequestKeyRef.current === placeRequestKey) return
+    lastPlaceRequestKeyRef.current = placeRequestKey
     loadVisiblePlacesRef.current?.()
   }, [placeRequestKey])
 
