@@ -1,6 +1,7 @@
 package com.ddemachim.server.global.config;
 
 import com.ddemachim.server.global.properties.DataPipelineSchedulerProperties;
+import com.ddemachim.server.global.properties.SeoulCityDataProperties;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
@@ -9,7 +10,7 @@ import org.springframework.scheduling.concurrent.ThreadPoolTaskScheduler;
 
 @Configuration
 @EnableScheduling
-@EnableConfigurationProperties(DataPipelineSchedulerProperties.class)
+@EnableConfigurationProperties({DataPipelineSchedulerProperties.class, SeoulCityDataProperties.class})
 public class SchedulingConfig {
 
     @Bean
