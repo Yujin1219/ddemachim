@@ -10,9 +10,13 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import com.ddemachim.server.domain.event.dto.EventDetailResponse;
 import com.ddemachim.server.domain.event.dto.EventSummaryResponse;
 import com.ddemachim.server.domain.event.exception.EventNotFoundException;
+import com.ddemachim.server.domain.event.exception.InvalidEventCoordinatesException;
+import com.ddemachim.server.domain.event.exception.InvalidEventSortModeException;
+import com.ddemachim.server.domain.event.exception.InvalidEventStatusException;
 import com.ddemachim.server.domain.event.service.EventQueryService;
 import com.ddemachim.server.global.apiPayload.exception.ExceptionAdvice;
 import java.time.LocalDate;
+import java.time.LocalTime;
 import java.util.List;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -60,8 +64,10 @@ class EventControllerTest {
                 "서울시립미술관",
                 "무료",
                 LocalDate.of(2026, 8, 10),
-                "10:00-18:00");
-        when(eventQueryService.findEvents(null, pageable))
+                "10:00-18:00",
+                LocalTime.of(10, 0),
+                LocalTime.of(18, 0));
+        when(eventQueryService.findEvents(null, null, null, null, null, pageable))
                 .thenReturn(new PageImpl<>(List.of(summary), pageable, 1));
 
         mockMvc.perform(get("/api/events").param("page", "0").param("size", "10"))
@@ -70,7 +76,88 @@ class EventControllerTest {
                 .andExpect(jsonPath("$.isSuccess").value(true))
                 .andExpect(jsonPath("$.result.content[0].useFee").value("무료"))
                 .andExpect(jsonPath("$.result.content[0].applyDate").value("2026-08-10"))
-                .andExpect(jsonPath("$.result.content[0].eventTime").value("10:00-18:00"));
+                .andExpect(jsonPath("$.result.content[0].eventTime").value("10:00-18:00"))
+                .andExpect(jsonPath("$.result.content[0].eventStartTime").value("10:00:00"))
+                .andExpect(jsonPath("$.result.content[0].eventEndTime").value("18:00:00"));
+    }
+
+    @Test
+    void getEvents_passesStatusQueryParameterToService() throws Exception {
+        Pageable pageable = PageRequest.of(0, 10);
+        when(eventQueryService.findEvents(null, "ongoing", null, null, null, pageable))
+                .thenReturn(new PageImpl<>(List.of(), pageable, 0));
+
+        mockMvc.perform(get("/api/events")
+                        .param("status", "ongoing")
+                        .param("page", "0")
+                        .param("size", "10"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.isSuccess").value(true))
+                .andExpect(jsonPath("$.result.content").isEmpty());
+    }
+
+    @Test
+    void getEvents_returnsTypedBadRequestForInvalidStatus() throws Exception {
+        when(eventQueryService.findEvents(null, "invalid", null, null, null, PageRequest.of(0, 10)))
+                .thenThrow(new InvalidEventStatusException());
+
+        mockMvc.perform(get("/api/events")
+                        .param("status", "invalid")
+                        .param("page", "0")
+                        .param("size", "10"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.isSuccess").value(false))
+                .andExpect(jsonPath("$.code").value("EVENT4001"))
+                .andExpect(jsonPath("$.message").value("지원하지 않는 행사 상태입니다. ONGOING 또는 ENDED 중 하나를 사용해야 합니다."))
+                .andExpect(jsonPath("$.result").doesNotExist());
+    }
+
+    @Test
+    void getEvents_passesSortModeAndCoordinatesToService() throws Exception {
+        Pageable pageable = PageRequest.of(0, 10);
+        when(eventQueryService.findEvents(null, null, "nearest", "37.5665", "126.9780", pageable))
+                .thenReturn(new PageImpl<>(List.of(), pageable, 0));
+
+        mockMvc.perform(get("/api/events")
+                        .param("sortMode", "nearest")
+                        .param("latitude", "37.5665")
+                        .param("longitude", "126.9780")
+                        .param("page", "0")
+                        .param("size", "10"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.isSuccess").value(true))
+                .andExpect(jsonPath("$.result.content").isEmpty());
+    }
+
+    @Test
+    void getEvents_returnsTypedBadRequestForInvalidSortMode() throws Exception {
+        when(eventQueryService.findEvents(null, null, "invalid", null, null, PageRequest.of(0, 10)))
+                .thenThrow(new InvalidEventSortModeException());
+
+        mockMvc.perform(get("/api/events")
+                        .param("sortMode", "invalid")
+                        .param("page", "0")
+                        .param("size", "10"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.isSuccess").value(false))
+                .andExpect(jsonPath("$.code").value("EVENT4002"))
+                .andExpect(jsonPath("$.result").doesNotExist());
+    }
+
+    @Test
+    void getEvents_returnsTypedBadRequestForMissingNearestCoordinates() throws Exception {
+        when(eventQueryService.findEvents(null, null, "NEAREST", null, "126.9780", PageRequest.of(0, 10)))
+                .thenThrow(new InvalidEventCoordinatesException());
+
+        mockMvc.perform(get("/api/events")
+                        .param("sortMode", "NEAREST")
+                        .param("longitude", "126.9780")
+                        .param("page", "0")
+                        .param("size", "10"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.isSuccess").value(false))
+                .andExpect(jsonPath("$.code").value("EVENT4003"))
+                .andExpect(jsonPath("$.result").doesNotExist());
     }
 
     @Test
@@ -94,6 +181,8 @@ class EventControllerTest {
                 "https://example.com",
                 LocalDate.of(2026, 8, 10),
                 "10:00-18:00",
+                LocalTime.of(10, 0),
+                LocalTime.of(18, 0),
                 "https://example.com/detail");
         when(eventQueryService.findEvent(42L)).thenReturn(detail);
 
@@ -109,6 +198,8 @@ class EventControllerTest {
                 .andExpect(jsonPath("$.result.placeName").value("서울시립미술관"))
                 .andExpect(jsonPath("$.result.orgName").value("서울시"))
                 .andExpect(jsonPath("$.result.useFee").value("무료"))
+                .andExpect(jsonPath("$.result.eventStartTime").value("10:00:00"))
+                .andExpect(jsonPath("$.result.eventEndTime").value("18:00:00"))
                 .andExpect(jsonPath("$.result.detailUrl").value("https://example.com/detail"));
     }
 
