@@ -5,6 +5,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import com.ddemachim.server.domain.event.entity.Event;
 import jakarta.persistence.EntityManager;
 import java.time.LocalDate;
+import java.time.LocalTime;
 import java.util.UUID;
 import org.junit.jupiter.api.Test;
 import org.locationtech.jts.geom.Coordinate;
@@ -23,6 +24,7 @@ import org.springframework.test.util.ReflectionTestUtils;
 class EventRepositoryTest {
 
     private static final LocalDate BUSINESS_DATE = LocalDate.of(2026, 8, 12);
+    private static final LocalTime BUSINESS_TIME = LocalTime.of(12, 0);
     private static final GeometryFactory GEOMETRY_FACTORY = new GeometryFactory();
 
     @Autowired
@@ -63,8 +65,10 @@ class EventRepositoryTest {
         entityManager.clear();
 
         PageRequest page = PageRequest.of(0, 10);
-        Page<Event> defaultResult = eventRepository.searchByStartDate(keyword, null, BUSINESS_DATE, page);
-        Page<Event> latestResult = eventRepository.searchByLatestApplyDate(keyword, null, BUSINESS_DATE, page);
+        Page<Event> defaultResult = eventRepository.searchByStartDate(
+                keyword, null, BUSINESS_DATE, BUSINESS_TIME, page);
+        Page<Event> latestResult = eventRepository.searchByLatestApplyDate(
+                keyword, null, BUSINESS_DATE, BUSINESS_TIME, page);
 
         assertThat(defaultResult.getContent())
                 .extracting(Event::getTitle)
@@ -112,9 +116,9 @@ class EventRepositoryTest {
 
         PageRequest page = PageRequest.of(0, 10);
         Page<Event> ongoingResult = eventRepository.searchByStartDate(
-                keyword, "ONGOING", BUSINESS_DATE, page);
+                keyword, "ONGOING", BUSINESS_DATE, BUSINESS_TIME, page);
         Page<Event> endedResult = eventRepository.searchByStartDate(
-                keyword, "ENDED", BUSINESS_DATE, page);
+                keyword, "ENDED", BUSINESS_DATE, BUSINESS_TIME, page);
 
         assertThat(ongoingResult.getContent()).extracting(Event::getTitle).containsExactly(ongoing.getTitle());
         assertThat(endedResult.getContent()).extracting(Event::getTitle).containsExactly(ended.getTitle());
@@ -159,7 +163,13 @@ class EventRepositoryTest {
         entityManager.clear();
 
         Page<Event> result = eventRepository.searchByNearestLocation(
-                keyword, null, BUSINESS_DATE, 37.5665, 126.9780, PageRequest.of(0, 10));
+                keyword,
+                null,
+                BUSINESS_DATE,
+                BUSINESS_TIME,
+                37.5665,
+                126.9780,
+                PageRequest.of(0, 10));
 
         assertThat(result.getTotalElements()).isEqualTo(5);
         assertThat(result.getContent())
@@ -172,16 +182,127 @@ class EventRepositoryTest {
                         noLocation.getTitle());
     }
 
+    @Test
+    void timeAwareStatusBoundariesTreatUnknownBoundsAndMultiDayEventsConsistently() {
+        String keyword = "EVENT_REPOSITORY_TIME_" + UUID.randomUUID();
+        Event sameDayWindow = event(
+                keyword + " same-day-window",
+                BUSINESS_DATE,
+                BUSINESS_DATE,
+                LocalTime.of(10, 0),
+                LocalTime.of(18, 0),
+                LocalDate.of(2026, 3, 1),
+                point(126.9780, 37.5665));
+        Event unknownStart = event(
+                keyword + " unknown-start",
+                BUSINESS_DATE,
+                BUSINESS_DATE.plusDays(1),
+                null,
+                LocalTime.of(18, 0),
+                LocalDate.of(2026, 3, 2),
+                point(126.9790, 37.5665));
+        Event unknownEnd = event(
+                keyword + " unknown-end",
+                BUSINESS_DATE.minusDays(1),
+                BUSINESS_DATE,
+                LocalTime.of(10, 0),
+                null,
+                LocalDate.of(2026, 3, 3),
+                point(126.9800, 37.5665));
+        Event multiDay = event(
+                keyword + " multi-day",
+                BUSINESS_DATE.minusDays(1),
+                BUSINESS_DATE.plusDays(1),
+                LocalTime.of(23, 0),
+                LocalTime.of(1, 0),
+                LocalDate.of(2026, 3, 4),
+                point(126.9810, 37.5665));
+
+        entityManager.persist(sameDayWindow);
+        entityManager.persist(unknownStart);
+        entityManager.persist(unknownEnd);
+        entityManager.persist(multiDay);
+        entityManager.flush();
+        entityManager.clear();
+
+        PageRequest page = PageRequest.of(0, 10);
+        assertThat(eventRepository.searchByStartDate(
+                        keyword,
+                        "ONGOING",
+                        BUSINESS_DATE,
+                        LocalTime.of(9, 59, 59),
+                        page))
+                .extracting(Event::getTitle)
+                .containsExactlyInAnyOrder(
+                        unknownStart.getTitle(), unknownEnd.getTitle(), multiDay.getTitle());
+        assertThat(eventRepository.searchByStartDate(
+                        keyword, "ONGOING", BUSINESS_DATE, LocalTime.of(10, 0), page))
+                .extracting(Event::getTitle)
+                .containsExactlyInAnyOrder(
+                        sameDayWindow.getTitle(),
+                        unknownStart.getTitle(),
+                        unknownEnd.getTitle(),
+                        multiDay.getTitle());
+        assertThat(eventRepository.searchByStartDate(
+                        keyword, "ONGOING", BUSINESS_DATE, LocalTime.of(18, 0), page))
+                .extracting(Event::getTitle)
+                .containsExactlyInAnyOrder(
+                        sameDayWindow.getTitle(),
+                        unknownStart.getTitle(),
+                        unknownEnd.getTitle(),
+                        multiDay.getTitle());
+
+        Page<Event> endedAfterSameDayWindow = eventRepository.searchByStartDate(
+                keyword, "ENDED", BUSINESS_DATE, LocalTime.of(18, 0, 1), page);
+        assertThat(endedAfterSameDayWindow.getContent())
+                .extracting(Event::getTitle)
+                .containsExactly(sameDayWindow.getTitle());
+
+        Page<Event> latestOngoing = eventRepository.searchByLatestApplyDate(
+                keyword, "ONGOING", BUSINESS_DATE, LocalTime.of(18, 0, 1), page);
+        Page<Event> nearestOngoing = eventRepository.searchByNearestLocation(
+                keyword,
+                "ONGOING",
+                BUSINESS_DATE,
+                LocalTime.of(18, 0, 1),
+                37.5665,
+                126.9780,
+                page);
+
+        assertThat(latestOngoing.getContent())
+                .extracting(Event::getTitle)
+                .containsExactlyInAnyOrder(
+                        unknownStart.getTitle(), unknownEnd.getTitle(), multiDay.getTitle());
+        assertThat(nearestOngoing.getTotalElements()).isEqualTo(3);
+        assertThat(nearestOngoing.getContent())
+                .extracting(Event::getTitle)
+                .containsExactlyInAnyOrder(
+                        unknownStart.getTitle(), unknownEnd.getTitle(), multiDay.getTitle());
+    }
+
     private Event event(
             String title,
             LocalDate startDate,
             LocalDate endDate,
             LocalDate applyDate,
             Point location) {
+        return event(title, startDate, endDate, null, null, applyDate, location);
+    }
+
+    private Event event(
+            String title,
+            LocalDate startDate,
+            LocalDate endDate,
+            LocalTime eventStartTime,
+            LocalTime eventEndTime,
+            LocalDate applyDate,
+            Point location) {
         Event event = BeanUtils.instantiateClass(Event.class);
         ReflectionTestUtils.setField(event, "title", title);
         ReflectionTestUtils.setField(event, "startDate", startDate);
         ReflectionTestUtils.setField(event, "endDate", endDate);
+        ReflectionTestUtils.setField(event, "eventStartTime", eventStartTime);
+        ReflectionTestUtils.setField(event, "eventEndTime", eventEndTime);
         ReflectionTestUtils.setField(event, "applyDate", applyDate);
         ReflectionTestUtils.setField(event, "source", "EVENT_REPOSITORY_TEST");
         ReflectionTestUtils.setField(event, "sourceId", UUID.randomUUID().toString());

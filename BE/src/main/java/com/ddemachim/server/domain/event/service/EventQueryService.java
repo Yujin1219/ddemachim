@@ -8,22 +8,35 @@ import com.ddemachim.server.domain.event.enums.EventSortMode;
 import com.ddemachim.server.domain.event.exception.InvalidEventCoordinatesException;
 import com.ddemachim.server.domain.event.exception.EventNotFoundException;
 import com.ddemachim.server.domain.event.repository.EventRepository;
+import java.time.Clock;
 import java.time.LocalDate;
+import java.time.LocalTime;
 import java.time.ZoneId;
-import lombok.RequiredArgsConstructor;
+import java.time.ZonedDateTime;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 @Service
-@RequiredArgsConstructor
 @Transactional(readOnly = true)
 public class EventQueryService {
 
     private static final ZoneId BUSINESS_ZONE = ZoneId.of("Asia/Seoul");
 
     private final EventRepository eventRepository;
+    private final Clock clock;
+
+    @Autowired
+    public EventQueryService(EventRepository eventRepository) {
+        this(eventRepository, Clock.system(BUSINESS_ZONE));
+    }
+
+    EventQueryService(EventRepository eventRepository, Clock clock) {
+        this.eventRepository = eventRepository;
+        this.clock = clock;
+    }
 
     public Page<EventSummaryResponse> findEvents(String keyword, Pageable pageable) {
         return findEvents(keyword, null, null, null, null, pageable);
@@ -42,15 +55,17 @@ public class EventQueryService {
             Pageable pageable) {
         EventStatus eventStatus = EventStatus.from(status);
         EventSortMode eventSortMode = EventSortMode.from(sortMode);
-        LocalDate businessDate = LocalDate.now(BUSINESS_ZONE);
+        ZonedDateTime businessNow = ZonedDateTime.now(clock.withZone(BUSINESS_ZONE));
+        LocalDate businessDate = businessNow.toLocalDate();
+        LocalTime businessTime = businessNow.toLocalTime();
         String statusName = eventStatus == null ? null : eventStatus.name();
 
         if (eventSortMode == null) {
-            return eventRepository.searchByStartDate(keyword, statusName, businessDate, pageable)
+            return eventRepository.searchByStartDate(keyword, statusName, businessDate, businessTime, pageable)
                     .map(EventSummaryResponse::from);
         }
         if (eventSortMode == EventSortMode.LATEST) {
-            return eventRepository.searchByLatestApplyDate(keyword, statusName, businessDate, pageable)
+            return eventRepository.searchByLatestApplyDate(keyword, statusName, businessDate, businessTime, pageable)
                     .map(EventSummaryResponse::from);
         }
 
@@ -59,6 +74,7 @@ public class EventQueryService {
                         keyword,
                         statusName,
                         businessDate,
+                        businessTime,
                         coordinates.latitude(),
                         coordinates.longitude(),
                         pageable)
