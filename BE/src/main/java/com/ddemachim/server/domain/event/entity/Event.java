@@ -12,6 +12,7 @@ import jakarta.persistence.ManyToOne;
 import jakarta.persistence.Table;
 import jakarta.persistence.UniqueConstraint;
 import java.time.LocalDate;
+import java.time.LocalTime;
 import lombok.AccessLevel;
 import lombok.Getter;
 import lombok.NoArgsConstructor;
@@ -77,6 +78,12 @@ public class Event {
 
     @Column(name = "event_time", columnDefinition = "text")
     private String eventTime;
+
+    @Column(name = "event_start_time")
+    private LocalTime eventStartTime;
+
+    @Column(name = "event_end_time")
+    private LocalTime eventEndTime;
 
     @Column(name = "detail_url", columnDefinition = "text")
     private String detailUrl;

@@ -59,7 +59,7 @@
 
 - **출처**: 공공데이터포털 "한국문화정보원_미디어콘텐츠(영상) 촬영지 데이터" CSV(전국 15,034행)
 - **가져온 데이터**: 연번(source_id), 미디어타입(drama/movie/show/artist), 제목, 장소명, 장소타입(playground/restaurant/stay/cafe/store/station), 장소설명, 영업시간/휴무일 원문, 주소, 좌표, 전화번호
-- **카테고리 매핑**: 장소타입이 명확한 것만 내부 카테고리로 매핑(restaurant→RESTAURANT, cafe→CAFE, store→SHOPPING), playground/stay/station처럼 애매한 값은 FILMING_LOCATION으로 유지(추측 매핑 금지)
+- **카테고리/태그 매핑**: 장소타입이 명확한 것만 내부 카테고리로 매핑(restaurant→RESTAURANT, cafe→CAFE, store→SHOPPING), playground/stay/station처럼 애매한 값은 ETC로 유지(추측 매핑 금지). 촬영지 여부는 카테고리가 아니라 `place.tags`의 `FILMING_LOCATION` 태그로 보존
 - **수집**: [`src/collectors/filming_location.py`](src/collectors/filming_location.py) → [`scripts/run_filming_location.py`](scripts/run_filming_location.py)
 
 ### 7. TMDB (촬영지 ↔ 작품 매칭)
@@ -82,7 +82,7 @@ PostgreSQL + PostGIS(`geometry(Point, 4326)`). 스키마는 [`src/db/schema.sql`
 |---|---|
 | `place` | 핵심 장소 마스터(식당/카페/관광지 등 상시 존재하는 공간) |
 | `place_source` | place ↔ 원본 소스 매핑, `UNIQUE(source, source_id)`로 동일 소스 재수집 시 idempotent 처리 |
-| `place_category` | 카테고리 마스터(RESTAURANT/CAFE/DESSERT/ATTRACTION/CULTURE/SHOPPING/FILMING_LOCATION/ETC) |
+| `place_category` | 카테고리 마스터(RESTAURANT/CAFE/DESSERT/ATTRACTION/CULTURE/SHOPPING/ETC 등) |
 | `place_image` | 장소 이미지(다건) |
 | `place_operating_hours` | 요일별 구조화된 영업시간(모호한 원문은 구조화 안 하고 `place.operating_hours_raw`에만 보존) |
 | `event` | 기간이 있는 행사/축제/전시(place와 분리) — TourAPI 15번, 서울시 문화행사 정보 |
@@ -109,7 +109,8 @@ PostgreSQL + PostGIS(`geometry(Point, 4326)`). 스키마는 [`src/db/schema.sql`
 
 - **총 place: 8,417건** (전부 종로구)
   - source별: REDTABLE 7,899 / FILMING_LOCATION 420 / TOURAPI 224 / SEOUL_TOUR 151 (한 place가 여러 소스에 걸칠 수 있어 합계는 총 place 수보다 큼)
-  - category별: RESTAURANT 5,379 / ETC 1,629 / CAFE 844 / FILMING_LOCATION(미분류 촬영지) 202 / ATTRACTION 171 / DESSERT 102 / CULTURE 53 / SHOPPING 37
+  - category별: RESTAURANT 5,379 / ETC 1,831 / CAFE 844 / ATTRACTION 171 / DESSERT 102 / CULTURE 53 / SHOPPING 37
+  - tag별: FILMING_LOCATION 420
 - **좌표 없는 place: 0건** (좌표 없으면 애초에 place를 안 만들어서)
 - 운영시간 없는 place: 8,277건 / 이미지 없는 place: 7,987건 / 전화번호 없는 place: 2,059건
 - `place_image`: 1,768건, `place_operating_hours`: 980행
@@ -147,6 +148,7 @@ DB 스키마 최초 적용:
 
 ```bash
 psql -U postgres -d ddemachim -f src/db/schema.sql
+psql -U postgres -d ddemachim -f src/db/migrate_filming_location_category_to_tag.sql
 ```
 
 (`CREATE TABLE IF NOT EXISTS` 기반이라 재실행해도 안전하지만, 컬럼 추가 등은 별도 `ALTER TABLE`로 처리된 이력이 있어 기존 DB에 재적용 시 일부 컬럼은 수동 확인 필요)

@@ -9,7 +9,7 @@ CREATE EXTENSION IF NOT EXISTS postgis_raster;
 -- 내부 표준 카테고리
 CREATE TABLE IF NOT EXISTS place_category (
     id              bigserial PRIMARY KEY,
-    code            varchar(30) NOT NULL UNIQUE, -- RESTAURANT, CAFE, DESSERT, ATTRACTION, CULTURE, EXHIBITION, SHOPPING, POPUP, PARK, WALK, PHOTO_SPOT, FILMING_LOCATION, ETC
+    code            varchar(30) NOT NULL UNIQUE, -- RESTAURANT, CAFE, DESSERT, ATTRACTION, CULTURE, EXHIBITION, SHOPPING, POPUP, PARK, WALK, PHOTO_SPOT, ETC
     label_ko        varchar(50) NOT NULL
 );
 
@@ -101,12 +101,38 @@ CREATE TABLE IF NOT EXISTS event (
     main_image      text, -- 대표 이미지 URL
     apply_date      date, -- 신청일(RGSTDATE)
     event_time      text, -- 행사 시간 원문(PRO_TIME, "19:30"처럼 구조화 안 된 값도 있어 텍스트로 보존)
+    event_start_time time, -- 원문에서 보수적으로 추출한 첫 행사 시작 시각
+    event_end_time   time, -- 명시적 범위/"HH:mm까지"에서만 추출한 종료 시각
     detail_url      text, -- 서울문화포털 상세 페이지 URL(HMPG_ADDR)
     location        geometry(Point, 4326), -- 행사 좌표(LOT=경도, LAT=위도)
     UNIQUE (source, source_id)
 );
 
 CREATE INDEX IF NOT EXISTS idx_event_place_id ON event (place_id);
+
+-- Structured schedule rows derived only from reliable event_time text. A null
+-- day_of_week means every/unspecified day; source_text keeps the parser input
+-- available for traceability while event.event_time remains the original field.
+CREATE TABLE IF NOT EXISTS event_schedule (
+    id               bigserial PRIMARY KEY,
+    event_id         bigint NOT NULL REFERENCES event(id) ON DELETE CASCADE,
+    day_of_week      smallint,
+    start_time       time NOT NULL,
+    end_time         time,
+    schedule_kind    varchar(20) NOT NULL,
+    duration_minutes integer,
+    source_text      text NOT NULL,
+    CONSTRAINT chk_event_schedule_day_of_week
+        CHECK (day_of_week IS NULL OR day_of_week BETWEEN 1 AND 7),
+    CONSTRAINT chk_event_schedule_kind
+        CHECK (schedule_kind IN ('OPEN_WINDOW', 'SESSION')),
+    CONSTRAINT chk_event_schedule_duration
+        CHECK (duration_minutes IS NULL OR duration_minutes > 0),
+    CONSTRAINT uq_event_schedule_identity UNIQUE NULLS NOT DISTINCT
+        (event_id, day_of_week, start_time, end_time, schedule_kind, duration_minutes, source_text)
+);
+
+CREATE INDEX IF NOT EXISTS idx_event_schedule_event_id ON event_schedule (event_id);
 
 -- 영화/드라마 작품 메타데이터 (TMDB)
 CREATE TABLE IF NOT EXISTS media_content (
@@ -128,6 +154,9 @@ CREATE TABLE IF NOT EXISTS filming_location (
     media_content_id    bigint REFERENCES media_content(id) ON DELETE SET NULL, -- null이면 TMDB 매칭 전
     match_confidence    numeric(4,3),  -- 0.000 ~ 1.000, null이면 미계산
     match_status        varchar(20) NOT NULL DEFAULT 'REVIEW_REQUIRED', -- AUTO_MATCH / REVIEW_REQUIRED / NO_MATCH
+    content_type        varchar(20) CONSTRAINT chk_filming_location_content_type
+                        CHECK (content_type IN ('DRAMA', 'VARIETY', 'MOVIE')),
+    scene_description   text,
     source              varchar(30) NOT NULL,
     source_id           varchar(100) NOT NULL,
     UNIQUE (source, source_id)
@@ -135,12 +164,14 @@ CREATE TABLE IF NOT EXISTS filming_location (
 
 CREATE INDEX IF NOT EXISTS idx_filming_location_place_id ON filming_location (place_id);
 CREATE INDEX IF NOT EXISTS idx_filming_location_media_content_id ON filming_location (media_content_id);
+CREATE INDEX IF NOT EXISTS idx_filming_location_content_type ON filming_location (content_type);
 
 -- 배우/감독 등 인물 (TMDB person_id로 중복 방지)
 CREATE TABLE IF NOT EXISTS person (
     id              bigserial PRIMARY KEY,
     tmdb_person_id  integer NOT NULL UNIQUE,
     name            varchar(200) NOT NULL,
+    name_ko         varchar(200),
     profile_path    text
 );
 
@@ -151,6 +182,7 @@ CREATE TABLE IF NOT EXISTS media_credit (
     person_id           bigint NOT NULL REFERENCES person(id) ON DELETE CASCADE,
     role                varchar(20) NOT NULL, -- CAST / DIRECTOR
     character_name      varchar(200), -- role=CAST일 때만
+    character_name_ko   varchar(200), -- 한국식 로마자 인명만 한글 표시
     cast_order          integer, -- role=CAST일 때만(출연 비중 순서)
     UNIQUE (media_content_id, person_id, role)
 );

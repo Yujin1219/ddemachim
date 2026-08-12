@@ -11,15 +11,64 @@ import org.springframework.data.repository.query.Param;
 public interface PlaceRepository extends JpaRepository<Place, Long> {
 
     @Query(
-            "select p from Place p "
-                    + "left join p.category c "
-                    + "where (:category is null or c.code = :category) "
-                    + "and (:district is null or p.district = :district) "
-                    + "and (:keyword is null or p.normalizedName like concat('%', cast(:keyword as string), '%')) "
-                    + "order by p.id")
+            """
+            select distinct fl.place.id as placeId, fl.contentType as contentType
+            from FilmingLocation fl
+            where fl.place.id in :placeIds
+            and fl.contentType is not null
+            """)
+    List<PlaceFilmingContentTypeProjection> findFilmingContentTypesByPlaceIds(
+            @Param("placeIds") List<Long> placeIds);
+
+    @Query(
+            value =
+                    """
+                    select p.*
+                    from place p
+                    left join place_category c on p.category_id = c.id
+                    where (:category is null or c.code = any(string_to_array(:category, ',')))
+                    and (:district is null or p.district = :district)
+                    and (:tag is null or :tag = any(p.tags))
+                    and (:filmingContentType is null or exists (
+                        select 1 from filming_location fl
+                        where fl.place_id = p.id
+                        and fl.content_type = :filmingContentType
+                    ))
+                    and (:keyword is null or p.normalized_name like concat('%', cast(:keyword as text), '%'))
+                    order by
+                        case
+                            when :tag = 'FILMING_LOCATION'
+                                and exists (
+                                    select 1
+                                    from place_image pi
+                                    where pi.place_id = p.id
+                                )
+                            then 0
+                            else 1
+                        end,
+                        p.id
+                    """,
+            countQuery =
+                    """
+                    select count(*)
+                    from place p
+                    left join place_category c on p.category_id = c.id
+                    where (:category is null or c.code = any(string_to_array(:category, ',')))
+                    and (:district is null or p.district = :district)
+                    and (:tag is null or :tag = any(p.tags))
+                    and (:filmingContentType is null or exists (
+                        select 1 from filming_location fl
+                        where fl.place_id = p.id
+                        and fl.content_type = :filmingContentType
+                    ))
+                    and (:keyword is null or p.normalized_name like concat('%', cast(:keyword as text), '%'))
+                    """,
+            nativeQuery = true)
     Page<Place> search(
             @Param("category") String category,
             @Param("district") String district,
+            @Param("tag") String tag,
+            @Param("filmingContentType") String filmingContentType,
             @Param("keyword") String keyword,
             Pageable pageable);
 
@@ -28,13 +77,18 @@ public interface PlaceRepository extends JpaRepository<Place, Long> {
                     """
                     select p.*
                     from place p
+                    left join place_category c on p.category_id = c.id
                     where p.location is not null
+                    and (:category is null or c.code = any(string_to_array(:category, ',')))
+                    and (:tag is null or :tag = any(p.tags))
                     and ST_Intersects(p.location, ST_MakeEnvelope(:minLng, :minLat, :maxLng, :maxLat, 4326))
                     order by p.id
                     limit :limit
                     """,
             nativeQuery = true)
     List<Place> findInBounds(
+            @Param("category") String category,
+            @Param("tag") String tag,
             @Param("minLat") Double minLat,
             @Param("maxLat") Double maxLat,
             @Param("minLng") Double minLng,

@@ -2,13 +2,27 @@ import { useEffect, useRef, useState } from 'react'
 import Map from 'ol/Map.js'
 import Overlay from 'ol/Overlay.js'
 import View from 'ol/View.js'
+import GeoJSON from 'ol/format/GeoJSON.js'
 import TileLayer from 'ol/layer/Tile.js'
+import VectorLayer from 'ol/layer/Vector.js'
+import VectorSource from 'ol/source/Vector.js'
 import XYZ from 'ol/source/XYZ.js'
-import { fromLonLat } from 'ol/proj.js'
+import { boundingExtent } from 'ol/extent.js'
+import { fromLonLat, transformExtent } from 'ol/proj.js'
+import { Fill, Stroke, Style } from 'ol/style.js'
 import 'ol/ol.css'
 import '../vworld-map.css'
 
 const DEFAULT_CENTER = [126.978, 37.5665]
+const CLUSTER_ZOOM_MAX = 14.5
+const CLUSTER_PIXEL_RADIUS = 44
+const CONGESTION_AREA_COLORS = {
+  여유: { fill: 'rgba(22, 163, 74, 0.18)', stroke: 'rgba(22, 163, 74, 0.58)' },
+  보통: { fill: 'rgba(8, 145, 178, 0.17)', stroke: 'rgba(8, 145, 178, 0.58)' },
+  '약간 붐빔': { fill: 'rgba(234, 88, 12, 0.19)', stroke: 'rgba(234, 88, 12, 0.62)' },
+  붐빔: { fill: 'rgba(220, 38, 38, 0.21)', stroke: 'rgba(220, 38, 38, 0.66)' },
+  정보없음: { fill: 'rgba(51, 65, 85, 0.10)', stroke: 'rgba(51, 65, 85, 0.34)' },
+}
 
 function normalizeCenter(center) {
   if (!Array.isArray(center) || center.length < 2) return DEFAULT_CENTER
@@ -20,6 +34,50 @@ function normalizeCenter(center) {
     : DEFAULT_CENTER
 }
 
+function hasPlaceTag(place, tagCode) {
+  const normalize = (value) => (typeof value === 'string' ? value.trim().toUpperCase() : '')
+  const tags = Array.isArray(place.tags)
+    ? place.tags.map((tag) => normalize(typeof tag === 'string' ? tag : tag?.code))
+    : [normalize(place.tags)]
+  return tags.includes(normalize(tagCode))
+}
+
+function placeMarkerTone(place) {
+  if (hasPlaceTag(place, 'FILMING_LOCATION')) return 'filming'
+
+  const categoryCode = typeof place.categoryCode === 'string' ? place.categoryCode.trim().toUpperCase() : ''
+  if (categoryCode === 'RESTAURANT') return 'restaurant'
+  if (categoryCode === 'CAFE' || categoryCode === 'DESSERT') return 'cafe-dessert'
+  if (categoryCode === 'ATTRACTION') return 'attraction'
+  if (categoryCode === 'CULTURE') return 'culture'
+  if (categoryCode === 'EXHIBITION') return 'exhibition'
+  if (categoryCode === 'SHOPPING') return 'shopping'
+  if (categoryCode === 'POPUP') return 'popup'
+  if (categoryCode === 'PARK') return 'park'
+  if (categoryCode === 'WALK') return 'walk'
+  if (categoryCode === 'PHOTO_SPOT') return 'photo-spot'
+  return 'default'
+}
+
+function markerSizeClass(map) {
+  const zoomLevel = map.getView().getZoom() ?? 15
+  if (zoomLevel >= 17) return 'is-zoom-near'
+  if (zoomLevel >= 15) return 'is-zoom-mid'
+  return 'is-zoom-far'
+}
+
+function congestionAreaStyle(feature) {
+  const level = feature.get('congestionLevel') || '정보없음'
+  const colors = CONGESTION_AREA_COLORS[level] || CONGESTION_AREA_COLORS.정보없음
+  return new Style({
+    fill: new Fill({ color: colors.fill }),
+    stroke: new Stroke({
+      color: colors.stroke,
+      width: level === '정보없음' ? 1 : 1.4,
+    }),
+  })
+}
+
 export default function VWorldMap({
   center = DEFAULT_CENTER,
   zoom = 15,
@@ -28,15 +86,199 @@ export default function VWorldMap({
   style,
   ariaLabel = 'Map',
   userLocation = null,
+  loadPlacesInBounds = null,
+  placeMarkerFilter = null,
+  placeMarkerFilterKey = '',
+  placeMarkerLabel = null,
+  clusterPlaces = true,
+  fitPlaceMarkers = false,
+  fitUserLocation = false,
+  placeRequestKey = '',
+  placeLimit = 300,
+  congestionAreaUrl = '',
+  congestionAreaKey = '',
+  showCongestionAreas = true,
+  onPlaceClick = null,
+  onPlacesChange = null,
 }) {
   const targetRef = useRef(null)
   const mapRef = useRef(null)
   const locationOverlayRef = useRef(null)
+  const congestionAreaLayerRef = useRef(null)
+  const placeOverlaysRef = useRef([])
+  const rawPlacesRef = useRef([])
+  const placeAbortRef = useRef(null)
+  const congestionAreaAbortRef = useRef(null)
+  const fittedPlaceKeyRef = useRef('')
+  const loadVisiblePlacesRef = useRef(null)
+  const lastPlaceRequestKeyRef = useRef(placeRequestKey)
+  const loadPlacesRef = useRef(loadPlacesInBounds)
+  const placeMarkerFilterRef = useRef(placeMarkerFilter)
+  const placeMarkerLabelRef = useRef(placeMarkerLabel)
+  const onPlaceClickRef = useRef(onPlaceClick)
+  const onPlacesChangeRef = useRef(onPlacesChange)
   const [liveUserLocation, setLiveUserLocation] = useState(userLocation)
   const [tileError, setTileError] = useState(false)
   const apiKey = import.meta.env.VITE_VWORLD_API_KEY?.trim()
   const [longitude, latitude] = normalizeCenter(center)
   const safeZoom = Number.isFinite(Number(zoom)) ? Number(zoom) : 15
+
+  useEffect(() => {
+    loadPlacesRef.current = loadPlacesInBounds
+    placeMarkerFilterRef.current = placeMarkerFilter
+    placeMarkerLabelRef.current = placeMarkerLabel
+    onPlaceClickRef.current = onPlaceClick
+    onPlacesChangeRef.current = onPlacesChange
+  }, [loadPlacesInBounds, placeMarkerFilter, placeMarkerLabel, onPlaceClick, onPlacesChange])
+
+  function clearPlaceOverlays(map) {
+    placeOverlaysRef.current.forEach((overlay) => map.removeOverlay(overlay))
+    placeOverlaysRef.current = []
+  }
+
+  function getPlaceCoordinate(place) {
+    const longitude = Number(place.longitude)
+    const latitude = Number(place.latitude)
+    return Number.isFinite(longitude) && Number.isFinite(latitude) ? [longitude, latitude] : null
+  }
+
+  function addPlaceOverlay(map, place) {
+    const coordinate = getPlaceCoordinate(place)
+    if (!coordinate) return
+
+    const marker = document.createElement('button')
+    marker.className = `vworld-place-marker is-${placeMarkerTone(place)} ${markerSizeClass(map)}`
+    marker.type = 'button'
+    const markerLabel = placeMarkerLabelRef.current?.(place)
+    const hasMarkerLabel = markerLabel !== undefined && markerLabel !== null && markerLabel !== ''
+    if (hasMarkerLabel) {
+      marker.classList.add('is-numbered')
+      const markerNumber = Number(markerLabel)
+      if (Number.isFinite(markerNumber) && markerNumber > 0) {
+        const markerIndex = markerNumber - 1
+        const radius = 18 + Math.floor(markerIndex / 4) * 10
+        const angle = (markerIndex % 4) * (Math.PI / 2) - (Math.PI / 2)
+        marker.style.setProperty('--marker-offset-x', `${Math.round(Math.cos(angle) * radius)}px`)
+        marker.style.setProperty('--marker-offset-y', `${Math.round(Math.sin(angle) * radius)}px`)
+      }
+    }
+    marker.setAttribute('aria-label', hasMarkerLabel ? `${markerLabel}번 ${place.name} 장소 보기` : `${place.name} 장소 보기`)
+    marker.title = place.name
+    const markerContent = document.createElement('span')
+    markerContent.textContent = hasMarkerLabel ? String(markerLabel) : ''
+    marker.appendChild(markerContent)
+    marker.addEventListener('click', () => onPlaceClickRef.current?.(place))
+
+    const overlay = new Overlay({
+      element: marker,
+      position: fromLonLat(coordinate),
+      positioning: 'center-center',
+      stopEvent: true,
+    })
+    map.addOverlay(overlay)
+    placeOverlaysRef.current.push(overlay)
+  }
+
+  function buildClusters(map, places) {
+    const clusters = []
+    places.forEach((place) => {
+      const coordinate = getPlaceCoordinate(place)
+      if (!coordinate) return
+      const position = fromLonLat(coordinate)
+      const pixel = map.getPixelFromCoordinate(position)
+      if (!pixel) return
+
+      const cluster = clusters.find(({ pixel: clusterPixel }) => {
+        const x = pixel[0] - clusterPixel[0]
+        const y = pixel[1] - clusterPixel[1]
+        return Math.hypot(x, y) <= CLUSTER_PIXEL_RADIUS
+      })
+
+      if (cluster) {
+        cluster.places.push(place)
+        const count = cluster.places.length
+        cluster.pixel = [
+          (cluster.pixel[0] * (count - 1) + pixel[0]) / count,
+          (cluster.pixel[1] * (count - 1) + pixel[1]) / count,
+        ]
+        cluster.coordinate = [
+          (cluster.coordinate[0] * (count - 1) + coordinate[0]) / count,
+          (cluster.coordinate[1] * (count - 1) + coordinate[1]) / count,
+        ]
+      } else {
+        clusters.push({ coordinate, pixel, places: [place] })
+      }
+    })
+    return clusters
+  }
+
+  function addClusterOverlay(map, cluster) {
+    const marker = document.createElement('button')
+    marker.className = `vworld-place-cluster is-${placeMarkerTone(cluster.places[0])} ${markerSizeClass(map)}`
+    marker.type = 'button'
+    marker.setAttribute('aria-label', `${cluster.places.length}개 장소 모아보기`)
+    marker.title = `${cluster.places.length}개 장소`
+    marker.textContent = cluster.places.length
+    marker.addEventListener('click', () => {
+      const view = map.getView()
+      const currentZoom = view.getZoom() ?? CLUSTER_ZOOM_MAX
+      view.animate({
+        center: fromLonLat(cluster.coordinate),
+        zoom: Math.min(currentZoom + 2, 19),
+        duration: 240,
+      })
+    })
+
+    const overlay = new Overlay({
+      element: marker,
+      position: fromLonLat(cluster.coordinate),
+      positioning: 'center-center',
+      stopEvent: true,
+    })
+    map.addOverlay(overlay)
+    placeOverlaysRef.current.push(overlay)
+  }
+
+  function renderPlaceOverlays(map, places) {
+    clearPlaceOverlays(map)
+    const filterPlace = placeMarkerFilterRef.current
+    const visiblePlaces = typeof filterPlace === 'function' ? places.filter(filterPlace) : places
+    const zoomLevel = map.getView().getZoom() ?? safeZoom
+
+    if (clusterPlaces && zoomLevel <= CLUSTER_ZOOM_MAX) {
+      buildClusters(map, visiblePlaces).forEach((cluster) => {
+        if (cluster.places.length > 1) addClusterOverlay(map, cluster)
+        else addPlaceOverlay(map, cluster.places[0])
+      })
+      fitVisiblePlaces(map, visiblePlaces)
+      return
+    }
+
+    visiblePlaces.forEach((place) => addPlaceOverlay(map, place))
+    fitVisiblePlaces(map, visiblePlaces)
+  }
+
+  function fitVisiblePlaces(map, places) {
+    if (!fitPlaceMarkers) return
+    const coordinates = places
+      .map(getPlaceCoordinate)
+      .filter(Boolean)
+      .map((coordinate) => fromLonLat(coordinate))
+    if (!coordinates.length) return
+    const coordinateKey = coordinates.map((coordinate) => coordinate.join(',')).join('|')
+    if (fittedPlaceKeyRef.current === coordinateKey) return
+    fittedPlaceKeyRef.current = coordinateKey
+    if (coordinates.length === 1) {
+      map.getView().setCenter(coordinates[0])
+      map.getView().setZoom(17)
+      return
+    }
+    map.getView().fit(boundingExtent(coordinates), {
+      padding: [34, 34, 58, 34],
+      maxZoom: 17,
+      duration: 0,
+    })
+  }
 
   useEffect(() => {
     const handleLocation = (event) => {
@@ -80,15 +322,116 @@ export default function VWorldMap({
       controls: [],
       interactions: interactive ? undefined : [],
     })
+    const congestionAreaLayer = new VectorLayer({
+      source: new VectorSource(),
+      style: congestionAreaStyle,
+      zIndex: 1,
+      visible: showCongestionAreas,
+      properties: { name: 'jongno-congestion-areas' },
+    })
+    map.addLayer(congestionAreaLayer)
+    congestionAreaLayerRef.current = congestionAreaLayer
     mapRef.current = map
 
+    const loadVisiblePlaces = () => {
+      const loader = loadPlacesRef.current
+      const size = map.getSize()
+      if (!loader || !size) return
+
+      const extent = map.getView().calculateExtent(size)
+      const [minLng, minLat, maxLng, maxLat] = transformExtent(extent, 'EPSG:3857', 'EPSG:4326')
+      placeAbortRef.current?.abort()
+      const controller = new AbortController()
+      placeAbortRef.current = controller
+
+      loader({ minLat, maxLat, minLng, maxLng, limit: placeLimit, signal: controller.signal })
+        .then((places = []) => {
+          if (controller.signal.aborted) return
+          rawPlacesRef.current = Array.isArray(places) ? places : []
+          onPlacesChangeRef.current?.(rawPlacesRef.current)
+          renderPlaceOverlays(map, rawPlacesRef.current)
+        })
+        .catch((error) => {
+          if (error?.name === 'AbortError') return
+          console.error('지도 장소 정보를 불러오지 못했어요.', error)
+          rawPlacesRef.current = []
+          onPlacesChangeRef.current?.([])
+          clearPlaceOverlays(map)
+        })
+    }
+    loadVisiblePlacesRef.current = loadVisiblePlaces
+
+    map.once('postrender', loadVisiblePlaces)
+    map.on('moveend', loadVisiblePlaces)
+
     return () => {
+      map.un('moveend', loadVisiblePlaces)
+      if (loadVisiblePlacesRef.current === loadVisiblePlaces) loadVisiblePlacesRef.current = null
+      placeAbortRef.current?.abort()
+      clearPlaceOverlays(map)
+      congestionAreaAbortRef.current?.abort()
+      if (congestionAreaLayerRef.current === congestionAreaLayer) congestionAreaLayerRef.current = null
       source.un('tileloaderror', handleTileError)
       source.un('tileloadend', handleTileSuccess)
       map.setTarget(undefined)
       mapRef.current = null
     }
-  }, [apiKey, interactive])
+  }, [apiKey, interactive, Boolean(loadPlacesInBounds), placeLimit, clusterPlaces, fitPlaceMarkers])
+
+  useEffect(() => {
+    const layer = congestionAreaLayerRef.current
+    if (!layer) return undefined
+
+    const vectorSource = layer.getSource()
+    vectorSource.clear()
+    congestionAreaAbortRef.current?.abort()
+    if (!congestionAreaUrl) return undefined
+
+    const controller = new AbortController()
+    congestionAreaAbortRef.current = controller
+
+    fetch(congestionAreaUrl, { signal: controller.signal })
+      .then((response) => {
+        if (!response.ok) throw new Error(`GeoJSON ${congestionAreaUrl} failed: ${response.status}`)
+        return response.json()
+      })
+      .then((geojson) => {
+        if (controller.signal.aborted) return
+        const features = new GeoJSON().readFeatures(geojson, {
+          dataProjection: 'EPSG:4326',
+          featureProjection: 'EPSG:3857',
+        })
+        vectorSource.clear()
+        vectorSource.addFeatures(features)
+      })
+      .catch((error) => {
+        if (error?.name === 'AbortError') return
+        console.error('혼잡도 영역 정보를 불러오지 못했어요.', error)
+        vectorSource.clear()
+      })
+
+    return () => {
+      controller.abort()
+    }
+  }, [congestionAreaUrl, congestionAreaKey])
+
+  useEffect(() => {
+    congestionAreaLayerRef.current?.setVisible(showCongestionAreas)
+  }, [showCongestionAreas])
+
+  useEffect(() => {
+    if (lastPlaceRequestKeyRef.current === placeRequestKey) return
+    lastPlaceRequestKeyRef.current = placeRequestKey
+    fittedPlaceKeyRef.current = ''
+    loadVisiblePlacesRef.current?.()
+  }, [placeRequestKey])
+
+  useEffect(() => {
+    const map = mapRef.current
+    if (!map) return
+
+    renderPlaceOverlays(map, rawPlacesRef.current)
+  }, [placeMarkerFilterKey])
 
   useEffect(() => {
     const view = mapRef.current?.getView()
@@ -107,7 +450,13 @@ export default function VWorldMap({
       locationOverlayRef.current = null
     }
 
-    if (!Array.isArray(liveUserLocation) || liveUserLocation.length < 2) return undefined
+    if (!Array.isArray(liveUserLocation) || liveUserLocation.length < 2) {
+      if (fitUserLocation) {
+        fittedPlaceKeyRef.current = ''
+        fitVisiblePlaces(map, rawPlacesRef.current)
+      }
+      return undefined
+    }
     const location = normalizeCenter(liveUserLocation)
     const marker = document.createElement('div')
     marker.className = 'vworld-user-location-marker'
@@ -122,12 +471,18 @@ export default function VWorldMap({
     })
     map.addOverlay(overlay)
     locationOverlayRef.current = overlay
+    if (fitUserLocation) {
+      fitVisiblePlaces(map, [
+        ...rawPlacesRef.current,
+        { longitude: location[0], latitude: location[1] },
+      ])
+    }
 
     return () => {
       map.removeOverlay(overlay)
       if (locationOverlayRef.current === overlay) locationOverlayRef.current = null
     }
-  }, [liveUserLocation?.[0], liveUserLocation?.[1]])
+  }, [liveUserLocation?.[0], liveUserLocation?.[1], fitUserLocation])
 
   const statusMessage = !apiKey
     ? 'VWorld API key is not configured.'

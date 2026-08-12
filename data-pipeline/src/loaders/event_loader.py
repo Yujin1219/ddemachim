@@ -4,6 +4,7 @@ from dataclasses import dataclass, field
 
 import psycopg
 
+from src.normalizers.event_schedule import EventSchedule
 from src.normalizers.event import EventDTO
 from src.normalizers.seoul_culture_event import CultureEventDTO
 
@@ -35,6 +36,44 @@ def _find_place_id(conn: psycopg.Connection, venue_name: str | None, district: s
     return None
 
 
+def _replace_event_schedules(
+    conn: psycopg.Connection,
+    event_id: int,
+    schedules: tuple[EventSchedule, ...],
+) -> None:
+    """Replace reliable derived rows in the caller's transaction.
+
+    An empty tuple means parsing was ambiguous or unavailable. In that case the
+    existing rows are intentionally preserved so a transient source response
+    cannot erase previously valid itinerary data. The caller commits the event
+    and these rows together.
+    """
+    if not schedules:
+        return
+
+    with conn.cursor() as cur:
+        cur.execute("DELETE FROM event_schedule WHERE event_id = %s", (event_id,))
+        for schedule in schedules:
+            cur.execute(
+                """
+                INSERT INTO event_schedule (
+                    event_id, day_of_week, start_time, end_time,
+                    schedule_kind, duration_minutes, source_text
+                ) VALUES (%s, %s, %s, %s, %s, %s, %s)
+                ON CONFLICT ON CONSTRAINT uq_event_schedule_identity DO NOTHING
+                """,
+                (
+                    event_id,
+                    schedule.day_of_week,
+                    schedule.start_time,
+                    schedule.end_time,
+                    schedule.schedule_kind,
+                    schedule.duration_minutes,
+                    schedule.source_text,
+                ),
+            )
+
+
 def load_event(conn: psycopg.Connection, dto: EventDTO, stats: EventLoadStats) -> None:
     place_id = _find_place_id(conn, dto.venue_name, dto.district)
     if place_id is not None:
@@ -52,6 +91,7 @@ def load_event(conn: psycopg.Connection, dto: EventDTO, stats: EventLoadStats) -
         existing = cur.fetchone()
 
         if existing:
+            event_id = existing[0]
             cur.execute(
                 """
                 UPDATE event SET
@@ -59,21 +99,39 @@ def load_event(conn: psycopg.Connection, dto: EventDTO, stats: EventLoadStats) -
                     title = %s,
                     event_type = %s,
                     start_date = %s,
-                    end_date = %s
+                    end_date = %s,
+                    event_time = %s,
+                    event_start_time = %s,
+                    event_end_time = %s
                 WHERE id = %s
                 """,
-                (place_id, dto.title, dto.event_type, dto.start_date, dto.end_date, existing[0]),
+                (
+                    place_id, dto.title, dto.event_type, dto.start_date, dto.end_date,
+                    dto.event_time, dto.event_start_time, dto.event_end_time, event_id,
+                ),
             )
             stats.updated += 1
         else:
             cur.execute(
                 """
-                INSERT INTO event (place_id, title, event_type, start_date, end_date, source, source_id)
-                VALUES (%s, %s, %s, %s, %s, %s, %s)
+                INSERT INTO event (
+                    place_id, title, event_type, start_date, end_date, event_time,
+                    event_start_time, event_end_time, source, source_id
+                )
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                RETURNING id
                 """,
-                (place_id, dto.title, dto.event_type, dto.start_date, dto.end_date, dto.source, dto.source_id),
+                (
+                    place_id, dto.title, dto.event_type, dto.start_date, dto.end_date,
+                    dto.event_time, dto.event_start_time, dto.event_end_time, dto.source, dto.source_id,
+                ),
             )
+            inserted = cur.fetchone()
+            event_id = inserted[0] if inserted else None
             stats.inserted += 1
+
+    if event_id is not None:
+        _replace_event_schedules(conn, event_id, dto.schedules)
 
 
 def load_culture_event(conn: psycopg.Connection, dto: CultureEventDTO, stats: EventLoadStats) -> None:
@@ -96,6 +154,7 @@ def load_culture_event(conn: psycopg.Connection, dto: CultureEventDTO, stats: Ev
         existing = cur.fetchone()
 
         if existing:
+            event_id = existing[0]
             cur.execute(
                 """
                 UPDATE event SET
@@ -113,6 +172,8 @@ def load_culture_event(conn: psycopg.Connection, dto: CultureEventDTO, stats: Ev
                     homepage_url = %s,
                     main_image = %s,
                     event_time = %s,
+                    event_start_time = %s,
+                    event_end_time = %s,
                     detail_url = %s,
                     location = CASE WHEN %s IS NOT NULL AND %s IS NOT NULL
                                      THEN ST_SetSRID(ST_MakePoint(%s, %s), 4326)
@@ -122,9 +183,10 @@ def load_culture_event(conn: psycopg.Connection, dto: CultureEventDTO, stats: Ev
                 (
                     place_id, dto.title, dto.event_type, dto.start_date, dto.end_date, dto.apply_date,
                     dto.venue_name, dto.org_name, dto.use_target, dto.use_fee, dto.inquiry,
-                    dto.homepage_url, dto.main_image, dto.event_time, dto.detail_url,
+                    dto.homepage_url, dto.main_image, dto.event_time,
+                    dto.event_start_time, dto.event_end_time, dto.detail_url,
                     lng, lat, lng, lat,
-                    existing[0],
+                    event_id,
                 ),
             )
             stats.updated += 1
@@ -134,21 +196,29 @@ def load_culture_event(conn: psycopg.Connection, dto: CultureEventDTO, stats: Ev
                 INSERT INTO event (
                     place_id, title, event_type, start_date, end_date, source, source_id,
                     apply_date, venue_name, org_name, use_target, use_fee, inquiry,
-                    homepage_url, main_image, event_time, detail_url, location
+                    homepage_url, main_image, event_time, event_start_time, event_end_time,
+                    detail_url, location
                 ) VALUES (
                     %s, %s, %s, %s, %s, %s, %s,
                     %s, %s, %s, %s, %s, %s,
-                    %s, %s, %s, %s,
+                    %s, %s, %s, %s, %s, %s,
                     CASE WHEN %s IS NOT NULL AND %s IS NOT NULL
                          THEN ST_SetSRID(ST_MakePoint(%s, %s), 4326)
                          ELSE NULL END
                 )
+                RETURNING id
                 """,
                 (
                     place_id, dto.title, dto.event_type, dto.start_date, dto.end_date, dto.source, dto.source_id,
                     dto.apply_date, dto.venue_name, dto.org_name, dto.use_target, dto.use_fee, dto.inquiry,
-                    dto.homepage_url, dto.main_image, dto.event_time, dto.detail_url,
+                    dto.homepage_url, dto.main_image, dto.event_time,
+                    dto.event_start_time, dto.event_end_time, dto.detail_url,
                     lng, lat, lng, lat,
                 ),
             )
+            inserted = cur.fetchone()
+            event_id = inserted[0] if inserted else None
             stats.inserted += 1
+
+    if event_id is not None:
+        _replace_event_schedules(conn, event_id, dto.schedules)

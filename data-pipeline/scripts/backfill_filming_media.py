@@ -37,6 +37,7 @@ class BackfillStats:
     cache_hits: int = 0
     api_calls: int = 0
     auto_match: int = 0
+    manually_approved: int = 0
     review_no_result: int = 0
     review_low_confidence: int = 0
     media_content_reused: int = 0
@@ -123,6 +124,18 @@ def main() -> int:
     parser = argparse.ArgumentParser(description="촬영지-작품(TMDB) 매칭 백필")
     parser.add_argument("--dry-run", action="store_true", help="DB에 쓰지 않고 통계만 출력")
     parser.add_argument("--limit", type=int, default=None, help="테스트용: 앞에서 N건만 처리")
+    parser.add_argument(
+        "--source-id",
+        action="append",
+        dest="source_ids",
+        help="특정 원본 source_id만 처리. 여러 번 지정 가능",
+    )
+    parser.add_argument(
+        "--approve-source-id",
+        action="append",
+        dest="approved_source_ids",
+        help="낮은 제목 유사도여도 검토 완료한 source_id의 최상위 후보를 확정. 여러 번 지정 가능",
+    )
     args = parser.parse_args()
 
     load_dotenv()
@@ -137,6 +150,20 @@ def main() -> int:
         return 1
 
     rows = _load_pending(PENDING_PATH)
+    if args.source_ids:
+        requested_ids = set(args.source_ids)
+        rows = [row for row in rows if str(row.get("source_id")) in requested_ids]
+        found_ids = {str(row.get("source_id")) for row in rows}
+        missing_ids = sorted(requested_ids - found_ids)
+        if missing_ids:
+            logger.error(f"대기 목록에 없는 source_id: {', '.join(missing_ids)}")
+            return 2
+    approved_source_ids = set(args.approved_source_ids or [])
+    selected_source_ids = {str(row.get("source_id")) for row in rows}
+    unselected_approvals = sorted(approved_source_ids - selected_source_ids)
+    if unselected_approvals:
+        logger.error(f"처리 대상에 포함되지 않은 승인 source_id: {', '.join(unselected_approvals)}")
+        return 2
     if args.limit:
         rows = rows[: args.limit]
     logger.info(f"대기 목록 로드: {len(rows)}건 (AUTO_MATCH_THRESHOLD={AUTO_MATCH_THRESHOLD})")
@@ -193,13 +220,18 @@ def main() -> int:
                 stats.review_no_result += 1
                 continue
 
-            if is_auto_match(candidate.confidence):
+            manually_approved = source_id in approved_source_ids and not is_auto_match(candidate.confidence)
+            if is_auto_match(candidate.confidence) or manually_approved:
                 if conn is not None:
                     media_content_id = _get_or_create_media_content(conn, candidate, stats)
                     _apply_auto_match(conn, source_id, media_content_id, candidate.confidence)
-                stats.auto_match += 1
+                if manually_approved:
+                    stats.manually_approved += 1
+                else:
+                    stats.auto_match += 1
                 logger.info(
-                    f"AUTO_MATCH source_id={source_id} title={title!r} -> tmdb_id={candidate.tmdb_id} "
+                    f"{'MANUAL_APPROVAL' if manually_approved else 'AUTO_MATCH'} "
+                    f"source_id={source_id} title={title!r} -> tmdb_id={candidate.tmdb_id} "
                     f"({candidate.title!r}, confidence={candidate.confidence:.3f})"
                 )
             else:
@@ -227,6 +259,7 @@ def main() -> int:
     logger.info(f"제목 캐시 히트: {stats.cache_hits}")
     logger.info(f"TMDB API 호출: {stats.api_calls}")
     logger.info(f"AUTO_MATCH(자동 확정): {stats.auto_match}")
+    logger.info(f"MANUAL_APPROVAL(검토 후 확정): {stats.manually_approved}")
     logger.info(f"REVIEW_REQUIRED(검색 결과 없음): {stats.review_no_result}")
     logger.info(f"REVIEW_REQUIRED(신뢰도 낮음): {stats.review_low_confidence}")
     logger.info(f"media_content 신규 생성: {stats.media_content_created}")
