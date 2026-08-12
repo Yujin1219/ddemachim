@@ -15,6 +15,9 @@ import {
   fetchPlace,
   fetchPlaceFilmingLocations,
   fetchPlaces,
+  login,
+  saveAuth,
+  signup,
 } from '../api/client';
 import {
   ArrivalMotion,
@@ -440,8 +443,8 @@ function HorizontalInfiniteCards({ items, hasMore, isLoading, onLoadMore, onCard
   );
 }
 
-function ActionButton({ children, onClick, tone = 'primary', disabled = false, className = '' }) {
-  return <button className={`ui-button ${tone} ${className}`} disabled={disabled} onClick={onClick} type="button">{children}</button>;
+function ActionButton({ children, onClick, tone = 'primary', disabled = false, className = '', type = 'button' }) {
+  return <button className={`ui-button ${tone} ${className}`} disabled={disabled} onClick={onClick} type={type}>{children}</button>;
 }
 
 function IconButton({ label, children, onClick, className = '' }) {
@@ -580,6 +583,126 @@ function BottomSheet({ children, className = '', animated = false }) {
   return <section className={sheetClassName}><span className="sheet-handle" />{children}</section>;
 }
 
+const AUTH_EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
+function validateAuthForm(values, isSignup) {
+  const errors = {};
+  const email = values.email.trim();
+
+  if (!email) errors.email = '이메일을 입력해주세요.';
+  else if (!AUTH_EMAIL_PATTERN.test(email)) errors.email = '올바른 이메일 주소를 입력해주세요.';
+
+  if (!values.password) errors.password = '비밀번호를 입력해주세요.';
+  else if (values.password.length < 8) errors.password = '비밀번호는 8자 이상 입력해주세요.';
+
+  if (isSignup) {
+    if (!values.nickname.trim()) errors.nickname = '닉네임을 입력해주세요.';
+    else if (values.nickname.trim().length > 30) errors.nickname = '닉네임은 30자 이하로 입력해주세요.';
+    if (!values.requiredTerms) errors.requiredTerms = '필수 약관에 동의해주세요.';
+  }
+
+  return errors;
+}
+
+function AuthField({ id, label, error, ...inputProps }) {
+  const errorId = `${id}-error`;
+  return <label className={`field-label ${error ? 'has-error' : ''}`} htmlFor={id}>
+    {label}
+    <input id={id} aria-invalid={Boolean(error)} aria-describedby={error ? errorId : undefined} {...inputProps} />
+    {error && <span className="field-error" id={errorId} role="alert">{error}</span>}
+  </label>;
+}
+
+function AuthForm({ screen, go }) {
+  const isSignup = screen === 'signup';
+  const [form, setForm] = useState({ email: '', password: '', nickname: '', requiredTerms: false, marketingTerms: false });
+  const [fieldErrors, setFieldErrors] = useState({});
+  const [serverError, setServerError] = useState('');
+  const [isSubmitting, setIsSubmitting] = useState(false);
+
+  const handleChange = (event) => {
+    const { name, type, value, checked } = event.target;
+    setForm((current) => ({ ...current, [name]: type === 'checkbox' ? checked : value }));
+    setFieldErrors((current) => {
+      if (!current[name]) return current;
+      const next = { ...current };
+      delete next[name];
+      return next;
+    });
+    setServerError('');
+  };
+
+  const handleAllTermsChange = (event) => {
+    const { checked } = event.target;
+    setForm((current) => ({ ...current, requiredTerms: checked, marketingTerms: checked }));
+    setFieldErrors((current) => {
+      if (!current.requiredTerms) return current;
+      const next = { ...current };
+      delete next.requiredTerms;
+      return next;
+    });
+    setServerError('');
+  };
+
+  const handleUnsupportedSocialLogin = () => {
+    setServerError('카카오와 Apple 로그인은 아직 준비 중이에요. 이메일로 로그인해주세요.');
+  };
+
+  const handleSubmit = async (event) => {
+    event.preventDefault();
+    if (isSubmitting) return;
+
+    const errors = validateAuthForm(form, isSignup);
+    setFieldErrors(errors);
+    setServerError('');
+    if (Object.keys(errors).length > 0) return;
+
+    setIsSubmitting(true);
+    try {
+      const result = isSignup
+        ? await signup({ email: form.email.trim(), password: form.password, nickname: form.nickname.trim() })
+        : await login({ email: form.email.trim(), password: form.password });
+      saveAuth(result);
+      go(isSignup ? 'onboarding' : 'map');
+    } catch (error) {
+      setServerError(error instanceof Error ? error.message : '요청을 처리하지 못했어요. 잠시 후 다시 시도해주세요.');
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+
+  return <section className="phone standard-screen auth-form-screen">
+    <main className="page-scroll form-scroll auth-form-scroll" aria-busy={isSubmitting}>
+      <IconButton label="이전" className="auth-back" onClick={() => go('intro')} />
+      <div className="form-heading">
+        <h2 id="auth-form-title">{isSignup ? '때마침을 시작해볼까요?' : '다시 만나서 반가워요'}</h2>
+        <p>{isSignup ? '가입 후 관심 장소와 알림을 설정할 수 있어요.' : '저장한 코스와 여행 기록을 이어서 확인하세요.'}</p>
+      </div>
+      <form className="auth-form" aria-labelledby="auth-form-title" noValidate onSubmit={handleSubmit}>
+        <AuthField id="auth-email" name="email" label="이메일" type="email" value={form.email} onChange={handleChange} error={fieldErrors.email} placeholder="이메일을 입력해주세요" autoComplete="email" maxLength={254} disabled={isSubmitting} />
+        <AuthField id="auth-password" name="password" label="비밀번호" type="password" value={form.password} onChange={handleChange} error={fieldErrors.password} placeholder={isSignup ? '8자 이상 입력해주세요' : '비밀번호를 입력해주세요'} autoComplete={isSignup ? 'new-password' : 'current-password'} minLength={8} disabled={isSubmitting} />
+        {!isSignup && <button type="button" className="forgot-password" disabled={isSubmitting}>비밀번호 찾기</button>}
+        {isSignup && <>
+          <AuthField id="auth-nickname" name="nickname" label="닉네임" type="text" value={form.nickname} onChange={handleChange} error={fieldErrors.nickname} placeholder="사용할 닉네임을 입력해주세요" autoComplete="nickname" maxLength={30} disabled={isSubmitting} />
+          <div className="terms-group" aria-label="약관 동의">
+            <label className="check-row all-check" htmlFor="auth-terms-all"><input id="auth-terms-all" type="checkbox" checked={form.requiredTerms && form.marketingTerms} onChange={handleAllTermsChange} disabled={isSubmitting} /> 전체 동의</label>
+            <label className={`check-row ${fieldErrors.requiredTerms ? 'has-error' : ''}`} htmlFor="auth-terms-required"><input id="auth-terms-required" name="requiredTerms" type="checkbox" checked={form.requiredTerms} onChange={handleChange} aria-invalid={Boolean(fieldErrors.requiredTerms)} aria-describedby={fieldErrors.requiredTerms ? 'auth-terms-error' : undefined} disabled={isSubmitting} /> [필수] 이용약관 및 개인정보처리방침</label>
+            <label className="check-row" htmlFor="auth-terms-marketing"><input id="auth-terms-marketing" name="marketingTerms" type="checkbox" checked={form.marketingTerms} onChange={handleChange} disabled={isSubmitting} /> [선택] 장소 추천과 이벤트 알림</label>
+            {fieldErrors.requiredTerms && <span className="field-error terms-error" id="auth-terms-error" role="alert">{fieldErrors.requiredTerms}</span>}
+          </div>
+        </>}
+        {serverError && <p className="auth-server-error" role="alert" aria-live="assertive">{serverError}</p>}
+        <ActionButton type="submit" disabled={isSubmitting}>{isSubmitting ? (isSignup ? '가입 중...' : '로그인 중...') : (isSignup ? '회원가입' : '로그인')}</ActionButton>
+        {!isSignup && <>
+          <div className="divider-text"><span />또는<span /></div>
+          <div className="social-actions"><ActionButton className="auth-kakao" onClick={handleUnsupportedSocialLogin} disabled={isSubmitting}>카카오로 계속하기</ActionButton><ActionButton tone="secondary" onClick={handleUnsupportedSocialLogin} disabled={isSubmitting}>Apple로 계속하기</ActionButton></div>
+        </>}
+        <p className="form-foot">{isSignup ? '이미 계정이 있나요?' : '계정이 없나요?'} <button onClick={() => go(isSignup ? 'login' : 'signup')} type="button" disabled={isSubmitting}>{isSignup ? '로그인' : '회원가입'}</button></p>
+      </form>
+    </main>
+  </section>;
+}
+
 function DetailHeroControls({ onBack, onSave, saveLabel = '저장' }) {
   return (
     <div className="detail-controls">
@@ -661,8 +784,7 @@ function AuthScreen({ screen, go }) {
     return <ScrollOnboarding go={go} />;
   }
   if (screen === 'login' || screen === 'signup') {
-    const isSignup = screen === 'signup';
-    return <section className="phone standard-screen auth-form-screen"><main className="page-scroll form-scroll auth-form-scroll"><IconButton label="이전" className="auth-back" onClick={() => go('intro')}>‹</IconButton><div className="form-heading"><h2>{isSignup ? '때마침을 시작해볼까요?' : '다시 만나서 반가워요'}</h2><p>{isSignup ? '가입 후 관심 장소와 알림을 설정할 수 있어요.' : '저장한 코스와 여행 기록을 이어서 확인하세요.'}</p></div><label className="field-label">이메일<input type="email" placeholder="이메일을 입력해주세요" /></label><label className="field-label">비밀번호<input type="password" placeholder={isSignup ? '8자 이상 입력해주세요' : '비밀번호를 입력해주세요'} /></label>{!isSignup && <button type="button" className="forgot-password">비밀번호 찾기</button>}{isSignup && <><label className="field-label">닉네임<input placeholder="사용할 닉네임을 입력해주세요" /></label><label className="check-row all-check"><input type="checkbox" /> 전체 동의</label><label className="check-row"><input type="checkbox" /> [필수] 이용약관 및 개인정보처리방침</label><label className="check-row"><input type="checkbox" /> [선택] 장소 추천과 이벤트 알림</label></>}<ActionButton onClick={() => go(isSignup ? 'onboarding' : 'map')}>{isSignup ? '회원가입' : '로그인'}</ActionButton>{!isSignup && <><div className="divider-text"><span />또는<span /></div><div className="social-actions"><ActionButton className="auth-kakao" onClick={() => go('map')}>카카오로 계속하기</ActionButton><ActionButton tone="secondary" onClick={() => go('map')}>Apple로 계속하기</ActionButton></div></>}<p className="form-foot">{isSignup ? '이미 계정이 있나요?' : '계정이 없나요?'} <button onClick={() => go(isSignup ? 'login' : 'signup')} type="button">{isSignup ? '로그인' : '회원가입'}</button></p></main></section>;
+    return <AuthForm screen={screen} go={go} />;
   }
   const step = screen === 'onboarding' ? 1 : screen === 'onboarding-schedule' ? 2 : 3;
   const goNext = () => go(screen === 'onboarding' ? 'onboarding-schedule' : screen === 'onboarding-schedule' ? 'onboarding-permissions' : 'map');
