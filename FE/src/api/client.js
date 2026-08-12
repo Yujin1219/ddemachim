@@ -1,15 +1,101 @@
 const BASE_URL = '/api';
+const ACCESS_TOKEN_KEY = 'accessToken';
+const USER_KEY = 'user';
+
+function getStorage() {
+  if (typeof window === 'undefined') return null;
+  try {
+    return window.localStorage;
+  } catch {
+    return null;
+  }
+}
+
+export function getAccessToken() {
+  return getStorage()?.getItem(ACCESS_TOKEN_KEY) || null;
+}
+
+export function getUser() {
+  const rawUser = getStorage()?.getItem(USER_KEY);
+  if (!rawUser) return null;
+
+  try {
+    return JSON.parse(rawUser);
+  } catch {
+    return null;
+  }
+}
+
+export function saveAuth({ accessToken, ...user } = {}) {
+  if (!accessToken) throw new Error('인증 토큰을 받지 못했어요.');
+
+  const storage = getStorage();
+  if (storage) {
+    try {
+      storage.setItem(ACCESS_TOKEN_KEY, accessToken);
+      storage.setItem(USER_KEY, JSON.stringify(user));
+    } catch {
+      throw new Error('로그인 정보를 저장하지 못했어요. 브라우저 저장소를 확인해주세요.');
+    }
+  }
+
+  return { accessToken, user };
+}
+
+export function clearAuth() {
+  const storage = getStorage();
+  if (!storage) return;
+  storage.removeItem(ACCESS_TOKEN_KEY);
+  storage.removeItem(USER_KEY);
+}
 
 // BE는 공통 응답 봉투 { isSuccess, code, message, result }로 감싸서 내려준다.
 // 실패 응답도 같은 모양으로 오므로(HTTP 상태코드 + JSON body), 항상 JSON을 파싱해서
 // isSuccess로 성공/실패를 판단하고, 성공이면 result만 꺼내서 반환한다.
-async function request(path) {
-  const response = await fetch(`${BASE_URL}${path}`);
-  const body = await response.json();
+async function request(path, options = {}) {
+  const headers = new Headers(options.headers);
+  headers.set('Accept', 'application/json');
+  if (typeof options.body === 'string' && !headers.has('Content-Type')) {
+    headers.set('Content-Type', 'application/json');
+  }
+
+  const accessToken = getAccessToken();
+  if (accessToken) headers.set('Authorization', `Bearer ${accessToken}`);
+
+  const response = await fetch(`${BASE_URL}${path}`, { ...options, headers });
+  const responseText = await response.text();
+  let body = {};
+
+  if (responseText) {
+    try {
+      body = JSON.parse(responseText);
+    } catch {
+      throw new Error(`API ${path} 응답을 읽지 못했어요.`);
+    }
+  }
+
   if (!response.ok || body.isSuccess === false) {
-    throw new Error(body.message || `API ${path} failed: ${response.status}`);
+    const error = new Error(body.message || `API ${path} failed: ${response.status}`);
+    error.status = response.status;
+    error.code = body.code;
+    throw error;
   }
   return body.result;
+}
+
+function post(path, payload) {
+  return request(path, {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  });
+}
+
+export function signup({ email, password, nickname }) {
+  return post('/v1/auth/signup', { email, password, nickname });
+}
+
+export function login({ email, password }) {
+  return post('/v1/auth/login', { email, password });
 }
 
 function toQuery(params = {}) {
