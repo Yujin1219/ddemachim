@@ -261,15 +261,6 @@ function eventStatusLabel(event) {
   return state;
 }
 
-function eventOccursToday(event) {
-  const today = new Date();
-  today.setHours(0, 0, 0, 0);
-  const start = event.startDate ? new Date(`${event.startDate}T00:00:00`) : null;
-  const end = event.endDate ? new Date(`${event.endDate}T23:59:59`) : start;
-  if (!start || Number.isNaN(start.getTime()) || !end || Number.isNaN(end.getTime())) return false;
-  return start <= today && today <= end;
-}
-
 function eventIsFree(event) {
   return String(event.useFee ?? '').includes('무료');
 }
@@ -289,10 +280,13 @@ function eventVenueLabel(event) {
 const eventCollectionSession = {
   events: [],
   activeFilter: '전체',
+  activeSort: 'LATEST',
+  coordinates: null,
   page: 0,
   hasMore: true,
   scrollTop: 0,
   hasError: false,
+  sortError: null,
   hasLoaded: false,
 };
 
@@ -1411,7 +1405,12 @@ function FilmingLocationsCollection({ go }) {
   );
 }
 
-const EVENT_COLLECTION_FILTERS = ['전체', '오늘', '진행 중', '무료'];
+const EVENT_COLLECTION_FILTERS = ['전체', '진행 중', '종료'];
+const EVENT_COLLECTION_FILTER_STATUS = { 전체: undefined, '진행 중': 'ONGOING', 종료: 'ENDED' };
+const EVENT_COLLECTION_SORTS = [
+  { key: 'LATEST', label: '최신순' },
+  { key: 'NEAREST', label: '가까운 순' },
+];
 const EVENT_COLLECTION_PAGE_SIZE = 12;
 
 function EventsCollection({ go }) {
@@ -1421,14 +1420,32 @@ function EventsCollection({ go }) {
   const pageRef = useRef(eventCollectionSession.page);
   const hasMoreRef = useRef(eventCollectionSession.hasMore);
   const requestControllerRef = useRef(null);
+  const activeFilterRef = useRef(eventCollectionSession.activeFilter);
+  const activeSortRef = useRef(eventCollectionSession.activeSort);
+  const coordinatesRef = useRef(eventCollectionSession.coordinates);
+  const geolocationRequestRef = useRef(0);
+  const isMountedRef = useRef(true);
   const [activeFilter, setActiveFilter] = useState(eventCollectionSession.activeFilter);
+  const [activeSort, setActiveSort] = useState(eventCollectionSession.activeSort);
+  const [coordinates, setCoordinates] = useState(eventCollectionSession.coordinates);
   const [events, setEvents] = useState(eventCollectionSession.events);
   const [hasMore, setHasMore] = useState(eventCollectionSession.hasMore);
   const [isLoading, setIsLoading] = useState(false);
   const [hasError, setHasError] = useState(eventCollectionSession.hasError);
+  const [sortError, setSortError] = useState(eventCollectionSession.sortError);
+  const [isLocating, setIsLocating] = useState(false);
 
-  const loadEvents = useCallback(async ({ pageNumber = pageRef.current, reset = false } = {}) => {
+  const loadEvents = useCallback(async ({ pageNumber = pageRef.current, reset = false, filter = activeFilterRef.current, sort = activeSortRef.current, coordinates: requestedCoordinates = coordinatesRef.current } = {}) => {
     if (loadingRef.current || (!reset && !hasMoreRef.current)) return;
+    if (
+      sort === 'NEAREST'
+      && (!requestedCoordinates
+        || !Number.isFinite(requestedCoordinates.latitude)
+        || !Number.isFinite(requestedCoordinates.longitude))
+    ) {
+      setSortError('현재 위치를 확인한 뒤 가까운 순을 사용할 수 있어요.');
+      return;
+    }
     const requestId = requestIdRef.current + 1;
     requestIdRef.current = requestId;
     loadingRef.current = true;
@@ -1437,6 +1454,8 @@ function EventsCollection({ go }) {
     requestControllerRef.current = requestController;
     setIsLoading(true);
     setHasError(false);
+    const requestedPage = reset ? 0 : pageNumber;
+    const status = EVENT_COLLECTION_FILTER_STATUS[filter];
     if (reset) {
       pageRef.current = 0;
       hasMoreRef.current = true;
@@ -1444,11 +1463,22 @@ function EventsCollection({ go }) {
       setHasMore(true);
     }
     try {
-      const result = await fetchEvents({ page: pageNumber, size: EVENT_COLLECTION_PAGE_SIZE, signal: requestController.signal });
-      if (requestId !== requestIdRef.current) return;
+      const result = await fetchEvents({
+        status,
+        sortMode: sort,
+        latitude: requestedCoordinates?.latitude,
+        longitude: requestedCoordinates?.longitude,
+        page: requestedPage,
+        size: EVENT_COLLECTION_PAGE_SIZE,
+        signal: requestController.signal,
+      });
+      const coordinatesMatch = sort !== 'NEAREST'
+        || (coordinatesRef.current?.latitude === requestedCoordinates?.latitude
+          && coordinatesRef.current?.longitude === requestedCoordinates?.longitude);
+      if (requestId !== requestIdRef.current || activeFilterRef.current !== filter || activeSortRef.current !== sort || !coordinatesMatch) return;
       const nextEvents = (result.content ?? []).map(eventToCardProps);
       setEvents((current) => reset ? nextEvents : appendUniqueItems(current, nextEvents));
-      const nextPage = pageNumber + 1;
+      const nextPage = requestedPage + 1;
       const nextHasMore = hasNextPage(result, EVENT_COLLECTION_PAGE_SIZE);
       pageRef.current = nextPage;
       hasMoreRef.current = nextHasMore;
@@ -1466,34 +1496,70 @@ function EventsCollection({ go }) {
     }
   }, []);
 
+  const resetCollection = ({ filter, sort, nextCoordinates }) => {
+    const coordinatesForSort = sort === 'NEAREST' ? nextCoordinates : null;
+    activeFilterRef.current = filter;
+    activeSortRef.current = sort;
+    coordinatesRef.current = coordinatesForSort;
+    geolocationRequestRef.current += 1;
+    requestIdRef.current += 1;
+    loadingRef.current = false;
+    requestControllerRef.current?.abort();
+    requestControllerRef.current = null;
+    pageRef.current = 0;
+    hasMoreRef.current = true;
+    eventCollectionSession.activeFilter = filter;
+    eventCollectionSession.activeSort = sort;
+    eventCollectionSession.coordinates = coordinatesForSort;
+    eventCollectionSession.events = [];
+    eventCollectionSession.page = 0;
+    eventCollectionSession.hasMore = true;
+    eventCollectionSession.hasError = false;
+    eventCollectionSession.sortError = null;
+    eventCollectionSession.hasLoaded = false;
+    eventCollectionSession.scrollTop = 0;
+    if (scrollRef.current) scrollRef.current.scrollTop = 0;
+    setActiveFilter(filter);
+    setActiveSort(sort);
+    setCoordinates(coordinatesForSort);
+    setEvents([]);
+    setHasMore(true);
+    setHasError(false);
+    setSortError(null);
+    setIsLocating(false);
+    setIsLoading(false);
+    loadEvents({ pageNumber: 0, reset: true, filter, sort, coordinates: coordinatesForSort });
+  };
+
   useEffect(() => {
+    isMountedRef.current = true;
     const frame = window.requestAnimationFrame(() => {
       if (scrollRef.current) scrollRef.current.scrollTop = eventCollectionSession.scrollTop;
     });
-    if (!eventCollectionSession.hasLoaded && !events.length) loadEvents({ pageNumber: 0, reset: true });
+    if (!eventCollectionSession.hasLoaded && !events.length) {
+      loadEvents({ pageNumber: 0, reset: true, filter: activeFilterRef.current, sort: activeSortRef.current, coordinates: coordinatesRef.current });
+    }
     return () => {
       eventCollectionSession.scrollTop = scrollRef.current?.scrollTop ?? eventCollectionSession.scrollTop;
       requestIdRef.current += 1;
       loadingRef.current = false;
       requestControllerRef.current?.abort();
+      geolocationRequestRef.current += 1;
+      isMountedRef.current = false;
       window.cancelAnimationFrame(frame);
     };
-  }, [events.length, loadEvents]);
+  }, [loadEvents]);
 
   useEffect(() => {
     eventCollectionSession.events = events;
     eventCollectionSession.activeFilter = activeFilter;
+    eventCollectionSession.activeSort = activeSort;
+    eventCollectionSession.coordinates = coordinates;
     eventCollectionSession.page = pageRef.current;
     eventCollectionSession.hasMore = hasMore;
     eventCollectionSession.hasError = hasError;
-  }, [activeFilter, events, hasError, hasMore]);
-
-  const filteredEvents = useMemo(() => {
-    if (activeFilter === '오늘') return events.filter(eventOccursToday);
-    if (activeFilter === '진행 중') return events.filter((event) => currentEventState(event) === '진행 중');
-    if (activeFilter === '무료') return events.filter(eventIsFree);
-    return events;
-  }, [activeFilter, events]);
+    eventCollectionSession.sortError = sortError;
+  }, [activeFilter, activeSort, coordinates, events, hasError, hasMore, sortError]);
 
   const handleScroll = () => {
     const scroll = scrollRef.current;
@@ -1505,8 +1571,57 @@ function EventsCollection({ go }) {
   };
 
   const handleFilterChange = (filter) => {
-    eventCollectionSession.activeFilter = filter;
-    setActiveFilter(filter);
+    if (filter === activeFilterRef.current) return;
+    resetCollection({ filter, sort: activeSortRef.current, nextCoordinates: coordinatesRef.current });
+  };
+
+  const handleSortChange = (sort) => {
+    if (sort === activeSortRef.current || isLocating) return;
+    if (sort === 'LATEST') {
+      resetCollection({ filter: activeFilterRef.current, sort, nextCoordinates: null });
+      return;
+    }
+
+    const requestNumber = geolocationRequestRef.current + 1;
+    geolocationRequestRef.current = requestNumber;
+    setSortError(null);
+    setIsLocating(true);
+
+    const showLocationError = (message) => {
+      if (!isMountedRef.current || requestNumber !== geolocationRequestRef.current) return;
+      setIsLocating(false);
+      setSortError(message);
+    };
+
+    if (typeof navigator === 'undefined' || !navigator.geolocation) {
+      showLocationError('이 브라우저에서는 현재 위치를 확인할 수 없어요.');
+      return;
+    }
+
+    try {
+      navigator.geolocation.getCurrentPosition(
+        ({ coords: position }) => {
+          if (!isMountedRef.current || requestNumber !== geolocationRequestRef.current) return;
+          const nextCoordinates = { latitude: position.latitude, longitude: position.longitude };
+          if (!Number.isFinite(nextCoordinates.latitude) || !Number.isFinite(nextCoordinates.longitude)) {
+            showLocationError('현재 위치를 확인하지 못했어요. 다시 시도해주세요.');
+            return;
+          }
+          resetCollection({ filter: activeFilterRef.current, sort, nextCoordinates });
+        },
+        (error) => {
+          const message = error?.code === 1
+            ? '위치 권한이 없어 가까운 순을 불러올 수 없어요.'
+            : error?.code === 3
+              ? '현재 위치 확인 시간이 초과됐어요.'
+              : '현재 위치를 확인하지 못했어요.';
+          showLocationError(`${message} 다시 시도해주세요.`);
+        },
+        { enableHighAccuracy: false, timeout: 10000, maximumAge: 300000 },
+      );
+    } catch (error) {
+      showLocationError('현재 위치를 확인하지 못했어요. 다시 시도해주세요.');
+    }
   };
 
   const handleEventClick = (eventId) => {
@@ -1514,21 +1629,46 @@ function EventsCollection({ go }) {
     go('event-detail', eventId);
   };
 
-  const filteredEventsAreExhausted = !filteredEvents.length && !isLoading && !hasMore;
-
   return (
     <section className="phone standard-screen list-screen collection-screen-v3 event-collection-screen">
       <BackHeader title="이번 주 행사" onBack={() => go('explore')} />
       <main className="page-scroll event-collection-scroll" ref={scrollRef} onScroll={handleScroll}>
         <header className="collection-heading event-collection-heading">
           <h2>행사와 전시</h2>
-          <small>지금 열리거나 곧 시작하는 문화행사를 모았어요.</small>
+          <small>종로구의 문화행사를 한눈에 확인해보세요.</small>
         </header>
         <div className="collection-filters event-filter-bar" role="group" aria-label="행사 필터">
           {EVENT_COLLECTION_FILTERS.map((item) => (
             <Chip key={item} active={activeFilter === item} current={activeFilter === item} onClick={() => handleFilterChange(item)}>{item}</Chip>
           ))}
         </div>
+        <div
+          className="event-sort-row"
+          role="tablist"
+          aria-label="행사 정렬"
+          aria-busy={isLocating ? 'true' : undefined}
+          aria-describedby={sortError ? 'event-sort-error' : undefined}
+        >
+          {EVENT_COLLECTION_SORTS.map((item) => (
+            <button
+              key={item.key}
+              type="button"
+              role="tab"
+              aria-selected={activeSort === item.key}
+              disabled={isLocating && item.key !== activeSort}
+              onClick={() => handleSortChange(item.key)}
+            >
+              {item.label}
+            </button>
+          ))}
+        </div>
+        {isLocating && <p className="event-sort-status" role="status" aria-live="polite">현재 위치를 확인하고 있어요.</p>}
+        {sortError && (
+          <div className="event-sort-error" id="event-sort-error" role="alert">
+            <span>{sortError}</span>
+            <button type="button" onClick={() => handleSortChange('NEAREST')}>다시 시도</button>
+          </div>
+        )}
         {hasError && !events.length ? (
           <section className="collection-state">
             <h2>행사를 불러오지 못했어요</h2>
@@ -1537,34 +1677,26 @@ function EventsCollection({ go }) {
           </section>
         ) : (
           <div className="collection-list event-list">
-            {filteredEvents.map((event) => (
+            {events.map((event) => (
               <EventListItem key={event.id} event={event} onClick={() => handleEventClick(event.id)} />
             ))}
-            {!filteredEvents.length && isLoading && (
+            {!events.length && isLoading && (
               <section className="collection-state compact" role="status" aria-live="polite">
                 <span className="event-state-icon"><CalendarDays aria-hidden="true" size={22} /></span>
                 <h2>행사를 불러오는 중이에요</h2>
                 <p>잠시만 기다려주세요.</p>
               </section>
             )}
-            {!filteredEvents.length && !isLoading && events.length > 0 && hasMore && (
-              <section className="collection-state compact">
-                <span className="event-state-icon"><Search aria-hidden="true" size={22} /></span>
-                <h2>아직 확인하지 않은 행사에 있을 수 있어요</h2>
-                <p>현재까지 불러온 행사에는 이 조건이 없어요.</p>
-                <ActionButton onClick={() => loadEvents({ pageNumber: pageRef.current })}>더 많은 행사 불러오기</ActionButton>
-              </section>
-            )}
-            {!filteredEvents.length && filteredEventsAreExhausted && (
+            {!events.length && !isLoading && (
               <section className="collection-state compact">
                 <span className="event-state-icon"><Search aria-hidden="true" size={22} /></span>
                 <h2>조건에 맞는 행사가 없어요</h2>
-                <p>{events.length ? '모든 행사를 확인했어요. 다른 필터를 선택해보세요.' : '등록된 행사가 아직 없어요.'}</p>
-                {events.length > 0 && activeFilter !== '전체' && <ActionButton tone="secondary" onClick={() => handleFilterChange('전체')}>전체 행사 보기</ActionButton>}
+                <p>{activeFilter === '전체' ? '등록된 행사가 아직 없어요.' : '다른 필터를 선택해보세요.'}</p>
+                {activeFilter !== '전체' && <ActionButton tone="secondary" onClick={() => handleFilterChange('전체')}>전체 행사 보기</ActionButton>}
               </section>
             )}
-            {isLoading && <div className="collection-loading" role="status">불러오는 중</div>}
-            {hasError && events.length > 0 && <div className="collection-inline-error" role="alert"><span>다음 행사까지 불러오지 못했어요.</span><button type="button" onClick={() => loadEvents({ pageNumber: pageRef.current })}>다시 시도</button></div>}
+            {isLoading && events.length > 0 && <div className="collection-loading" role="status">불러오는 중</div>}
+            {hasError && events.length > 0 && <div className="collection-inline-error" role="alert"><span>행사를 더 불러오지 못했어요.</span><button type="button" onClick={() => loadEvents({ pageNumber: pageRef.current })}>다시 시도</button></div>}
             {!hasMore && events.length > 0 && <p className="collection-end">마지막 행사까지 확인했어요</p>}
           </div>
         )}

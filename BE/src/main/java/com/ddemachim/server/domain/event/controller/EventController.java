@@ -6,6 +6,7 @@ import com.ddemachim.server.domain.event.service.EventQueryService;
 import com.ddemachim.server.global.apiPayload.ApiResponse;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.Parameter;
+import io.swagger.v3.oas.annotations.media.Schema;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import lombok.RequiredArgsConstructor;
 import org.springframework.data.domain.Page;
@@ -16,7 +17,7 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
-@Tag(name = "문화행사(Event)", description = "TourAPI 축제/공연/행사, 서울시 문화행사 정보 조회 API. 진행중/예정인 행사만 적재되어 있습니다.")
+@Tag(name = "문화행사(Event)", description = "TourAPI 축제/공연/행사, 서울시 문화행사 정보 조회 API.")
 @RestController
 @RequestMapping("/api/events")
 @RequiredArgsConstructor
@@ -26,13 +27,29 @@ public class EventController {
 
     @Operation(
             summary = "문화행사 목록 조회",
-            description = "제목 키워드로 필터링해 문화행사 목록을 시작일 오름차순(가까운 행사부터)으로 페이지 단위 조회합니다.")
+            description = "제목 키워드와 행사 상태로 필터링해 문화행사 목록을 페이지 단위 조회합니다. "
+                    + "status는 ONGOING(진행 중), ENDED(종료)를 지원하며 미입력 시 전체 행사를 조회합니다. "
+                    + "sortMode를 생략하면 기존처럼 행사 시작일 오름차순으로 정렬합니다. "
+                    + "LATEST는 원본 등록일(applyDate) 내림차순이며 등록일이 없는 행사는 뒤로 보내고 동일 등록일은 id 내림차순으로 정렬합니다. "
+                    + "NEAREST는 latitude/longitude 두 좌표가 모두 필요하며 행사 위치까지의 PostGIS 물리적 거리가 가까운 순서입니다. "
+                    + "위치가 없는 행사는 뒤로 보내고 거리가 같으면 id 오름차순으로 정렬합니다.")
     @GetMapping
     public ApiResponse<Page<EventSummaryResponse>> getEvents(
             @Parameter(description = "행사 제목 검색 키워드 (부분 일치)")
             @RequestParam(required = false) String keyword,
+            @Parameter(description = "행사 상태 필터 (ONGOING: 진행 중, ENDED: 종료, 미입력: 전체)", example = "ONGOING")
+            @RequestParam(required = false) String status,
+            @Parameter(
+                    description = "정렬 기준 (LATEST: 원본 등록일 최신순, NEAREST: 사용자 좌표 기준 가까운 순, 미입력: 행사 시작일 오름차순)",
+                    example = "LATEST",
+                    schema = @Schema(allowableValues = {"LATEST", "NEAREST"}))
+            @RequestParam(required = false) String sortMode,
+            @Parameter(description = "NEAREST 정렬에 사용할 사용자 위도 (-90 ~ 90)", example = "37.5665", schema = @Schema(type = "number", format = "double"))
+            @RequestParam(required = false) String latitude,
+            @Parameter(description = "NEAREST 정렬에 사용할 사용자 경도 (-180 ~ 180)", example = "126.9780", schema = @Schema(type = "number", format = "double"))
+            @RequestParam(required = false) String longitude,
             Pageable pageable) {
-        return ApiResponse.onSuccess(eventQueryService.findEvents(keyword, pageable));
+        return ApiResponse.onSuccess(eventQueryService.findEvents(keyword, status, sortMode, latitude, longitude, pageable));
     }
 
     @Operation(

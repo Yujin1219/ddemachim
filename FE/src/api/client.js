@@ -37,8 +37,8 @@ export function fetchPlaceFilmingLocations(placeId) {
   return request(`/places/${placeId}/filming-locations`);
 }
 
-export function fetchEvents({ keyword, page = 0, size = 10, signal } = {}) {
-  return request(`/events${toQuery({ keyword, page, size })}`, { signal });
+export function fetchEvents({ keyword, status, sortMode, latitude, longitude, page = 0, size = 10, signal } = {}) {
+  return request(`/events${toQuery({ keyword, status, sortMode, latitude, longitude, page, size })}`, { signal });
 }
 
 export function fetchEvent(id, { signal } = {}) {
