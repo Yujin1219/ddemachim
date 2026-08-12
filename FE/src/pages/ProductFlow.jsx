@@ -1,13 +1,17 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { motion, useDragControls, useReducedMotion } from 'motion/react';
-import { ChevronLeft, ChevronRight, CircleHelp, Clock3, Heart, Image as ImageIcon, LocateFixed, MapPin, MoreHorizontal, Search, SearchX, SendHorizontal, X } from 'lucide-react';
+import { CalendarDays, ChevronLeft, ChevronRight, CircleDollarSign, CircleHelp, Clapperboard, Clock3, ExternalLink, Heart, Image as ImageIcon, LocateFixed, MapPin, MoreHorizontal, RefreshCw, Search, SearchX, SendHorizontal, X } from 'lucide-react';
 import AppHeader from '../components/AppHeader';
 import BottomNav from '../components/BottomNav';
 import VWorldMap from '../components/VWorldMap';
 import {
+  fetchEvent,
   fetchEvents,
+  fetchFilmingWorks,
   fetchMapPlaces,
+  fetchMediaContent,
   fetchMediaContents,
+  fetchMediaFilmingLocations,
   fetchPlace,
   fetchPlaceFilmingLocations,
   fetchPlaces,
@@ -25,10 +29,10 @@ import ScrollOnboarding from '../components/ScrollOnboarding';
 
 const routeGroups = {
   auth: ['splash', 'intro', 'login', 'signup', 'onboarding', 'onboarding-schedule', 'onboarding-permissions'],
-  discovery: ['map', 'explore', 'place', 'search', 'search-empty', 'saved', 'trending', 'filming-locations', 'popups', 'live-talk'],
+  discovery: ['map', 'explore', 'place', 'event-detail', 'search', 'search-empty', 'saved', 'trending', 'filming-locations', 'popups', 'live-talk'],
   course: ['course-conditions', 'basket', 'basket-natural', 'basket-glass', 'compare', 'route-map'],
   travel: ['progress', 'arrival', 'navigation', 'reroute', 'reroute-applied', 'transit', 'taxi', 'nearby', 'nearby-added', 'nearby-arrival', 'active-course', 'next-stop', 'gps-error', 'taxi-handoff', 'offline', 'closed-place', 'stop-course'],
-  filming: ['onsite', 'filming-content', 'camera', 'scene-list', 'scene-detail', 'camera-permission', 'shot-result', 'photo-saved', 'image-missing', 'filming-restricted', 'report'],
+  filming: ['onsite', 'filming-work', 'filming-content', 'camera', 'scene-list', 'scene-detail', 'camera-permission', 'shot-result', 'photo-saved', 'image-missing', 'filming-restricted', 'report'],
   record: ['complete', 'record', 'saved-courses', 'record-detail', 'write-review', 'reviews', 'review-detail'],
   my: ['my', 'location-permission', 'notifications', 'profile-edit', 'privacy', 'app-permissions', 'support', 'loading', 'server-error'],
 };
@@ -80,28 +84,119 @@ function placeToCardProps(place) {
   };
 }
 
+const FILMING_CONTENT_TYPE_LABELS = {
+  DRAMA: '드라마',
+  VARIETY: '예능',
+  MOVIE: '영화',
+};
+
+function positiveCount(value) {
+  const count = Number(value);
+  return Number.isInteger(count) && count > 0 ? count : null;
+}
+
+function filmingWorkCount(place) {
+  return [place.filmingWorkCount, place.filmingWorksCount, place.filmingContentCount]
+    .map(positiveCount)
+    .find(Boolean) ?? null;
+}
+
 function filmingPlaceToCardProps(place) {
+  const contentLabel = (place.filmingContentTypes ?? [])
+    .map((type) => FILMING_CONTENT_TYPE_LABELS[type])
+    .filter(Boolean)
+    .join(' · ') || '촬영 콘텐츠 정보 없음';
+  const contextLabel = [contentLabel, place.categoryLabel].filter(Boolean).join(' · ');
   return {
     ...placeToCardProps(place),
     image: place.thumbnailUrl || images.popup,
-    badge: '촬영지',
+    hasThumbnail: Boolean(place.thumbnailUrl),
+    badge: contextLabel,
+    labels: { content: contentLabel, category: place.categoryLabel },
+    meta: place.roadAddress || place.district,
+    addressLabel: place.roadAddress || place.district || null,
+    filmingWorkCount: filmingWorkCount(place),
   };
+}
+
+const TMDB_POSTER_BASE_URL = 'https://image.tmdb.org/t/p/w342';
+
+function tmdbPosterUrl(posterPath) {
+  if (!posterPath) return null;
+  if (/^https?:\/\//i.test(posterPath)) return posterPath;
+  return `${TMDB_POSTER_BASE_URL}/${String(posterPath).replace(/^\/+/, '')}`;
+}
+
+function formatReleaseYear(releaseDate) {
+  const year = String(releaseDate ?? '').match(/\d{4}/)?.[0];
+  return year || null;
+}
+
+function filmingWorkTypeLabel(work) {
+  const contentTypeLabels = (work.contentTypes ?? [])
+    .map((type) => FILMING_CONTENT_TYPE_LABELS[type])
+    .filter(Boolean);
+  if (contentTypeLabels.length) return [...new Set(contentTypeLabels)].join(' · ');
+  const mediaType = String(work.mediaType ?? '').toLowerCase();
+  if (mediaType === 'movie') return FILMING_CONTENT_TYPE_LABELS.MOVIE;
+  if (mediaType === 'variety') return FILMING_CONTENT_TYPE_LABELS.VARIETY;
+  if (mediaType === 'drama' || mediaType === 'tv' || mediaType === 'series') return FILMING_CONTENT_TYPE_LABELS.DRAMA;
+  return '콘텐츠 유형 확인 중';
+}
+
+function filmingWorkToCardProps(work) {
+  const representativePlaces = (work.representativePlaces ?? [])
+    .filter((place) => place?.placeName)
+    .slice(0, 2);
+  const filmingPlaceCount = Number.isInteger(Number(work.filmingPlaceCount))
+    ? Number(work.filmingPlaceCount)
+    : null;
+  const otherPlaceCount = filmingPlaceCount === null
+    ? Math.max(0, (work.representativePlaces?.length ?? 0) - representativePlaces.length)
+    : Math.max(0, filmingPlaceCount - representativePlaces.length);
+
+  return {
+    id: work.mediaId,
+    title: work.title,
+    typeLabel: filmingWorkTypeLabel(work),
+    releaseYear: formatReleaseYear(work.releaseDate),
+    filmingPlaceCount,
+    representativePlaces,
+    otherPlaceCount,
+    posterUrl: tmdbPosterUrl(work.posterPath),
+  };
+}
+
+function formatEventTitle(title) {
+  const trimmedTitle = String(title ?? '').trim();
+  const displayTitle = trimmedTitle.replace(/^(?:\[[^\]]*\]\s*)+/, '').trim();
+  return displayTitle || trimmedTitle;
 }
 
 function eventToRowProps(event) {
   return {
+    ...event,
     id: event.id,
     placeId: event.placeId,
-    name: event.title,
-    meta: [event.venueName, event.startDate].filter(Boolean).join(' · '),
-    image: event.mainImage || images.scene,
+    startDate: event.startDate,
+    endDate: event.endDate,
+    useFee: event.useFee,
+    applyDate: event.applyDate,
+    eventTime: event.eventTime,
+    eventType: event.eventType,
+    venueName: event.venueName,
+    placeName: event.placeName,
+    name: formatEventTitle(event.title),
+    meta: [event.venueName || event.placeName, formatDateRange(event.startDate, event.endDate)].filter(Boolean).join(' · '),
+    image: event.mainImage || null,
+    isEvent: true,
   };
 }
 
 function eventToCardProps(event) {
   return {
     ...eventToRowProps(event),
-    badge: event.startDate || '행사',
+    badge: event.eventType || '행사',
   };
 }
 
@@ -120,6 +215,86 @@ function appendUniqueItems(current, next) {
     return true;
   })];
 }
+
+function formatKoreanDate(dateValue) {
+  if (!dateValue) return null;
+  const date = new Date(`${dateValue}T00:00:00`);
+  if (Number.isNaN(date.getTime())) return dateValue;
+  return new Intl.DateTimeFormat('ko-KR', { month: 'long', day: 'numeric' }).format(date);
+}
+
+function formatDateRange(startDate, endDate) {
+  const start = formatKoreanDate(startDate);
+  const end = formatKoreanDate(endDate);
+  if (start && end && start !== end) return `${start} - ${end}`;
+  return start || end || null;
+}
+
+function currentEventState(event) {
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  const start = event.startDate ? new Date(`${event.startDate}T00:00:00`) : null;
+  const end = event.endDate ? new Date(`${event.endDate}T00:00:00`) : start;
+  if (!start && !end) return '상태 확인 중';
+  if (start && today < start) return '예정';
+  if (end && today > end) return '종료';
+  return '진행 중';
+}
+
+function formatCompactDateRange(startDate, endDate) {
+  const formatCompact = (value) => {
+    if (!value) return null;
+    const date = new Date(`${value}T00:00:00`);
+    if (Number.isNaN(date.getTime())) return value;
+    return `${date.getMonth() + 1}.${date.getDate()}`;
+  };
+  const start = formatCompact(startDate);
+  const end = formatCompact(endDate);
+  if (start && end && start !== end) return `${start}–${end}`;
+  return start || end || null;
+}
+
+function eventStatusLabel(event) {
+  const state = currentEventState(event);
+  if (state === '진행 중' && event.endDate) return `${state} · ${formatKoreanDate(event.endDate)}까지`;
+  if (state === '예정' && event.startDate) return `${state} · ${formatKoreanDate(event.startDate)} 시작`;
+  return state;
+}
+
+function eventOccursToday(event) {
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  const start = event.startDate ? new Date(`${event.startDate}T00:00:00`) : null;
+  const end = event.endDate ? new Date(`${event.endDate}T23:59:59`) : start;
+  if (!start || Number.isNaN(start.getTime()) || !end || Number.isNaN(end.getTime())) return false;
+  return start <= today && today <= end;
+}
+
+function eventIsFree(event) {
+  return String(event.useFee ?? '').includes('무료');
+}
+
+function eventDecisionLabels(event) {
+  return [
+    eventIsFree(event) ? '무료' : null,
+    event.applyDate ? `신청일 ${formatKoreanDate(event.applyDate)}` : null,
+    event.eventType || null,
+  ].filter(Boolean);
+}
+
+function eventVenueLabel(event) {
+  return event.venueName || event.placeName || '장소 정보 확인 중';
+}
+
+const eventCollectionSession = {
+  events: [],
+  activeFilter: '전체',
+  page: 0,
+  hasMore: true,
+  scrollTop: 0,
+  hasError: false,
+  hasLoaded: false,
+};
 
 function useHorizontalPagedList({ loadPage, mapItem, size = EXPLORE_PAGE_SIZE }) {
   const [items, setItems] = useState([]);
@@ -163,14 +338,35 @@ function useHorizontalPagedList({ loadPage, mapItem, size = EXPLORE_PAGE_SIZE })
 function HorizontalInfiniteCards({ items, hasMore, isLoading, onLoadMore, onCardClick, emptyLabel }) {
   const scrollerRef = useRef(null);
   const requestedAtEndRef = useRef(false);
+  const didResetInitialScrollRef = useRef(false);
+  const hasUserScrollIntentRef = useRef(false);
 
   useEffect(() => {
     if (scrollerRef.current) scrollerRef.current.scrollLeft = 0;
   }, []);
 
+  useEffect(() => {
+    if (!items.length || didResetInitialScrollRef.current) return undefined;
+    const scroller = scrollerRef.current;
+    if (!scroller) return undefined;
+
+    didResetInitialScrollRef.current = true;
+    requestedAtEndRef.current = false;
+    hasUserScrollIntentRef.current = false;
+    scroller.scrollLeft = 0;
+    const frameId = window.requestAnimationFrame(() => {
+      scroller.scrollLeft = 0;
+    });
+    return () => window.cancelAnimationFrame(frameId);
+  }, [items.length]);
+
+  const markUserScrollIntent = () => {
+    hasUserScrollIntentRef.current = true;
+  };
+
   const handleScroll = () => {
     const scroller = scrollerRef.current;
-    if (!scroller || !hasMore || isLoading) return;
+    if (!scroller || !hasMore || isLoading || !hasUserScrollIntentRef.current) return;
     const distanceToEnd = scroller.scrollWidth - scroller.scrollLeft - scroller.clientWidth;
     if (distanceToEnd > 220) {
       requestedAtEndRef.current = false;
@@ -186,7 +382,15 @@ function HorizontalInfiniteCards({ items, hasMore, isLoading, onLoadMore, onCard
   }, [items.length]);
 
   return (
-    <div className="horizontal-cards" ref={scrollerRef} onScroll={handleScroll}>
+    <div
+      className="horizontal-cards"
+      ref={scrollerRef}
+      onKeyDown={markUserScrollIntent}
+      onPointerDown={markUserScrollIntent}
+      onScroll={handleScroll}
+      onTouchStart={markUserScrollIntent}
+      onWheel={markUserScrollIntent}
+    >
       {items.map((item, index) => (
         <PlaceCard place={item} index={index} key={item.id ?? `${item.name}-${index}`} onClick={() => onCardClick(item)} />
       ))}
@@ -226,9 +430,9 @@ function SearchField({ value, onChange, onSubmit, placeholder, autoFocus = false
   );
 }
 
-function Chip({ children, active = false, onClick, tone = '' }) {
+function Chip({ children, active = false, onClick, tone = '', current = false }) {
   const className = `ui-chip ${active ? 'is-active' : ''} ${tone}`;
-  return onClick ? <button type="button" className={className} onClick={onClick} aria-pressed={active}>{children}</button> : <span className={className}>{children}</span>;
+  return onClick ? <button type="button" className={className} onClick={onClick} aria-pressed={active} aria-current={current ? 'true' : undefined}>{children}</button> : <span className={className}>{children}</span>;
 }
 
 function StatusBanner({ tone = 'blue', title, copy, action, onAction }) {
@@ -241,10 +445,47 @@ function StatusBanner({ tone = 'blue', title, copy, action, onAction }) {
 function PlaceRow({ place, onClick, action, onAction }) {
   const media = place.image === images.myMap
     ? <VWorldMap ariaLabel={`${place.name} 코스 지도`} interactive={false} style={{ width: 64, height: 64, flex: '0 0 auto', borderRadius: 12, overflow: 'hidden' }} />
-    : <img src={place.image} alt="" />;
-  const content = <>{media}<div className="place-row-copy">{place.badge && <span className="small-badge">{place.badge}</span>}<h3>{place.name}</h3><p>{place.meta}</p></div></>;
+    : <img src={place.image} alt="" loading="lazy" decoding="async" />;
+  const content = <>{media}<div className="place-row-copy">{place.labels ? <div className="place-row-labels"><span>{place.labels.content}</span>{place.labels.category && <span>{place.labels.category}</span>}</div> : place.badge && <span className="small-badge">{place.badge}</span>}<h3>{place.name}</h3><p>{place.meta}</p></div></>;
   if (onClick && !action) return <button className="place-row" onClick={onClick} type="button">{content}<ChevronRight className="row-next" aria-hidden="true" size={20} /></button>;
   return <article className="place-row">{content}{action ? <button className="row-action" onClick={onAction} type="button">{action}</button> : <ChevronRight className="row-next" aria-hidden="true" size={20} />}</article>;
+}
+
+function EventImage({ event, className = '' }) {
+  if (event.image) {
+    return <img className={className} src={event.image} alt={`${event.name} 대표 이미지`} loading="lazy" decoding="async" />;
+  }
+
+  return (
+    <span className={`event-image-placeholder ${className}`} role="img" aria-label={`${event.name} 대표 이미지 없음`}>
+      <CalendarDays aria-hidden="true" size={22} strokeWidth={1.8} />
+      <small>이미지 없음</small>
+    </span>
+  );
+}
+
+function EventListItem({ event, onClick }) {
+  const dateLabel = formatCompactDateRange(event.startDate, event.endDate) || '일정 정보 없음';
+  const timeLabel = String(event.eventTime ?? '').trim();
+  const venueLabel = eventVenueLabel(event);
+  const decisionLabels = eventDecisionLabels(event);
+  const accessibleLabel = [eventStatusLabel(event), event.name, [dateLabel, timeLabel].filter(Boolean).join(' · '), venueLabel, ...decisionLabels].join(' · ');
+
+  return (
+    <button className="event-list-item" type="button" onClick={onClick} aria-label={`${accessibleLabel} 상세 보기`}>
+      <span className="event-list-copy">
+        <span className={`event-status-label event-status-${currentEventState(event) === '진행 중' ? 'active' : currentEventState(event) === '종료' ? 'ended' : 'upcoming'}`}>{eventStatusLabel(event)}</span>
+        <strong className="event-list-title">{event.name}</strong>
+        <span className="event-list-schedule">
+          <span><CalendarDays aria-hidden="true" size={15} strokeWidth={1.9} /><small>일정</small><b>{dateLabel}</b></span>
+          {timeLabel && <span><Clock3 aria-hidden="true" size={15} strokeWidth={1.9} /><small>시간</small><b>{timeLabel}</b></span>}
+        </span>
+        <span className="event-list-venue"><MapPin aria-hidden="true" size={15} strokeWidth={1.9} /><span>{venueLabel}</span></span>
+        {decisionLabels.length > 0 && <span className="event-decision-labels">{decisionLabels.map((label) => <span key={label}>{label}</span>)}</span>}
+      </span>
+      <span className="event-list-media"><EventImage event={event} /></span>
+    </button>
+  );
 }
 
 function PlaceCard({ place, onClick, index = 0 }) {
@@ -262,7 +503,7 @@ function PlaceCard({ place, onClick, index = 0 }) {
       whileTap={{ transform: 'perspective(1000px) translateY(0px) rotateX(0deg) rotateY(0deg) translateZ(0px) scale(.975)' }}
       transition={{ duration: 0.28, delay: index * 0.06, ease: [0.23, 1, 0.32, 1] }}
     >
-      <div className="place-card-image">{place.image === images.myMap ? <VWorldMap ariaLabel={`${place.name} 코스 지도`} interactive={false} style={{ width: '100%', height: '100%' }} /> : <img src={place.image} alt="" />}</div>
+      <div className="place-card-image">{place.image === images.myMap ? <VWorldMap ariaLabel={`${place.name} 코스 지도`} interactive={false} style={{ width: '100%', height: '100%' }} /> : place.isEvent ? <EventImage event={place} /> : <img src={place.image} alt="" loading="lazy" decoding="async" />}</div>
       <div className="place-card-copy">
         {place.badge && <span className="place-card-kicker">{place.badge}</span>}
         <h3>{place.name}</h3>
@@ -336,16 +577,10 @@ const FIXED_MAP_FILTERS = [
 ];
 
 const FILMING_COLLECTION_FILTERS = [
-  { label: '전체', category: null },
-  { label: '음식점', category: 'RESTAURANT' },
-  { label: '카페/디저트', category: 'CAFE,DESSERT' },
-  { label: '관광지', category: 'ATTRACTION' },
-  { label: '문화시설', category: 'CULTURE' },
-  { label: '전시', category: 'EXHIBITION' },
-  { label: '쇼핑', category: 'SHOPPING' },
-  { label: '공원', category: 'PARK' },
-  { label: '산책로', category: 'WALK' },
-  { label: '포토스팟', category: 'PHOTO_SPOT' },
+  { label: '전체', contentType: null },
+  { label: '드라마', contentType: 'DRAMA' },
+  { label: '예능', contentType: 'VARIETY' },
+  { label: '영화', contentType: 'MOVIE' },
 ];
 
 const FILMING_COLLECTION_PAGE_SIZE = 12;
@@ -598,7 +833,7 @@ function ExploreScreen({ go }) {
             </ExploreReveal>
             <ExploreReveal delay={0.18}>
               <ScreenSection title="이번 주 행사" action="더보기" onAction={() => go('popups')}>
-                <HorizontalInfiniteCards items={popups.items} hasMore={popups.hasMore} isLoading={popups.isLoading} onLoadMore={popups.loadMore} emptyLabel="행사가 아직 없어요" onCardClick={(event) => event.placeId && go('place', event.placeId)} />
+                <HorizontalInfiniteCards items={popups.items} hasMore={popups.hasMore} isLoading={popups.isLoading} onLoadMore={popups.loadMore} emptyLabel="행사가 아직 없어요" onCardClick={(event) => go('event-detail', event.id)} />
               </ScreenSection>
             </ExploreReveal>
           </>
@@ -711,6 +946,111 @@ function PlaceDetail({ go, placeId }) {
   return <section className="phone standard-screen place-detail-screen"><main className="page-scroll"><div className="detail-hero"><img src={heroImage} alt={`${place.name} 외관`} /><div className="detail-controls"><IconButton label="이전" onClick={() => go('explore')}>‹</IconButton><IconButton label="저장" onClick={() => go('saved')}>♡</IconButton></div></div><div className="detail-content detail-content-v3"><p className="eyebrow">{[place.district, place.categoryLabel].filter(Boolean).join(' · ')}</p><h1>{place.name}</h1><p className="detail-meta">{hoursLabel}</p><div className="chip-row">{place.phone && <Chip active>{place.phone}</Chip>}<Chip>{place.roadAddress || place.lotAddress || '주소 정보 없음'}</Chip></div>{place.description && <ScreenSection title="장소 소개"><div className="why-card place-why-card"><p>{place.description}</p></div></ScreenSection>}<FilmingSceneSection filmingLocations={filmingLocations} />{place.images?.length > 0 && <ScreenSection title="사진"><div className="horizontal-cards">{place.images.map((img) => <div className="place-card-image" key={img.id} style={{ width: 120, height: 120, flex: '0 0 auto' }}><img src={img.sourceUrl} alt="" /></div>)}</div></ScreenSection>}</div></main><div className="sticky-actions split place-actions"><ActionButton onClick={() => go('course-conditions')}>코스에 추가</ActionButton><ActionButton tone="secondary" onClick={() => go('write-review')}>후기 남기기</ActionButton></div></section>;
 }
 
+function EventDetail({ go, eventId }) {
+  const [event, setEvent] = useState(null);
+  const [status, setStatus] = useState(eventId ? 'loading' : 'error');
+  const [retryAttempt, setRetryAttempt] = useState(0);
+
+  useEffect(() => {
+    if (!eventId) {
+      setStatus('error');
+      return undefined;
+    }
+    let cancelled = false;
+    const requestController = new AbortController();
+    setStatus('loading');
+    setEvent(null);
+    fetchEvent(eventId, { signal: requestController.signal })
+      .then((result) => {
+        if (cancelled) return;
+        setEvent(result);
+        setStatus('ready');
+      })
+      .catch((error) => {
+        if (!cancelled && error.name !== 'AbortError') {
+          console.error('행사 상세를 불러오지 못했어요', error);
+          setStatus('error');
+        }
+      });
+    return () => {
+      cancelled = true;
+      requestController.abort();
+    };
+  }, [eventId, retryAttempt]);
+
+  if (status === 'loading') {
+    return <section className="phone standard-screen event-detail-screen"><BackHeader title="이번 주 행사" onBack={() => go('popups')} /><main className="page-scroll centered-state"><BrandLoading /><h2>행사 정보를 불러오고 있어요</h2></main></section>;
+  }
+
+  if (status === 'error' || !event) {
+    return <section className="phone standard-screen event-detail-screen"><BackHeader title="이번 주 행사" onBack={() => go('popups')} /><main className="page-scroll centered-state"><h2>정보를 불러오지 못했어요</h2><p>행사 정보를 가져오지 못했어요. 다시 시도하거나 목록으로 돌아가세요.</p><ActionButton onClick={() => setRetryAttempt((current) => current + 1)}><RefreshCw aria-hidden="true" size={17} strokeWidth={2} />다시 시도</ActionButton><ActionButton tone="secondary" onClick={() => go('popups')}>목록으로 돌아가기</ActionButton></main></section>;
+  }
+
+  const displayEvent = eventToRowProps(event);
+  const dateLabel = formatDateRange(displayEvent.startDate, displayEvent.endDate) || '일정 정보 확인 중';
+  const venueLabel = eventVenueLabel(displayEvent);
+  const stateLabel = currentEventState(displayEvent);
+  const officialUrl = displayEvent.detailUrl || displayEvent.homepageUrl || null;
+  const primaryAction = officialUrl
+    ? { label: '공식 정보 보기', icon: ExternalLink, onClick: () => openExternal(officialUrl) }
+    : displayEvent.placeId
+      ? { label: '장소 정보 보기', icon: MapPin, onClick: () => go('place', displayEvent.placeId) }
+      : null;
+  const openExternal = (url) => {
+    if (!url) return;
+    window.open(url, '_blank', 'noopener,noreferrer');
+  };
+
+  return (
+    <section className={`phone standard-screen event-detail-screen ${primaryAction ? 'has-sticky-action' : ''}`}>
+      <main className="page-scroll">
+        <div className={`detail-hero event-detail-hero ${displayEvent.mainImage ? '' : 'is-placeholder'}`}>
+          <EventImage event={displayEvent} className="event-detail-media" />
+          <div className="detail-controls"><IconButton label="이전" onClick={() => go('popups')}>‹</IconButton></div>
+        </div>
+        <div className="detail-content detail-content-v3 event-detail-content">
+          <div className="event-status-row">
+            <Chip active>{stateLabel}</Chip>
+            {displayEvent.eventType && <span className="event-type-label">{displayEvent.eventType}</span>}
+          </div>
+          <h1>{displayEvent.name}</h1>
+          <div className="event-visit-summary" aria-label="방문 정보">
+            <div><CalendarDays aria-hidden="true" size={19} strokeWidth={1.8} /><span><small>일정</small><strong>{dateLabel}</strong></span></div>
+            <div><Clock3 aria-hidden="true" size={19} strokeWidth={1.8} /><span><small>시간</small><strong>{displayEvent.eventTime || '시간 정보 없음'}</strong></span></div>
+            <div><MapPin aria-hidden="true" size={19} strokeWidth={1.8} /><span><small>장소</small><strong>{venueLabel}</strong></span></div>
+            <div><CircleDollarSign aria-hidden="true" size={19} strokeWidth={1.8} /><span><small>요금</small><strong>{displayEvent.useFee || '요금 정보 확인 중'}</strong></span></div>
+          </div>
+          {(displayEvent.useTarget || displayEvent.applyDate) && (
+            <ScreenSection title="참여 정보">
+              <div className="event-detail-list">
+                {displayEvent.useTarget && <p><span>이용 대상</span><b>{displayEvent.useTarget}</b></p>}
+                {displayEvent.applyDate && <p><span>신청일</span><b>{formatKoreanDate(displayEvent.applyDate)}</b></p>}
+              </div>
+            </ScreenSection>
+          )}
+          {displayEvent.placeId && officialUrl && (
+            <ScreenSection title="연결된 장소">
+              <button type="button" className="event-linked-place" onClick={() => go('place', displayEvent.placeId)}>
+                <span><strong>{displayEvent.placeName || venueLabel}</strong><small>장소 상세에서 운영정보와 촬영 장면을 함께 볼 수 있어요.</small></span>
+                <ChevronRight aria-hidden="true" size={18} strokeWidth={2} />
+              </button>
+            </ScreenSection>
+          )}
+          {(displayEvent.orgName || displayEvent.inquiry) && (
+            <ScreenSection title="주최·문의">
+              <div className="event-detail-list">
+                {displayEvent.orgName && <p><span>주최</span><b>{displayEvent.orgName}</b></p>}
+                {displayEvent.inquiry && <p><span>문의</span><b>{displayEvent.inquiry}</b></p>}
+              </div>
+            </ScreenSection>
+          )}
+        </div>
+      </main>
+      {primaryAction && <div className="sticky-actions event-actions"><ActionButton onClick={primaryAction.onClick}>{(() => { const Icon = primaryAction.icon; return <Icon aria-hidden="true" size={17} strokeWidth={2} />; })()}{primaryAction.label}</ActionButton></div>}
+    </section>
+  );
+}
+
 function mediaContentToRowProps(media) {
   return {
     id: media.id,
@@ -772,44 +1112,351 @@ const collectionInfo = {
   popups: ['이번 주 팝업', '지금 서울에서만 만날 수 있는 장소', [{ name: '블루 모먼트 전시 팝업', meta: '성수 · 8월 31일까지', image: images.scene, badge: '이번 주' }, { name: '아무개 서점 여름 마켓', meta: '서촌 · 이번 주말', image: images.cafe, badge: '주말' }]],
 };
 
+function FilmingPlaceMedia({ place }) {
+  if (place.hasThumbnail) {
+    return <img src={place.image} alt="" loading="lazy" decoding="async" />;
+  }
+
+  return (
+    <span className="filming-place-card-media-fallback" aria-hidden="true">
+      <ImageIcon size={24} strokeWidth={1.8} />
+      <span>사진 준비 중</span>
+    </span>
+  );
+}
+
+function FilmingPlaceCard({ place, onClick }) {
+  const contentLabel = place.labels?.content || '촬영 콘텐츠 정보 없음';
+  const categoryLabel = place.labels?.category;
+  const workCountLabel = place.filmingWorkCount ? `${place.filmingWorkCount}개 작품에 나온 장소` : null;
+  const metadata = [contentLabel, categoryLabel].filter(Boolean);
+
+  return (
+    <button
+      className="filming-place-card"
+      type="button"
+      onClick={onClick}
+      aria-label={`${place.name} 촬영지 장소 상세 보기`}
+    >
+      <span className="filming-place-card-media">
+        <FilmingPlaceMedia place={place} />
+      </span>
+      <span className="filming-place-card-body">
+        <span className="filming-place-card-meta">
+          {metadata.map((label, index) => (
+            <span key={`${label}-${index}`}>{label}</span>
+          ))}
+        </span>
+        <strong className="filming-place-card-name">{place.name}</strong>
+        <span className="filming-place-card-address">
+          <MapPin aria-hidden="true" size={14} strokeWidth={1.9} />
+          <span>{place.addressLabel || '주소 정보 없음'}</span>
+        </span>
+        {workCountLabel && <span className="filming-place-card-work-count">{workCountLabel}</span>}
+      </span>
+      <ChevronRight className="filming-place-card-next" aria-hidden="true" size={20} strokeWidth={1.8} />
+    </button>
+  );
+}
+
+function FilmingWorkCard({ work, onClick }) {
+  const placeNames = work.representativePlaces.map((place) => place.placeName);
+  const placePreview = [placeNames.join(' · '), work.otherPlaceCount > 0 ? `외 ${work.otherPlaceCount}곳` : null]
+    .filter(Boolean)
+    .join(' ');
+  const meta = [work.typeLabel, work.releaseYear].filter(Boolean).join(' · ');
+
+  return (
+    <button
+      className="filming-work-card"
+      type="button"
+      onClick={onClick}
+      aria-label={`${work.title} 촬영 장소 보기`}
+    >
+      <span className="filming-work-poster">
+        {work.posterUrl
+          ? <img src={work.posterUrl} alt="" loading="lazy" decoding="async" />
+          : <span className="filming-work-poster-fallback" aria-hidden="true"><Clapperboard size={26} strokeWidth={1.7} /><small>포스터 준비 중</small></span>}
+      </span>
+      <span className="filming-work-body">
+        <span className="filming-work-meta">{meta || '작품 정보 확인 중'}</span>
+        <strong>{work.title}</strong>
+        <span className="filming-work-count">촬영 장소 {work.filmingPlaceCount ?? work.representativePlaces.length}곳</span>
+        <span className="filming-work-places">{placePreview || '장소 정보를 준비하고 있어요'}</span>
+      </span>
+      <ChevronRight className="filming-work-next" aria-hidden="true" size={20} strokeWidth={1.8} />
+    </button>
+  );
+}
+
+function FilmingPlaceLoading() {
+  return (
+    <div className="filming-place-skeletons" role="status" aria-label="촬영지 장소를 불러오는 중">
+      {[0, 1, 2].map((item) => (
+        <div className="filming-place-skeleton" aria-hidden="true" key={item}>
+          <span />
+          <span />
+        </div>
+      ))}
+    </div>
+  );
+}
+
 function FilmingLocationsCollection({ go }) {
   const scrollRef = useRef(null);
-  const loadingRef = useRef(false);
-  const requestIdRef = useRef(0);
-  const pageRef = useRef(0);
-  const hasMoreRef = useRef(true);
-  const activeFilterRef = useRef(FILMING_COLLECTION_FILTERS[0]);
-  const [activeFilter, setActiveFilter] = useState(FILMING_COLLECTION_FILTERS[0]);
+  const placeLoadingRef = useRef(false);
+  const workLoadingRef = useRef(false);
+  const placePageRef = useRef(0);
+  const workPageRef = useRef(0);
+  const placeHasMoreRef = useRef(true);
+  const workHasMoreRef = useRef(true);
+  const placeFilterRef = useRef(FILMING_COLLECTION_FILTERS[0]);
+  const workFilterRef = useRef(FILMING_COLLECTION_FILTERS[0]);
+  const placeQueryKeyRef = useRef(null);
+  const workQueryKeyRef = useRef(null);
+  const placeControllerRef = useRef(null);
+  const workControllerRef = useRef(null);
+  const scrollPositionsRef = useRef({ works: 0, places: 0 });
+  const [activeView, setActiveView] = useState('works');
+  const [placeFilter, setPlaceFilter] = useState(FILMING_COLLECTION_FILTERS[0]);
+  const [workFilter, setWorkFilter] = useState(FILMING_COLLECTION_FILTERS[0]);
   const [places, setPlaces] = useState([]);
-  const [hasMore, setHasMore] = useState(true);
-  const [isLoading, setIsLoading] = useState(false);
-  const [hasError, setHasError] = useState(false);
+  const [works, setWorks] = useState([]);
+  const [placeHasMore, setPlaceHasMore] = useState(true);
+  const [workHasMore, setWorkHasMore] = useState(true);
+  const [placeLoading, setPlaceLoading] = useState(false);
+  const [workLoading, setWorkLoading] = useState(false);
+  const [placeError, setPlaceError] = useState(false);
+  const [workError, setWorkError] = useState(false);
 
-  const loadPlaces = useCallback(async ({ pageNumber = pageRef.current, reset = false } = {}) => {
-    if (loadingRef.current || (!reset && !hasMoreRef.current)) return;
-    const requestId = requestIdRef.current + 1;
-    requestIdRef.current = requestId;
-    loadingRef.current = true;
-    setIsLoading(true);
-    setHasError(false);
+  const loadPlaces = useCallback(async ({ pageNumber = placePageRef.current, reset = false } = {}) => {
+    if (placeLoadingRef.current || (!reset && !placeHasMoreRef.current)) return;
+    placeLoadingRef.current = true;
+    placeControllerRef.current?.abort();
+    const requestController = new AbortController();
+    placeControllerRef.current = requestController;
+    setPlaceLoading(true);
+    setPlaceError(false);
     try {
       const result = await fetchPlaces({
         district: '종로구',
         tag: 'FILMING_LOCATION',
-        category: activeFilterRef.current.category,
+        filmingContentType: placeFilterRef.current.contentType,
         page: pageNumber,
         size: FILMING_COLLECTION_PAGE_SIZE,
+        signal: requestController.signal,
       });
-      if (requestId !== requestIdRef.current) return;
       const nextPlaces = (result.content ?? []).map(filmingPlaceToCardProps);
       setPlaces((current) => reset ? nextPlaces : appendUniqueItems(current, nextPlaces));
       const nextPage = pageNumber + 1;
       const nextHasMore = hasNextPage(result, FILMING_COLLECTION_PAGE_SIZE);
+      placePageRef.current = nextPage;
+      placeHasMoreRef.current = nextHasMore;
+      setPlaceHasMore(nextHasMore);
+    } catch (error) {
+      if (error.name === 'AbortError') return;
+      console.error('촬영지 장소를 불러오지 못했어요', error);
+      setPlaceError(true);
+    } finally {
+      placeLoadingRef.current = false;
+      setPlaceLoading(false);
+    }
+  }, []);
+
+  const loadWorks = useCallback(async ({ pageNumber = workPageRef.current, reset = false } = {}) => {
+    if (workLoadingRef.current || (!reset && !workHasMoreRef.current)) return;
+    workLoadingRef.current = true;
+    workControllerRef.current?.abort();
+    const requestController = new AbortController();
+    workControllerRef.current = requestController;
+    setWorkLoading(true);
+    setWorkError(false);
+    try {
+      const result = await fetchFilmingWorks({
+        contentType: workFilterRef.current.contentType,
+        page: pageNumber,
+        size: FILMING_COLLECTION_PAGE_SIZE,
+        signal: requestController.signal,
+      });
+      const nextWorks = (result.content ?? []).map(filmingWorkToCardProps);
+      setWorks((current) => reset ? nextWorks : appendUniqueItems(current, nextWorks));
+      const nextPage = pageNumber + 1;
+      const nextHasMore = hasNextPage(result, FILMING_COLLECTION_PAGE_SIZE);
+      workPageRef.current = nextPage;
+      workHasMoreRef.current = nextHasMore;
+      setWorkHasMore(nextHasMore);
+    } catch (error) {
+      if (error.name === 'AbortError') return;
+      console.error('촬영 작품을 불러오지 못했어요', error);
+      setWorkError(true);
+    } finally {
+      workLoadingRef.current = false;
+      setWorkLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    const filter = activeView === 'works' ? workFilter : placeFilter;
+    const queryKey = filter.contentType || 'ALL';
+    if (activeView === 'works') {
+      workFilterRef.current = filter;
+      if (workQueryKeyRef.current !== queryKey) {
+        workQueryKeyRef.current = queryKey;
+        workPageRef.current = 0;
+        workHasMoreRef.current = true;
+        setWorks([]);
+        setWorkHasMore(true);
+        loadWorks({ pageNumber: 0, reset: true });
+        scrollPositionsRef.current.works = 0;
+      }
+    } else {
+      placeFilterRef.current = filter;
+      if (placeQueryKeyRef.current !== queryKey) {
+        placeQueryKeyRef.current = queryKey;
+        placePageRef.current = 0;
+        placeHasMoreRef.current = true;
+        setPlaces([]);
+        setPlaceHasMore(true);
+        loadPlaces({ pageNumber: 0, reset: true });
+        scrollPositionsRef.current.places = 0;
+      }
+    }
+    const frame = window.requestAnimationFrame(() => {
+      if (scrollRef.current) scrollRef.current.scrollTop = scrollPositionsRef.current[activeView];
+    });
+    return () => window.cancelAnimationFrame(frame);
+  }, [activeView, loadPlaces, loadWorks, placeFilter, workFilter]);
+
+  useEffect(() => () => {
+    placeControllerRef.current?.abort();
+    workControllerRef.current?.abort();
+    placeLoadingRef.current = false;
+    workLoadingRef.current = false;
+    placeQueryKeyRef.current = null;
+    workQueryKeyRef.current = null;
+  }, []);
+
+  const handleScroll = () => {
+    const scroll = scrollRef.current;
+    if (!scroll) return;
+    scrollPositionsRef.current[activeView] = scroll.scrollTop;
+    const distanceToBottom = scroll.scrollHeight - scroll.scrollTop - scroll.clientHeight;
+    if (scroll.scrollTop <= 0 || distanceToBottom >= 320) return;
+    if (activeView === 'works' && !workLoading && workHasMore) loadWorks({ pageNumber: workPageRef.current });
+    if (activeView === 'places' && !placeLoading && placeHasMore) loadPlaces({ pageNumber: placePageRef.current });
+  };
+
+  const activeFilter = activeView === 'works' ? workFilter : placeFilter;
+  const items = activeView === 'works' ? works : places;
+  const isLoading = activeView === 'works' ? workLoading : placeLoading;
+  const hasError = activeView === 'works' ? workError : placeError;
+  const hasMore = activeView === 'works' ? workHasMore : placeHasMore;
+  const retry = () => activeView === 'works'
+    ? loadWorks({ pageNumber: works.length ? workPageRef.current : 0, reset: !works.length })
+    : loadPlaces({ pageNumber: places.length ? placePageRef.current : 0, reset: !places.length });
+
+  return (
+    <section className="phone standard-screen list-screen collection-screen-v3 filming-collection-screen">
+      <BackHeader title="장면 속으로" onBack={() => go('explore')} />
+      <main className="page-scroll filming-collection-scroll" ref={scrollRef} onScroll={handleScroll}>
+        <header className="collection-heading filming-collection-heading">
+          <h1>장면을 따라 걷는 서울</h1>
+          <small>작품에서 시작하거나, 가까운 촬영 장소부터 찾아보세요.</small>
+        </header>
+        <div className="filming-view-switch" role="tablist" aria-label="촬영지 보기 방식">
+          <button type="button" role="tab" aria-selected={activeView === 'works'} className={activeView === 'works' ? 'is-active' : ''} onClick={() => setActiveView('works')}>작품별 보기</button>
+          <button type="button" role="tab" aria-selected={activeView === 'places'} className={activeView === 'places' ? 'is-active' : ''} onClick={() => setActiveView('places')}>장소별 보기</button>
+        </div>
+        <div className="collection-filters filming-filter-bar" role="group" aria-label="촬영 콘텐츠 종류 필터">
+          {FILMING_COLLECTION_FILTERS.map((item) => (
+            <Chip
+              key={item.label}
+              active={activeFilter.label === item.label}
+              onClick={() => activeView === 'works' ? setWorkFilter(item) : setPlaceFilter(item)}
+            >
+              {item.label}
+            </Chip>
+          ))}
+        </div>
+        {hasError && !items.length ? (
+          <section className="collection-state">
+            <h2>{activeView === 'works' ? '작품을 불러오지 못했어요' : '촬영지를 불러오지 못했어요'}</h2>
+            <p>잠시 후 다시 시도해주세요.</p>
+            <ActionButton onClick={retry}>다시 불러오기</ActionButton>
+          </section>
+        ) : (
+          <div className="collection-list filming-place-list">
+            {activeView === 'works'
+              ? works.map((work) => <FilmingWorkCard key={work.id} work={work} onClick={() => go('filming-work', work.id)} />)
+              : places.map((place) => <FilmingPlaceCard key={place.id} place={place} onClick={() => go('place', place.id)} />)}
+            {isLoading && !items.length && <FilmingPlaceLoading />}
+            {!items.length && !isLoading && (
+              <section className="collection-state compact">
+                <h2>해당 종류의 {activeView === 'works' ? '작품이' : '촬영지가'} 아직 없어요</h2>
+                <p>다른 필터를 선택해보세요.</p>
+              </section>
+            )}
+            {hasError && items.length > 0 && (
+              <section className="collection-inline-error" role="alert">
+                <p>목록을 더 불러오지 못했어요.</p>
+                <button type="button" onClick={retry}>다시 시도</button>
+              </section>
+            )}
+            {isLoading && items.length > 0 && <div className="collection-loading filming-collection-loading" role="status">더 불러오는 중</div>}
+            {!hasMore && items.length > 0 && <p className="collection-end">마지막 {activeView === 'works' ? '작품' : '촬영지'}까지 확인했어요</p>}
+          </div>
+        )}
+      </main>
+    </section>
+  );
+}
+
+const EVENT_COLLECTION_FILTERS = ['전체', '오늘', '진행 중', '무료'];
+const EVENT_COLLECTION_PAGE_SIZE = 12;
+
+function EventsCollection({ go }) {
+  const scrollRef = useRef(null);
+  const loadingRef = useRef(false);
+  const requestIdRef = useRef(0);
+  const pageRef = useRef(eventCollectionSession.page);
+  const hasMoreRef = useRef(eventCollectionSession.hasMore);
+  const requestControllerRef = useRef(null);
+  const [activeFilter, setActiveFilter] = useState(eventCollectionSession.activeFilter);
+  const [events, setEvents] = useState(eventCollectionSession.events);
+  const [hasMore, setHasMore] = useState(eventCollectionSession.hasMore);
+  const [isLoading, setIsLoading] = useState(false);
+  const [hasError, setHasError] = useState(eventCollectionSession.hasError);
+
+  const loadEvents = useCallback(async ({ pageNumber = pageRef.current, reset = false } = {}) => {
+    if (loadingRef.current || (!reset && !hasMoreRef.current)) return;
+    const requestId = requestIdRef.current + 1;
+    requestIdRef.current = requestId;
+    loadingRef.current = true;
+    requestControllerRef.current?.abort();
+    const requestController = new AbortController();
+    requestControllerRef.current = requestController;
+    setIsLoading(true);
+    setHasError(false);
+    if (reset) {
+      pageRef.current = 0;
+      hasMoreRef.current = true;
+      setEvents([]);
+      setHasMore(true);
+    }
+    try {
+      const result = await fetchEvents({ page: pageNumber, size: EVENT_COLLECTION_PAGE_SIZE, signal: requestController.signal });
+      if (requestId !== requestIdRef.current) return;
+      const nextEvents = (result.content ?? []).map(eventToCardProps);
+      setEvents((current) => reset ? nextEvents : appendUniqueItems(current, nextEvents));
+      const nextPage = pageNumber + 1;
+      const nextHasMore = hasNextPage(result, EVENT_COLLECTION_PAGE_SIZE);
       pageRef.current = nextPage;
       hasMoreRef.current = nextHasMore;
       setHasMore(nextHasMore);
+      eventCollectionSession.hasLoaded = true;
     } catch (error) {
-      console.error('촬영지 장소를 불러오지 못했어요', error);
+      if (error.name === 'AbortError') return;
+      console.error('행사 목록을 불러오지 못했어요', error);
       if (requestId === requestIdRef.current) setHasError(true);
     } finally {
       if (requestId === requestIdRef.current) {
@@ -820,64 +1467,105 @@ function FilmingLocationsCollection({ go }) {
   }, []);
 
   useEffect(() => {
-    requestIdRef.current += 1;
-    loadingRef.current = false;
-    activeFilterRef.current = activeFilter;
-    pageRef.current = 0;
-    hasMoreRef.current = true;
-    setPlaces([]);
-    setHasMore(true);
-    setHasError(false);
-    if (scrollRef.current) scrollRef.current.scrollTop = 0;
-    loadPlaces({ pageNumber: 0, reset: true });
-  }, [activeFilter, loadPlaces]);
+    const frame = window.requestAnimationFrame(() => {
+      if (scrollRef.current) scrollRef.current.scrollTop = eventCollectionSession.scrollTop;
+    });
+    if (!eventCollectionSession.hasLoaded && !events.length) loadEvents({ pageNumber: 0, reset: true });
+    return () => {
+      eventCollectionSession.scrollTop = scrollRef.current?.scrollTop ?? eventCollectionSession.scrollTop;
+      requestIdRef.current += 1;
+      loadingRef.current = false;
+      requestControllerRef.current?.abort();
+      window.cancelAnimationFrame(frame);
+    };
+  }, [events.length, loadEvents]);
+
+  useEffect(() => {
+    eventCollectionSession.events = events;
+    eventCollectionSession.activeFilter = activeFilter;
+    eventCollectionSession.page = pageRef.current;
+    eventCollectionSession.hasMore = hasMore;
+    eventCollectionSession.hasError = hasError;
+  }, [activeFilter, events, hasError, hasMore]);
+
+  const filteredEvents = useMemo(() => {
+    if (activeFilter === '오늘') return events.filter(eventOccursToday);
+    if (activeFilter === '진행 중') return events.filter((event) => currentEventState(event) === '진행 중');
+    if (activeFilter === '무료') return events.filter(eventIsFree);
+    return events;
+  }, [activeFilter, events]);
 
   const handleScroll = () => {
     const scroll = scrollRef.current;
-    if (!scroll || isLoading || !hasMore) return;
+    if (!scroll) return;
+    eventCollectionSession.scrollTop = scroll.scrollTop;
+    if (isLoading || !hasMore) return;
     const distanceToBottom = scroll.scrollHeight - scroll.scrollTop - scroll.clientHeight;
-    if (scroll.scrollTop > 0 && distanceToBottom < 320) loadPlaces({ pageNumber: pageRef.current });
+    if (scroll.scrollTop > 0 && distanceToBottom < 320) loadEvents({ pageNumber: pageRef.current });
   };
 
+  const handleFilterChange = (filter) => {
+    eventCollectionSession.activeFilter = filter;
+    setActiveFilter(filter);
+  };
+
+  const handleEventClick = (eventId) => {
+    eventCollectionSession.scrollTop = scrollRef.current?.scrollTop ?? 0;
+    go('event-detail', eventId);
+  };
+
+  const filteredEventsAreExhausted = !filteredEvents.length && !isLoading && !hasMore;
+
   return (
-    <section className="phone standard-screen list-screen collection-screen-v3 filming-collection-screen">
-      <BackHeader title="장면 속으로" onBack={() => go('explore')} />
-      <main className="page-scroll filming-collection-scroll" ref={scrollRef} onScroll={handleScroll}>
-        <header className="collection-heading filming-collection-heading">
-          <p>서울의 장면들</p>
-          <h1>촬영지 장소</h1>
-          <small>드라마와 영화 속, 직접 걸어볼 수 있는 장소를 종류별로 모았어요.</small>
+    <section className="phone standard-screen list-screen collection-screen-v3 event-collection-screen">
+      <BackHeader title="이번 주 행사" onBack={() => go('explore')} />
+      <main className="page-scroll event-collection-scroll" ref={scrollRef} onScroll={handleScroll}>
+        <header className="collection-heading event-collection-heading">
+          <h2>행사와 전시</h2>
+          <small>지금 열리거나 곧 시작하는 문화행사를 모았어요.</small>
         </header>
-        <div className="collection-filters filming-filter-bar">
-          {FILMING_COLLECTION_FILTERS.map((item) => (
-            <Chip
-              key={item.label}
-              active={activeFilter.label === item.label}
-              onClick={() => setActiveFilter(item)}
-            >
-              {item.label}
-            </Chip>
+        <div className="collection-filters event-filter-bar" role="group" aria-label="행사 필터">
+          {EVENT_COLLECTION_FILTERS.map((item) => (
+            <Chip key={item} active={activeFilter === item} current={activeFilter === item} onClick={() => handleFilterChange(item)}>{item}</Chip>
           ))}
         </div>
-        {hasError && !places.length ? (
+        {hasError && !events.length ? (
           <section className="collection-state">
-            <h2>촬영지를 불러오지 못했어요</h2>
+            <h2>행사를 불러오지 못했어요</h2>
             <p>잠시 후 다시 시도해주세요.</p>
-            <ActionButton onClick={() => loadPlaces({ pageNumber: 0, reset: true })}>다시 불러오기</ActionButton>
+            <ActionButton onClick={() => loadEvents({ pageNumber: 0, reset: true })}>다시 불러오기</ActionButton>
           </section>
         ) : (
-          <div className="collection-list filming-place-list">
-            {places.map((place) => (
-              <PlaceRow key={place.id} place={place} onClick={() => go('place', place.id)} />
+          <div className="collection-list event-list">
+            {filteredEvents.map((event) => (
+              <EventListItem key={event.id} event={event} onClick={() => handleEventClick(event.id)} />
             ))}
-            {!places.length && !isLoading && (
+            {!filteredEvents.length && isLoading && (
+              <section className="collection-state compact" role="status" aria-live="polite">
+                <span className="event-state-icon"><CalendarDays aria-hidden="true" size={22} /></span>
+                <h2>행사를 불러오는 중이에요</h2>
+                <p>잠시만 기다려주세요.</p>
+              </section>
+            )}
+            {!filteredEvents.length && !isLoading && events.length > 0 && hasMore && (
               <section className="collection-state compact">
-                <h2>해당 종류의 촬영지가 아직 없어요</h2>
-                <p>다른 필터를 선택해보세요.</p>
+                <span className="event-state-icon"><Search aria-hidden="true" size={22} /></span>
+                <h2>아직 확인하지 않은 행사에 있을 수 있어요</h2>
+                <p>현재까지 불러온 행사에는 이 조건이 없어요.</p>
+                <ActionButton onClick={() => loadEvents({ pageNumber: pageRef.current })}>더 많은 행사 불러오기</ActionButton>
+              </section>
+            )}
+            {!filteredEvents.length && filteredEventsAreExhausted && (
+              <section className="collection-state compact">
+                <span className="event-state-icon"><Search aria-hidden="true" size={22} /></span>
+                <h2>조건에 맞는 행사가 없어요</h2>
+                <p>{events.length ? '모든 행사를 확인했어요. 다른 필터를 선택해보세요.' : '등록된 행사가 아직 없어요.'}</p>
+                {events.length > 0 && activeFilter !== '전체' && <ActionButton tone="secondary" onClick={() => handleFilterChange('전체')}>전체 행사 보기</ActionButton>}
               </section>
             )}
             {isLoading && <div className="collection-loading" role="status">불러오는 중</div>}
-            {!hasMore && places.length > 0 && <p className="collection-end">마지막 촬영지까지 확인했어요</p>}
+            {hasError && events.length > 0 && <div className="collection-inline-error" role="alert"><span>다음 행사까지 불러오지 못했어요.</span><button type="button" onClick={() => loadEvents({ pageNumber: pageRef.current })}>다시 시도</button></div>}
+            {!hasMore && events.length > 0 && <p className="collection-end">마지막 행사까지 확인했어요</p>}
           </div>
         )}
       </main>
@@ -888,6 +1576,9 @@ function FilmingLocationsCollection({ go }) {
 function CollectionScreen({ screen, go }) {
   if (screen === 'filming-locations') {
     return <FilmingLocationsCollection go={go} />;
+  }
+  if (screen === 'popups') {
+    return <EventsCollection go={go} />;
   }
 
   return <StaticCollectionScreen screen={screen} go={go} />;
@@ -1019,6 +1710,214 @@ function TravelScreen({ screen, go }) {
   return <GuidanceMapState go={go} data={guidanceStates[screen]} />;
 }
 
+function FilmingWorkPlaceItem({ place, index, go }) {
+  const sceneRef = useRef(null);
+  const [isExpanded, setIsExpanded] = useState(false);
+  const [canExpand, setCanExpand] = useState(false);
+
+  useEffect(() => {
+    setIsExpanded(false);
+    const measureOverflow = () => {
+      const scene = sceneRef.current;
+      if (scene) {
+        const lineHeight = Number.parseFloat(window.getComputedStyle(scene).lineHeight) || 18;
+        setCanExpand(scene.scrollHeight > lineHeight * 3 + 1);
+      }
+    };
+    const frame = window.requestAnimationFrame(measureOverflow);
+    window.addEventListener('resize', measureOverflow);
+    return () => {
+      window.cancelAnimationFrame(frame);
+      window.removeEventListener('resize', measureOverflow);
+    };
+  }, [place.scene]);
+
+  return (
+    <article className={`filming-work-place-item${isExpanded ? ' is-expanded' : ''}`}>
+      <button className="filming-work-place-main" type="button" onClick={() => go('place', place.id)}>
+        <span className="filming-work-place-image">
+          {place.image
+            ? <img src={place.image} alt={`${place.name} 전경`} />
+            : <span className="filming-work-place-image-fallback"><ImageIcon size={22} /></span>}
+          <b>{index + 1}</b>
+        </span>
+        <span className="filming-work-place-copy">
+          <small>{place.category}</small>
+          <strong>{place.name}</strong>
+          <span ref={sceneRef} className={`filming-work-place-scene${isExpanded ? ' is-expanded' : ''}`}>{place.scene}</span>
+        </span>
+        <ChevronRight aria-hidden="true" size={19} />
+      </button>
+      {canExpand && (
+        <button
+          className="filming-work-scene-toggle"
+          type="button"
+          aria-expanded={isExpanded}
+          onClick={() => setIsExpanded((current) => !current)}
+        >
+          {isExpanded ? '접기' : '더보기'}
+        </button>
+      )}
+    </article>
+  );
+}
+
+function FilmingWorkDetail({ go, workId }) {
+  const scrollRef = useRef(null);
+  const [work, setWork] = useState(null);
+  const [isLoading, setIsLoading] = useState(true);
+  const [loadError, setLoadError] = useState(false);
+  const [overviewExpanded, setOverviewExpanded] = useState(false);
+
+  useEffect(() => {
+    const frame = window.requestAnimationFrame(() => {
+      if (scrollRef.current) scrollRef.current.scrollTop = 0;
+    });
+    return () => window.cancelAnimationFrame(frame);
+  }, [workId]);
+
+  useEffect(() => {
+    if (!workId) {
+      setIsLoading(false);
+      setLoadError(true);
+      return undefined;
+    }
+
+    const controller = new AbortController();
+    setIsLoading(true);
+    setLoadError(false);
+    setWork(null);
+    setOverviewExpanded(false);
+
+    Promise.all([
+      fetchMediaContent(workId, { signal: controller.signal }),
+      fetchMediaFilmingLocations(workId, { signal: controller.signal }),
+    ])
+      .then(async ([media, filmingLocations]) => {
+        const places = await Promise.all((filmingLocations ?? []).map(async (filmingLocation, index) => {
+          const place = await fetchPlace(filmingLocation.placeId, { signal: controller.signal });
+          return {
+            id: place.id,
+            name: place.name || filmingLocation.placeName,
+            category: [place.categoryLabel, place.district].filter(Boolean).join(' · ') || '장소 정보 확인 중',
+            scene: filmingLocation.sceneDescription || '장면 설명을 준비하고 있어요.',
+            image: place.images?.[0]?.sourceUrl || null,
+            latitude: place.latitude,
+            longitude: place.longitude,
+            categoryCode: place.categoryCode,
+            tags: place.tags,
+            order: index + 1,
+          };
+        }));
+
+        if (controller.signal.aborted) return;
+        setWork({
+          id: media.id,
+          title: media.title,
+          type: filmingWorkTypeLabel(media),
+          year: formatReleaseYear(media.releaseDate),
+          poster: tmdbPosterUrl(media.posterPath),
+          overview: media.overview,
+          places,
+        });
+      })
+      .catch((error) => {
+        if (error.name === 'AbortError') return;
+        console.error('작품 촬영지 상세를 불러오지 못했어요', error);
+        setLoadError(true);
+      })
+      .finally(() => {
+        if (!controller.signal.aborted) setIsLoading(false);
+      });
+
+    return () => controller.abort();
+  }, [workId]);
+
+  const mapPlaces = useMemo(
+    () => (work?.places ?? []).filter((place) => Number.isFinite(Number(place.latitude)) && Number.isFinite(Number(place.longitude))),
+    [work],
+  );
+  const mapCenter = useMemo(() => {
+    if (!mapPlaces.length) return [126.978, 37.5665];
+    return [
+      mapPlaces.reduce((sum, place) => sum + Number(place.longitude), 0) / mapPlaces.length,
+      mapPlaces.reduce((sum, place) => sum + Number(place.latitude), 0) / mapPlaces.length,
+    ];
+  }, [mapPlaces]);
+  const loadWorkMapPlaces = useCallback(() => Promise.resolve(mapPlaces), [mapPlaces]);
+  const workMarkerLabel = useCallback((place) => place.order, []);
+
+  if (isLoading) {
+    return <section className="phone standard-screen filming-work-detail-screen"><main className="page-scroll centered-state"><BrandLoading /><h1>작품 속 장소를 찾고 있어요</h1><p>작품 정보와 촬영 장면을 함께 불러오는 중이에요.</p></main></section>;
+  }
+
+  if (loadError || !work) {
+    return <section className="phone standard-screen filming-work-detail-screen"><BackHeader title="작품 상세" onBack={() => go('filming-locations')} /><main className="page-scroll centered-state"><SearchX size={38} /><h1>작품 정보를 불러오지 못했어요</h1><p>잠시 후 다시 시도해주세요.</p><ActionButton onClick={() => go('filming-locations')}>작품 목록으로</ActionButton></main></section>;
+  }
+
+  const placeRouteLabel = work.places.length > 1
+    ? `${work.places[0].name}에서 ${work.places[work.places.length - 1].name}까지`
+    : work.places[0]?.name || '촬영지 위치';
+
+  return (
+    <section className="phone standard-screen filming-work-detail-screen">
+      <main className="page-scroll filming-work-detail-scroll" ref={scrollRef}>
+        <div className="filming-work-detail-hero">
+          {work.poster
+            ? <img src={work.poster} alt={`${work.title} 포스터`} />
+            : <div className="filming-work-detail-poster-fallback"><Clapperboard size={34} /><span>포스터 준비 중</span></div>}
+          <div className="filming-work-detail-controls">
+            <IconButton label="이전" onClick={() => go('filming-locations')}><ChevronLeft size={20} /></IconButton>
+            <IconButton label="작품 저장"><Heart size={19} /></IconButton>
+          </div>
+          <span className="filming-work-detail-count"><MapPin size={14} /> 촬영 장소 {work.places.length}곳</span>
+        </div>
+
+        <div className="filming-work-detail-copy">
+          <p className="filming-work-detail-meta">{[work.type, work.year].filter(Boolean).join(' · ')}</p>
+          <h1>{work.title}</h1>
+          <p className={`filming-work-detail-overview${overviewExpanded ? ' is-expanded' : ''}`}>{work.overview || '작품 소개를 준비하고 있어요.'}</p>
+          {work.overview?.length > 120 && <button className="filming-work-overview-toggle" type="button" aria-expanded={overviewExpanded} onClick={() => setOverviewExpanded((current) => !current)}>{overviewExpanded ? '접기' : '더보기'}</button>}
+
+          <section className="filming-work-place-section">
+            <header>
+              <h2>이 작품 속 서울</h2>
+              <span>{work.places.length}곳</span>
+            </header>
+            {work.places.length ? <div className="filming-work-place-list">
+              {work.places.map((place, index) => <FilmingWorkPlaceItem key={place.id} place={place} index={index} go={go} />)}
+            </div> : <div className="filming-work-empty"><p>등록된 촬영 장소가 아직 없어요.</p></div>}
+          </section>
+
+          {mapPlaces.length > 0 && <section className="filming-work-map-section">
+            <header>
+              <h2>촬영지 한눈에 보기</h2>
+              <span>{[...new Set(work.places.map((place) => place.category.split(' · ').at(-1)))].join(' · ')}</span>
+            </header>
+            <div className="filming-work-map-preview">
+              <VWorldMap
+                ariaLabel={`${work.title} 촬영지 지도`}
+                center={mapCenter}
+                zoom={14.5}
+                interactive={false}
+                loadPlacesInBounds={loadWorkMapPlaces}
+                placeMarkerLabel={workMarkerLabel}
+                clusterPlaces={false}
+                fitPlaceMarkers
+                placeRequestKey={`${work.id}-${mapPlaces.length}`}
+              />
+              <button className="filming-work-map-caption" type="button" onClick={() => go('map')}><MapPin size={15} /> {placeRouteLabel}</button>
+            </div>
+          </section>}
+        </div>
+      </main>
+      <div className="sticky-actions filming-work-detail-actions">
+        <ActionButton onClick={() => go('map')}><MapPin size={18} /> 지도에서 촬영지 보기</ActionButton>
+      </div>
+    </section>
+  );
+}
+
 const filmingState = {
   'filming-content': ['촬영지 콘텐츠', '도깨비', '창덕궁 후원', '이 장면은 연못가에서 촬영되었어요.', 'scene-list'],
   'scene-detail': ['장면 상세', '도깨비', '비밀의 정원 장면', '인물의 시선을 따라 연못 쪽으로 프레임을 맞춰보세요.', 'camera-permission'],
@@ -1045,7 +1944,8 @@ function ShotResultScreen({ go }) {
   return <section className="phone camera-screen shot-result-screen"><img className="camera-live-image" src="/assets/figma/intro-visual.png" alt="촬영 결과" /><div className="camera-dim" /><div className="camera-header"><IconButton label="닫기" onClick={() => go('scene-detail')}>×</IconButton><span>촬영 결과 비교</span><IconButton label="도움말">?</IconButton></div><div className="shot-result-score">참고 장면과 구도가 86% 일치해요</div><div className="shot-result-comparison"><div><span>원본</span></div><i /><div><span>참고</span></div></div><div className="shot-result-copy"><strong>참고 장면 · EP.03</strong><span>좌우로 밀어 원본과 참고 장면을 비교해요</span><small>TMDB 참고 이미지 · 내 촬영 결과</small></div><div className="sticky-actions split shot-result-actions"><ActionButton onClick={() => go('photo-saved')}>사진 저장</ActionButton><ActionButton tone="secondary" onClick={() => go('camera')}>다시 촬영</ActionButton></div></section>;
 }
 
-function FilmingScreen({ screen, go }) {
+function FilmingScreen({ screen, go, id }) {
+  if (screen === 'filming-work') return <FilmingWorkDetail go={go} workId={id} />;
   if (screen === 'camera') return <CameraScreen go={go} />;
   if (screen === 'camera-permission') return <MapPermissionPrompt go={go} title="카메라 권한이 필요해요" copy="촬영 장면과 현재 화면을 겹쳐 보려면 카메라 접근이 필요해요." detail={['사진과 동영상 촬영 허용', '촬영한 사진은 저장하기 전까지 기기에 남지 않아요.']} action="카메라 권한 허용" next="camera" />;
   if (screen === 'scene-list') return <section className="phone standard-screen scene-list-v3"><BackHeader title="촬영 장면 · 운현궁" onBack={() => go('filming-content')} /><main className="page-scroll scene-list-scroll"><header><h1>이곳에서 촬영된 장면</h1><p>눈물의 여왕 · 장면 2개</p></header><div className="scene-sort-row"><Chip active>작품별</Chip><Chip>최신순</Chip></div><article className="scene-work-card"><img src="/assets/figma/intro-visual.png" alt="운현궁 촬영 장면" /><div><span>눈물의 여왕</span><small>tvN · 2024 · TMDB 작품 정보</small><p>EP.03 · 마당을 지나 대화를 나누는 장면<br />EP.11 · 처마 아래에서 재회하는 장면</p></div></article><p className="scene-list-note">스틸 이미지는 참고용으로 제공돼요</p><ScreenSection title="장면 선택"><div className="scene-choice-list"><button type="button" onClick={() => go('scene-detail')}><span><strong>EP.03</strong><small>낮 장면 · 구도 가이드 제공</small></span><b>장면 상세&nbsp; ›</b></button><button type="button" onClick={() => go('scene-detail')}><span><strong>EP.11</strong><small>저녁 장면 · 구도 가이드 제공</small></span><b>장면 보기&nbsp; ›</b></button></div></ScreenSection></main></section>;
@@ -1122,11 +2022,11 @@ function MyScreen({ screen, go }) {
   return <section className="phone standard-screen tab-screen my-screen"><main className="page-scroll my-scroll"><header className="my-title"><h1>MY</h1></header><section className="profile-hero"><div className="profile-row"><span className="avatar">Y</span><div><h2>유진</h2><p>이번 달 7곳을 걸었어요</p></div></div><div className="profile-stats"><span><b>3</b>내 코스</span><span><b>18</b>저장</span><span><b>6</b>후기</span></div></section><ScreenSection title="내 코스"><button type="button" className="my-course-card" onClick={() => go('active-course')}><VWorldMap ariaLabel="안국동 코스 지도" interactive={false} style={{ width: '100%', height: 122 }} /><span><strong>안국에서 성수까지, 여름 하루</strong><small>4곳 · 5시간 10분 · 8월 3일</small></span></button></ScreenSection><ScreenSection title="내 활동"><div className="activity-grid"><button type="button" onClick={() => go('saved-courses')}><span>저장한 장소</span><strong>18</strong></button><button type="button" onClick={() => go('reviews')}><span>내 후기</span><strong>6</strong></button></div></ScreenSection></main><BottomNav active="my" onNavigate={(tab) => go(rootRoutes[tab])} /></section>;
 }
 
-function AppScreenFrame({ children, go }) {
+function AppScreenFrame({ children, go, hideHeader = false }) {
   return (
     <div className="screen-frame">
-      <AppHeader onNotifications={() => go('notifications')} onProfile={() => go('my')} />
-      <div className="screen-frame-content with-app-header">{children}</div>
+      {!hideHeader && <AppHeader onNotifications={() => go('notifications')} onProfile={() => go('my')} />}
+      <div className={`screen-frame-content${hideHeader ? '' : ' with-app-header'}`}>{children}</div>
     </div>
   );
 }
@@ -1137,6 +2037,7 @@ function RenderScreen({ screen, id, go }) {
   else if (screen === 'map') renderedScreen = <MapHome go={go} />;
   else if (screen === 'explore') renderedScreen = <ExploreScreen go={go} />;
   else if (screen === 'place') renderedScreen = <PlaceDetail go={go} placeId={id} />;
+  else if (screen === 'event-detail') renderedScreen = <EventDetail go={go} eventId={id} />;
   else if (screen === 'search' || screen === 'search-empty') renderedScreen = <SearchResults screen={screen} go={go} />;
   else if (screen === 'saved') renderedScreen = <SavedConfirmation go={go} />;
   else if (screen === 'trending' || screen === 'filming-locations' || screen === 'popups') renderedScreen = <CollectionScreen screen={screen} go={go} />;
@@ -1145,11 +2046,11 @@ function RenderScreen({ screen, id, go }) {
   else if (screen === 'basket' || screen === 'basket-natural' || screen === 'basket-glass') renderedScreen = <CourseBasket screen={screen} go={go} />;
   else if (screen === 'compare' || screen === 'route-map') renderedScreen = <CourseCompare screen={screen} go={go} />;
   else if (routeGroups.travel.includes(screen)) renderedScreen = <TravelScreen screen={screen} go={go} />;
-  else if (routeGroups.filming.includes(screen)) renderedScreen = <FilmingScreen screen={screen} go={go} />;
+  else if (routeGroups.filming.includes(screen)) renderedScreen = <FilmingScreen screen={screen} go={go} id={id} />;
   else if (routeGroups.record.includes(screen)) renderedScreen = <RecordScreen screen={screen} go={go} />;
   else renderedScreen = <MyScreen screen={screen} go={go} />;
 
-  return <AppScreenFrame go={go}>{renderedScreen}</AppScreenFrame>;
+  return <AppScreenFrame go={go} hideHeader={screen === 'filming-work'}>{renderedScreen}</AppScreenFrame>;
 }
 
 export default function ProductFlow() {

@@ -36,6 +36,10 @@ public class FilmingLocation {
     @JoinColumn(name = "media_content_id")
     private MediaContent mediaContent;
 
+    /** DRAMA / VARIETY / MOVIE. 데이터 원천에서 분류되지 않은 경우 null. */
+    @Column(name = "content_type", length = 20)
+    private String contentType;
+
     /** 제목 유사도 기반 매칭 신뢰도(0.000~1.000), 미계산이면 null. */
     @Column(name = "match_confidence", precision = 4, scale = 3)
     private BigDecimal matchConfidence;

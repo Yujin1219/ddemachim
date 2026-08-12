@@ -28,14 +28,16 @@
   text-align: center;
 }
 
-.vworld-place-marker { width: var(--marker-size, 15px); height: var(--marker-size, 15px); position: relative; display: grid; place-items: center; padding: 0; border: 1.5px solid #fff; border-radius: 50%; background: var(--marker-color, #2563eb); cursor: pointer; transform: translateY(-1px); transition: transform 160ms ease; }
+.vworld-place-marker { width: var(--marker-size, 15px); height: var(--marker-size, 15px); position: relative; display: grid; place-items: center; padding: 0; border: 1.5px solid #fff; border-radius: 50%; background: var(--marker-color, #2563eb); cursor: pointer; transform: translate(var(--marker-offset-x, 0), calc(var(--marker-offset-y, 0) - 1px)); transition: transform 160ms ease; }
 .vworld-place-marker::after { position: absolute; inset: -10px; border-radius: 50%; content: ''; }
 .vworld-place-marker span { display: none; }
-.vworld-place-marker:hover { transform: translateY(-3px) scale(1.08); }
-.vworld-place-marker:focus-visible { transform: translateY(-3px) scale(1.08); outline: 2px solid #172033; outline-offset: 2px; }
+.vworld-place-marker:hover { transform: translate(var(--marker-offset-x, 0), calc(var(--marker-offset-y, 0) - 3px)) scale(1.08); }
+.vworld-place-marker:focus-visible { transform: translate(var(--marker-offset-x, 0), calc(var(--marker-offset-y, 0) - 3px)) scale(1.08); outline: 2px solid #172033; outline-offset: 2px; }
 .vworld-place-marker.is-zoom-far { --marker-size: 12px; border-width: 1px; }
 .vworld-place-marker.is-zoom-mid { --marker-size: 15px; }
 .vworld-place-marker.is-zoom-near { --marker-size: 17px; }
+.vworld-place-marker.is-numbered { --marker-size: 28px; border-width: 2px; color: #fff; box-shadow: 0 5px 13px rgb(15 23 42 / 24%); font-size: 11px; font-weight: 700; line-height: 1; }
+.vworld-place-marker.is-numbered span { display: block; }
 .vworld-place-marker.is-restaurant, .vworld-place-cluster.is-restaurant { --marker-color: #ef4444; }
 .vworld-place-marker.is-cafe-dessert, .vworld-place-cluster.is-cafe-dessert { --marker-color: #c47a2c; }
 .vworld-place-marker.is-attraction, .vworld-place-cluster.is-attraction { --marker-color: #2563eb; }

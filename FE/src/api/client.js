@@ -21,38 +21,42 @@ function toQuery(params = {}) {
   return query ? `?${query}` : '';
 }
 
-export function fetchPlaces({ category, district, tag, keyword, page = 0, size = 10 } = {}) {
-  return request(`/places${toQuery({ category, district, tag, keyword, page, size })}`);
+export function fetchPlaces({ category, district, tag, filmingContentType, keyword, page = 0, size = 10, signal } = {}) {
+  return request(`/places${toQuery({ category, district, tag, filmingContentType, keyword, page, size })}`, { signal });
 }
 
 export function fetchMapPlaces({ category, tag, minLat, maxLat, minLng, maxLng, limit = 300, signal } = {}) {
   return request(`/places/map${toQuery({ category, tag, minLat, maxLat, minLng, maxLng, limit })}`, { signal });
 }
 
-export function fetchPlace(id) {
-  return request(`/places/${id}`);
+export function fetchPlace(id, { signal } = {}) {
+  return request(`/places/${id}`, { signal });
 }
 
 export function fetchPlaceFilmingLocations(placeId) {
   return request(`/places/${placeId}/filming-locations`);
 }
 
-export function fetchEvents({ keyword, page = 0, size = 10 } = {}) {
-  return request(`/events${toQuery({ keyword, page, size })}`);
+export function fetchEvents({ keyword, page = 0, size = 10, signal } = {}) {
+  return request(`/events${toQuery({ keyword, page, size })}`, { signal });
 }
 
-export function fetchEvent(id) {
-  return request(`/events/${id}`);
+export function fetchEvent(id, { signal } = {}) {
+  return request(`/events/${id}`, { signal });
 }
 
 export function fetchMediaContents({ page = 0, size = 10 } = {}) {
   return request(`/media-contents${toQuery({ page, size })}`);
 }
 
-export function fetchMediaContent(id) {
-  return request(`/media-contents/${id}`);
+export function fetchFilmingWorks({ contentType, page = 0, size = 12, signal } = {}) {
+  return request(`/media-contents/filming-works${toQuery({ contentType, page, size })}`, { signal });
 }
 
-export function fetchMediaFilmingLocations(mediaContentId) {
-  return request(`/media-contents/${mediaContentId}/filming-locations`);
+export function fetchMediaContent(id, { signal } = {}) {
+  return request(`/media-contents/${id}`, { signal });
+}
+
+export function fetchMediaFilmingLocations(mediaContentId, { signal } = {}) {
+  return request(`/media-contents/${mediaContentId}/filming-locations`, { signal });
 }

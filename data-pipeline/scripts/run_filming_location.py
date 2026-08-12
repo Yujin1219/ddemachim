@@ -14,6 +14,7 @@ from src.collectors.filming_location import collect_all
 from src.db.connection import get_connection
 from src.loaders.filming_location_loader import (
     FilmingLoadStats,
+    map_content_type,
     upsert_filming_location,
     write_media_pending_report,
 )
@@ -77,11 +78,13 @@ def main() -> int:
                 filming_stats.skipped_no_place += 1
                 continue
             scene_description = dto.extra.get("scene_description")
+            content_type = map_content_type(dto.extra.get("media_type"))
             upsert_filming_location(
                 conn,
                 place_id,
                 source=SOURCE,
                 source_id=dto.source_id,
+                content_type=content_type,
                 scene_description=scene_description,
             )
             filming_stats.inserted += 1

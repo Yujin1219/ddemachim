@@ -38,10 +38,13 @@ public class PlaceController {
             @RequestParam(required = false) String district,
             @Parameter(description = "태그 코드 (예: FILMING_LOCATION)")
             @RequestParam(required = false) String tag,
+            @Parameter(description = "촬영 콘텐츠 유형 (DRAMA, VARIETY, MOVIE)")
+            @RequestParam(required = false) String filmingContentType,
             @Parameter(description = "장소명 검색 키워드 (부분 일치)")
             @RequestParam(required = false) String keyword,
             Pageable pageable) {
-        return ApiResponse.onSuccess(placeQueryService.search(category, district, tag, keyword, pageable));
+        return ApiResponse.onSuccess(
+                placeQueryService.search(category, district, tag, filmingContentType, keyword, pageable));
     }
 
     @Operation(

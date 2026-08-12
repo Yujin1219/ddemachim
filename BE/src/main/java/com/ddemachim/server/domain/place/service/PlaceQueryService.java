@@ -7,14 +7,18 @@ import com.ddemachim.server.domain.place.dto.PlaceOperatingHoursResponse;
 import com.ddemachim.server.domain.place.dto.PlaceSummaryResponse;
 import com.ddemachim.server.domain.place.entity.Place;
 import com.ddemachim.server.domain.place.entity.PlaceImage;
+import com.ddemachim.server.domain.place.exception.InvalidFilmingContentTypeException;
 import com.ddemachim.server.domain.place.exception.InvalidPlaceBoundsException;
 import com.ddemachim.server.domain.place.exception.PlaceNotFoundException;
 import com.ddemachim.server.domain.place.repository.PlaceImageRepository;
+import com.ddemachim.server.domain.place.repository.PlaceFilmingContentTypeProjection;
 import com.ddemachim.server.domain.place.repository.PlaceOperatingHoursRepository;
 import com.ddemachim.server.domain.place.repository.PlaceRepository;
 import java.util.HashMap;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
+import java.util.Set;
 import lombok.RequiredArgsConstructor;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
@@ -29,22 +33,35 @@ public class PlaceQueryService {
     private static final int DEFAULT_MAP_LIMIT = 300;
     private static final int MIN_MAP_LIMIT = 1;
     private static final int MAX_MAP_LIMIT = 500;
+    private static final Set<String> FILMING_CONTENT_TYPES = Set.of("DRAMA", "VARIETY", "MOVIE");
+    private static final List<String> FILMING_CONTENT_TYPE_ORDER = List.of("DRAMA", "VARIETY", "MOVIE");
 
     private final PlaceRepository placeRepository;
     private final PlaceImageRepository placeImageRepository;
     private final PlaceOperatingHoursRepository placeOperatingHoursRepository;
 
     public Page<PlaceSummaryResponse> search(
-            String category, String district, String tag, String keyword, Pageable pageable) {
+            String category,
+            String district,
+            String tag,
+            String filmingContentType,
+            String keyword,
+            Pageable pageable) {
         String safeCategory = normalizeFilter(category);
         String safeTag = normalizeFilter(tag);
-        Page<Place> places = placeRepository.search(safeCategory, district, safeTag, keyword, pageable);
+        String safeFilmingContentType = normalizeFilmingContentType(filmingContentType);
+        Page<Place> places = placeRepository.search(
+                safeCategory, district, safeTag, safeFilmingContentType, keyword, pageable);
 
         List<Long> placeIds = places.getContent().stream().map(Place::getId).toList();
         Map<Long, String> thumbnailByPlaceId = firstImageUrlByPlaceId(placeIds);
+        Map<Long, List<String>> filmingContentTypesByPlaceId = filmingContentTypesByPlaceId(placeIds);
 
         return places.map(
-                place -> PlaceSummaryResponse.of(place, thumbnailByPlaceId.get(place.getId())));
+                place -> PlaceSummaryResponse.of(
+                        place,
+                        filmingContentTypesByPlaceId.getOrDefault(place.getId(), List.of()),
+                        thumbnailByPlaceId.get(place.getId())));
     }
 
     public PlaceDetailResponse getDetail(Long id) {
@@ -79,12 +96,25 @@ public class PlaceQueryService {
         }
 
         Map<Long, String> result = new HashMap<>();
-        for (Long placeId : placeIds) {
-            for (PlaceImage image : placeImageRepository.findByPlaceId(placeId)) {
-                result.put(placeId, image.getSourceUrl());
-                break;
-            }
+        for (PlaceImage image : placeImageRepository.findByPlaceIdInOrderByPlaceIdAscIdAsc(placeIds)) {
+            result.putIfAbsent(image.getPlace().getId(), image.getSourceUrl());
         }
+        return result;
+    }
+
+    private Map<Long, List<String>> filmingContentTypesByPlaceId(List<Long> placeIds) {
+        if (placeIds.isEmpty()) {
+            return Map.of();
+        }
+
+        Map<Long, List<String>> result = new HashMap<>();
+        for (PlaceFilmingContentTypeProjection row :
+                placeRepository.findFilmingContentTypesByPlaceIds(placeIds)) {
+            result.computeIfAbsent(row.getPlaceId(), ignored -> new java.util.ArrayList<>())
+                    .add(row.getContentType());
+        }
+        result.values().forEach(types -> types.sort(
+                java.util.Comparator.comparingInt(FILMING_CONTENT_TYPE_ORDER::indexOf)));
         return result;
     }
 
@@ -120,5 +150,16 @@ public class PlaceQueryService {
             return null;
         }
         return value.trim().replaceAll("\\s*,\\s*", ",");
+    }
+
+    private String normalizeFilmingContentType(String value) {
+        if (value == null || value.isBlank()) {
+            return null;
+        }
+        String normalized = value.trim().toUpperCase(Locale.ROOT);
+        if (!FILMING_CONTENT_TYPES.contains(normalized)) {
+            throw new InvalidFilmingContentTypeException();
+        }
+        return normalized;
     }
 }

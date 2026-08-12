@@ -1,6 +1,7 @@
 package com.ddemachim.server.domain.media.controller;
 
 import com.ddemachim.server.domain.media.dto.FilmingLocationResponse;
+import com.ddemachim.server.domain.media.dto.FilmingWorkSummaryResponse;
 import com.ddemachim.server.domain.media.dto.MediaContentDetailResponse;
 import com.ddemachim.server.domain.media.dto.MediaContentSummaryResponse;
 import com.ddemachim.server.domain.media.service.MediaQueryService;
@@ -14,6 +15,7 @@ import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
+import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
@@ -29,6 +31,18 @@ public class MediaContentController {
     @GetMapping
     public ApiResponse<Page<MediaContentSummaryResponse>> search(Pageable pageable) {
         return ApiResponse.onSuccess(mediaQueryService.search(pageable));
+    }
+
+    @Operation(
+            summary = "작품별 촬영지 목록 조회",
+            description = "자동 확정된 촬영지 매칭을 작품 단위로 묶어 대표 장소와 함께 페이지로 반환합니다.")
+    @GetMapping("/filming-works")
+    public ApiResponse<Page<FilmingWorkSummaryResponse>> getFilmingWorks(
+            @Parameter(description = "DRAMA, VARIETY, MOVIE")
+                    @RequestParam(required = false)
+                    String contentType,
+            Pageable pageable) {
+        return ApiResponse.onSuccess(mediaQueryService.getFilmingWorks(contentType, pageable));
     }
 
     @Operation(

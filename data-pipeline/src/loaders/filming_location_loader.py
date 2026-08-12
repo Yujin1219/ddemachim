@@ -11,6 +11,17 @@ from src.utils.logging import get_logger
 logger = get_logger(__name__)
 
 REVIEW_DIR = Path(__file__).resolve().parent.parent.parent / "data" / "processed"
+CONTENT_TYPE_MAP = {
+    "drama": "DRAMA",
+    "show": "VARIETY",
+    "movie": "MOVIE",
+}
+
+
+def map_content_type(media_type: str | None) -> str | None:
+    if media_type is None:
+        return None
+    return CONTENT_TYPE_MAP.get(media_type.strip().lower())
 
 
 @dataclass
@@ -26,6 +37,7 @@ def upsert_filming_location(
     place_id: int,
     source: str,
     source_id: str,
+    content_type: str | None = None,
     scene_description: str | None = None,
 ) -> None:
     """place x 작품 조합 1건을 filming_location에 idempotent하게 적재한다.
@@ -38,15 +50,17 @@ def upsert_filming_location(
         cur.execute(
             """
             INSERT INTO filming_location (
-                place_id, media_content_id, match_confidence, match_status, scene_description, source, source_id
+                place_id, media_content_id, match_confidence, match_status,
+                content_type, scene_description, source, source_id
             )
-            VALUES (%s, NULL, NULL, 'REVIEW_REQUIRED', %s, %s, %s)
+            VALUES (%s, NULL, NULL, 'REVIEW_REQUIRED', %s, %s, %s, %s)
             ON CONFLICT (source, source_id)
             DO UPDATE SET
                 place_id = EXCLUDED.place_id,
+                content_type = EXCLUDED.content_type,
                 scene_description = COALESCE(EXCLUDED.scene_description, filming_location.scene_description)
             """,
-            (place_id, scene_description, source, source_id),
+            (place_id, content_type, scene_description, source, source_id),
         )
 
 

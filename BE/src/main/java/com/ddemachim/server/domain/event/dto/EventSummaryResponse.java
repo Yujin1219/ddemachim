@@ -14,7 +14,10 @@ public record EventSummaryResponse(
         Double latitude,
         Double longitude,
         Long placeId,
-        String placeName) {
+        String placeName,
+        String useFee,
+        LocalDate applyDate,
+        String eventTime) {
 
     public static EventSummaryResponse from(Event event) {
         return new EventSummaryResponse(
@@ -28,6 +31,9 @@ public record EventSummaryResponse(
                 event.getLocation() != null ? event.getLocation().getY() : null,
                 event.getLocation() != null ? event.getLocation().getX() : null,
                 event.getPlace() != null ? event.getPlace().getId() : null,
-                event.getPlace() != null ? event.getPlace().getName() : null);
+                event.getPlace() != null ? event.getPlace().getName() : null,
+                event.getUseFee(),
+                event.getApplyDate(),
+                event.getEventTime());
     }
 }

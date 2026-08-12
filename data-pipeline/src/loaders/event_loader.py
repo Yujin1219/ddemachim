@@ -59,19 +59,26 @@ def load_event(conn: psycopg.Connection, dto: EventDTO, stats: EventLoadStats) -
                     title = %s,
                     event_type = %s,
                     start_date = %s,
-                    end_date = %s
+                    end_date = %s,
+                    event_time = %s
                 WHERE id = %s
                 """,
-                (place_id, dto.title, dto.event_type, dto.start_date, dto.end_date, existing[0]),
+                (
+                    place_id, dto.title, dto.event_type, dto.start_date, dto.end_date,
+                    dto.event_time, existing[0],
+                ),
             )
             stats.updated += 1
         else:
             cur.execute(
                 """
-                INSERT INTO event (place_id, title, event_type, start_date, end_date, source, source_id)
-                VALUES (%s, %s, %s, %s, %s, %s, %s)
+                INSERT INTO event (place_id, title, event_type, start_date, end_date, event_time, source, source_id)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
                 """,
-                (place_id, dto.title, dto.event_type, dto.start_date, dto.end_date, dto.source, dto.source_id),
+                (
+                    place_id, dto.title, dto.event_type, dto.start_date, dto.end_date,
+                    dto.event_time, dto.source, dto.source_id,
+                ),
             )
             stats.inserted += 1
 

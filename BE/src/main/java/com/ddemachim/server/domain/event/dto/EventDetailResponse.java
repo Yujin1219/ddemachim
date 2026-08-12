@@ -1,8 +1,10 @@
 package com.ddemachim.server.domain.event.dto;
 
 import com.ddemachim.server.domain.event.entity.Event;
+import io.swagger.v3.oas.annotations.media.Schema;
 import java.time.LocalDate;
 
+@Schema(description = "문화행사 상세 조회 응답")
 public record EventDetailResponse(
         Long id,
         String title,
