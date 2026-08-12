@@ -4,12 +4,14 @@ import com.ddemachim.server.domain.media.dto.FilmingLocationResponse;
 import com.ddemachim.server.domain.media.dto.FilmingWorkSummaryResponse;
 import com.ddemachim.server.domain.media.dto.FilmingWorkSummaryResponse.RepresentativePlace;
 import com.ddemachim.server.domain.media.dto.MediaContentDetailResponse;
+import com.ddemachim.server.domain.media.dto.MediaCreditResponse;
 import com.ddemachim.server.domain.media.dto.MediaContentSummaryResponse;
 import com.ddemachim.server.domain.media.entity.FilmingLocation;
 import com.ddemachim.server.domain.media.entity.MediaContent;
 import com.ddemachim.server.domain.media.exception.MediaContentNotFoundException;
 import com.ddemachim.server.domain.media.exception.InvalidMediaContentTypeException;
 import com.ddemachim.server.domain.media.repository.FilmingLocationRepository;
+import com.ddemachim.server.domain.media.repository.MediaCreditRepository;
 import com.ddemachim.server.domain.media.repository.MediaContentRepository;
 import com.ddemachim.server.domain.place.entity.PlaceImage;
 import com.ddemachim.server.domain.place.repository.PlaceImageRepository;
@@ -39,6 +41,7 @@ public class MediaQueryService {
     private static final String PUBLIC_MATCH_STATUS = "AUTO_MATCH";
 
     private final MediaContentRepository mediaContentRepository;
+    private final MediaCreditRepository mediaCreditRepository;
     private final FilmingLocationRepository filmingLocationRepository;
     private final PlaceImageRepository placeImageRepository;
 
@@ -49,7 +52,12 @@ public class MediaQueryService {
     public MediaContentDetailResponse getDetail(Long id) {
         MediaContent mediaContent =
                 mediaContentRepository.findById(id).orElseThrow(MediaContentNotFoundException::new);
-        return MediaContentDetailResponse.from(mediaContent);
+        List<MediaCreditResponse> credits = mediaCreditRepository
+                .findByMediaContentIdWithPersonOrderByRoleAndCastOrder(mediaContent.getId())
+                .stream()
+                .map(MediaCreditResponse::from)
+                .toList();
+        return MediaContentDetailResponse.from(mediaContent, credits);
     }
 
     public Page<FilmingWorkSummaryResponse> getFilmingWorks(String contentType, Pageable pageable) {

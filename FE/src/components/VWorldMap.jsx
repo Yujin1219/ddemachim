@@ -118,6 +118,7 @@ export default function VWorldMap({
   placeMarkerLabel = null,
   clusterPlaces = true,
   fitPlaceMarkers = false,
+  fitUserLocation = false,
   placeRequestKey = '',
   placeLimit = 300,
   congestionAreaUrl = '',
@@ -556,7 +557,13 @@ export default function VWorldMap({
       locationOverlayRef.current = null
     }
 
-    if (!Array.isArray(liveUserLocation) || liveUserLocation.length < 2) return undefined
+    if (!Array.isArray(liveUserLocation) || liveUserLocation.length < 2) {
+      if (fitUserLocation) {
+        fittedPlaceKeyRef.current = ''
+        fitVisiblePlaces(map, rawPlacesRef.current)
+      }
+      return undefined
+    }
     const location = normalizeCenter(liveUserLocation)
     const marker = document.createElement('div')
     marker.className = 'vworld-user-location-marker'
@@ -571,12 +578,18 @@ export default function VWorldMap({
     })
     map.addOverlay(overlay)
     locationOverlayRef.current = overlay
+    if (fitUserLocation) {
+      fitVisiblePlaces(map, [
+        ...rawPlacesRef.current,
+        { longitude: location[0], latitude: location[1] },
+      ])
+    }
 
     return () => {
       map.removeOverlay(overlay)
       if (locationOverlayRef.current === overlay) locationOverlayRef.current = null
     }
-  }, [liveUserLocation?.[0], liveUserLocation?.[1]])
+  }, [liveUserLocation?.[0], liveUserLocation?.[1], fitUserLocation])
 
   const statusMessage = !apiKey
     ? 'VWorld API key is not configured.'

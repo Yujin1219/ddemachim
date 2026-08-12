@@ -121,3 +121,23 @@ class TmdbClient:
             time.sleep(self.request_delay)
 
         return response.json()
+
+    def get_person_details(self, tmdb_person_id: int) -> dict[str, Any]:
+        """인물 상세와 TMDB에 등록된 다국어 별칭을 조회한다."""
+        url = f"{BASE_URL}/person/{tmdb_person_id}"
+        params = {"language": "ko-KR"}
+
+        try:
+            response = _get(url, self.api_key, params, use_bearer=self._use_bearer)
+        except TmdbAuthError as first_exc:
+            if self._verified:
+                raise
+            logger.warning(f"1차 인증 방식({'Bearer' if self._use_bearer else 'api_key'}) 실패, 반대 방식으로 재시도: {first_exc}")
+            self._use_bearer = not self._use_bearer
+            response = _get(url, self.api_key, params, use_bearer=self._use_bearer)
+
+        self._verified = True
+        if self.request_delay:
+            time.sleep(self.request_delay)
+
+        return response.json()

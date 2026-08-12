@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import date, datetime
+from datetime import date, datetime, time
 from typing import Any
 
 from src.cleaners.common import clean_text, is_valid_seoul_coordinate, parse_coordinate
+from src.normalizers.event_time import parse_event_time_bounds
+from src.normalizers.event_schedule import EventSchedule, parse_event_schedules
 
 TARGET_DISTRICT = "종로구"
 
@@ -27,10 +29,18 @@ class CultureEventDTO:
     homepage_url: str | None
     main_image: str | None
     event_time: str | None
+    event_start_time: time | None
+    event_end_time: time | None
+    schedules: tuple[EventSchedule, ...]
     detail_url: str | None
     latitude: float | None
     longitude: float | None
     has_coordinates: bool
+
+    @property
+    def event_schedules(self) -> tuple[EventSchedule, ...]:
+        """Explicit alias for consumers that prefer the table-oriented name."""
+        return self.schedules
 
 
 def _parse_datetime_str(value: str | None) -> date | None:
@@ -70,6 +80,9 @@ def normalize_record(raw: dict[str, Any]) -> CultureEventDTO | None:
     lng = parse_coordinate(raw.get("LOT"))
     valid_coord = is_valid_seoul_coordinate(lat, lng)
 
+    event_time = clean_text(raw.get("PRO_TIME"))
+    time_bounds = parse_event_time_bounds(event_time)
+
     return CultureEventDTO(
         title=title,
         event_type=clean_text(raw.get("CODENAME")),
@@ -86,7 +99,10 @@ def normalize_record(raw: dict[str, Any]) -> CultureEventDTO | None:
         inquiry=clean_text(raw.get("INQUIRY")),
         homepage_url=clean_text(raw.get("ORG_LINK")),
         main_image=clean_text(raw.get("MAIN_IMG")),
-        event_time=clean_text(raw.get("PRO_TIME")),
+        event_time=event_time,
+        event_start_time=time_bounds.event_start_time,
+        event_end_time=time_bounds.event_end_time,
+        schedules=parse_event_schedules(event_time),
         detail_url=clean_text(raw.get("HMPG_ADDR")),
         latitude=lat if valid_coord else None,
         longitude=lng if valid_coord else None,

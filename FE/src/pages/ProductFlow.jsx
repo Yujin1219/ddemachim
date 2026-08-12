@@ -1,10 +1,11 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { motion, useDragControls, useReducedMotion } from 'motion/react';
-import { CalendarDays, ChevronLeft, ChevronRight, CircleDollarSign, CircleHelp, Clapperboard, Clock3, ExternalLink, Heart, Image as ImageIcon, LocateFixed, MapPin, MoreHorizontal, RefreshCw, Search, SearchX, SendHorizontal, X } from 'lucide-react';
+import { CalendarDays, ChevronLeft, ChevronRight, CircleDollarSign, CircleHelp, Clapperboard, Clock3, ExternalLink, Heart, Image as ImageIcon, LocateFixed, MapPin, MoreHorizontal, RefreshCw, Search, SearchX, SendHorizontal, UserRound, X } from 'lucide-react';
 import AppHeader from '../components/AppHeader';
 import BottomNav from '../components/BottomNav';
 import VWorldMap from '../components/VWorldMap';
 import {
+  addPlaceToCourseBasket,
   fetchEvent,
   fetchEvents,
   fetchFilmingWorks,
@@ -16,6 +17,9 @@ import {
   fetchPlace,
   fetchPlaceFilmingLocations,
   fetchPlaces,
+  login,
+  saveAuth,
+  signup,
 } from '../api/client';
 import {
   ArrivalMotion,
@@ -121,11 +125,56 @@ function filmingPlaceToCardProps(place) {
 }
 
 const TMDB_POSTER_BASE_URL = 'https://image.tmdb.org/t/p/w342';
+const TMDB_PROFILE_BASE_URL = 'https://image.tmdb.org/t/p/w185';
 
 function tmdbPosterUrl(posterPath) {
   if (!posterPath) return null;
   if (/^https?:\/\//i.test(posterPath)) return posterPath;
   return `${TMDB_POSTER_BASE_URL}/${String(posterPath).replace(/^\/+/, '')}`;
+}
+
+function tmdbProfileUrl(profilePath) {
+  const normalizedPath = String(profilePath ?? '').trim();
+  if (!normalizedPath) return null;
+  if (/^https?:\/\//i.test(normalizedPath)) return normalizedPath;
+  return `${TMDB_PROFILE_BASE_URL}/${normalizedPath.replace(/^\/+/, '')}`;
+}
+
+function normalizeMediaCredits(credits) {
+  if (!Array.isArray(credits)) return [];
+
+  return credits
+    .map((credit, sourceIndex) => ({ credit, sourceIndex }))
+    .filter(({ credit }) => {
+      const role = String(credit?.role ?? '').toUpperCase();
+      return Boolean(String(credit?.name ?? '').trim()) && (role === 'DIRECTOR' || role === 'CAST');
+    })
+    .map(({ credit, sourceIndex }) => ({
+      ...credit,
+      name: String(credit.name).trim(),
+      role: String(credit.role).toUpperCase(),
+      characterNameKo: String(credit.characterNameKo ?? '').trim() || null,
+      characterName: String(credit.characterName ?? '').trim() || null,
+      sourceIndex,
+    }))
+    .sort((left, right) => {
+      const roleOrder = (role) => (role === 'DIRECTOR' ? 0 : 1);
+      const roleDifference = roleOrder(left.role) - roleOrder(right.role);
+      if (roleDifference !== 0) return roleDifference;
+      if (left.role !== 'CAST') return left.sourceIndex - right.sourceIndex;
+
+      const leftCastOrder = left.castOrder === null || left.castOrder === undefined || left.castOrder === ''
+        ? Number.MAX_SAFE_INTEGER
+        : Number(left.castOrder);
+      const rightCastOrder = right.castOrder === null || right.castOrder === undefined || right.castOrder === ''
+        ? Number.MAX_SAFE_INTEGER
+        : Number(right.castOrder);
+      return (Number.isFinite(leftCastOrder) ? leftCastOrder : Number.MAX_SAFE_INTEGER)
+        - (Number.isFinite(rightCastOrder) ? rightCastOrder : Number.MAX_SAFE_INTEGER)
+        || left.sourceIndex - right.sourceIndex;
+    })
+    .slice(0, 12)
+    .map(({ sourceIndex, ...credit }) => credit);
 }
 
 function formatReleaseYear(releaseDate) {
@@ -184,6 +233,8 @@ function eventToRowProps(event) {
     useFee: event.useFee,
     applyDate: event.applyDate,
     eventTime: event.eventTime,
+    eventStartTime: event.eventStartTime,
+    eventEndTime: event.eventEndTime,
     eventType: event.eventType,
     venueName: event.venueName,
     placeName: event.placeName,
@@ -231,14 +282,57 @@ function formatDateRange(startDate, endDate) {
   return start || end || null;
 }
 
+const SEOUL_DATE_TIME_FORMATTER = new Intl.DateTimeFormat('en-US', {
+  timeZone: 'Asia/Seoul',
+  calendar: 'gregory',
+  numberingSystem: 'latn',
+  year: 'numeric',
+  month: '2-digit',
+  day: '2-digit',
+  hour: '2-digit',
+  minute: '2-digit',
+  second: '2-digit',
+  hourCycle: 'h23',
+});
+
+function currentSeoulDateTime(now = new Date()) {
+  const parts = SEOUL_DATE_TIME_FORMATTER.formatToParts(now).reduce((result, part) => {
+    if (part.type !== 'literal') result[part.type] = part.value;
+    return result;
+  }, {});
+  return {
+    date: `${parts.year}-${parts.month}-${parts.day}`,
+    time: `${parts.hour}:${parts.minute}:${parts.second}`,
+  };
+}
+
+function normalizeEventTime(value) {
+  const time = String(value ?? '').trim();
+  const match = time.match(/^(\d{1,2}):(\d{2})(?::(\d{2})(?:\.\d+)?)?$/);
+  if (!match) return null;
+  const hour = Number(match[1]);
+  const minute = Number(match[2]);
+  const second = Number(match[3] ?? 0);
+  if (hour > 23 || minute > 59 || second > 59) return null;
+  return [hour, minute, second].map((part) => String(part).padStart(2, '0')).join(':');
+}
+
 function currentEventState(event) {
-  const today = new Date();
-  today.setHours(0, 0, 0, 0);
-  const start = event.startDate ? new Date(`${event.startDate}T00:00:00`) : null;
-  const end = event.endDate ? new Date(`${event.endDate}T00:00:00`) : start;
-  if (!start && !end) return '상태 확인 중';
-  if (start && today < start) return '예정';
-  if (end && today > end) return '종료';
+  const startDate = String(event?.startDate ?? '').trim() || null;
+  const endDate = String(event?.endDate ?? '').trim() || null;
+  if (!startDate && !endDate) return '상태 확인 중';
+
+  const { date: currentDate, time: currentTime } = currentSeoulDateTime();
+  if (endDate && currentDate > endDate) return '종료';
+  if (!startDate) return '상태 확인 중';
+  if (currentDate < startDate) return '예정';
+
+  const startTime = normalizeEventTime(event?.eventStartTime);
+  if (startDate && currentDate === startDate && startTime && currentTime < startTime) return '예정';
+
+  const endTime = normalizeEventTime(event?.eventEndTime);
+  if (endDate && currentDate === endDate && endTime && currentTime > endTime) return '종료';
+
   return '진행 중';
 }
 
@@ -396,14 +490,69 @@ function HorizontalInfiniteCards({ items, hasMore, isLoading, onLoadMore, onCard
   );
 }
 
-function ActionButton({ children, onClick, tone = 'primary', disabled = false, className = '' }) {
-  return <button className={`ui-button ${tone} ${className}`} disabled={disabled} onClick={onClick} type="button">{children}</button>;
+function ActionButton({ children, onClick, tone = 'primary', disabled = false, className = '', type = 'button' }) {
+  return <button className={`ui-button ${tone} ${className}`} disabled={disabled} onClick={onClick} type={type}>{children}</button>;
+}
+
+function PlaceBasketAction({ placeId }) {
+  const [status, setStatus] = useState('idle');
+  const requestControllerRef = useRef(null);
+  const hasPlaceId = placeId !== undefined && placeId !== null && String(placeId).trim() !== '';
+
+  useEffect(() => {
+    setStatus('idle');
+    return () => {
+      requestControllerRef.current?.abort();
+      requestControllerRef.current = null;
+    };
+  }, [placeId]);
+
+  const handleAdd = async () => {
+    if (status === 'loading' || status === 'success') return;
+
+    if (!hasPlaceId) {
+      setStatus('success');
+      return;
+    }
+
+    const controller = new AbortController();
+    requestControllerRef.current = controller;
+    setStatus('loading');
+
+    try {
+      await addPlaceToCourseBasket(placeId, { signal: controller.signal });
+      if (!controller.signal.aborted) setStatus('success');
+    } catch (error) {
+      if (error?.name !== 'AbortError' && !controller.signal.aborted) {
+        console.error('장소를 코스에 담지 못했어요', error);
+        setStatus('error');
+      }
+    } finally {
+      if (requestControllerRef.current === controller) requestControllerRef.current = null;
+    }
+  };
+
+  const buttonLabel = {
+    idle: '코스에 담기',
+    loading: '담는 중…',
+    success: '코스에 담았어요',
+    error: '다시 담기',
+  }[status];
+
+  return (
+    <div className="place-basket-action">
+      <ActionButton disabled={status === 'loading' || status === 'success'} onClick={handleAdd}>
+        {buttonLabel}
+      </ActionButton>
+      {status === 'error' && <span className="place-basket-feedback error" role="alert">코스에 담지 못했어요. 다시 시도해주세요.</span>}
+    </div>
+  );
 }
 
 function IconButton({ label, children, onClick, className = '' }) {
-  const icons = { 이전: ChevronLeft, 더보기: MoreHorizontal, 저장: Heart, 저장됨: Heart, 닫기: X, 도움말: CircleHelp };
+  const icons = { 이전: ChevronLeft, 더보기: MoreHorizontal, 저장: Heart, 저장됨: Heart, '장소 저장': Heart, '장소 저장 취소': Heart, 닫기: X, 도움말: CircleHelp };
   const Icon = icons[label];
-  const isSaved = label === '저장됨';
+  const isSaved = label === '저장됨' || label === '장소 저장 취소';
   return <button className={`icon-button ${className}`} onClick={onClick} type="button" aria-label={label} title={label}>{Icon ? <Icon aria-hidden="true" size={20} strokeWidth={2} fill={isSaved ? 'currentColor' : 'none'} /> : children}</button>;
 }
 
@@ -536,6 +685,168 @@ function BottomSheet({ children, className = '', animated = false }) {
   return <section className={sheetClassName}><span className="sheet-handle" />{children}</section>;
 }
 
+function DetailContentSheet({ children, className = '' }) {
+  const sheetClassName = ['detail-content-sheet', className].filter(Boolean).join(' ');
+  return <div className={sheetClassName}>{children}</div>;
+}
+
+function DetailHeroControls({ onBack, onSave, saveLabel = '장소 저장' }) {
+  return (
+    <div className="detail-controls">
+      <IconButton label="이전" onClick={onBack}><ChevronLeft aria-hidden="true" size={20} strokeWidth={2} /></IconButton>
+      {onSave && <IconButton label={saveLabel} onClick={onSave}><Heart aria-hidden="true" size={19} strokeWidth={2} /></IconButton>}
+    </div>
+  );
+}
+
+const AUTH_EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
+function validateAuthForm(values, isSignup) {
+  const errors = {};
+  const email = values.email.trim();
+  if (!email) errors.email = '이메일을 입력해주세요.';
+  else if (!AUTH_EMAIL_PATTERN.test(email)) errors.email = '올바른 이메일 주소를 입력해주세요.';
+  if (!values.password) errors.password = '비밀번호를 입력해주세요.';
+  else if (values.password.length < 8) errors.password = '비밀번호는 8자 이상 입력해주세요.';
+  if (isSignup) {
+    if (!values.nickname.trim()) errors.nickname = '닉네임을 입력해주세요.';
+    else if (values.nickname.trim().length > 30) errors.nickname = '닉네임은 30자 이하로 입력해주세요.';
+    if (!values.requiredTerms) errors.requiredTerms = '필수 약관에 동의해주세요.';
+  }
+  return errors;
+}
+
+function AuthField({ id, label, error, ...inputProps }) {
+  const errorId = `${id}-error`;
+  return <label className={`field-label ${error ? 'has-error' : ''}`} htmlFor={id}>
+    {label}
+    <input id={id} aria-invalid={Boolean(error)} aria-describedby={error ? errorId : undefined} {...inputProps} />
+    {error && <span className="field-error" id={errorId} role="alert">{error}</span>}
+  </label>;
+}
+
+function AuthForm({ screen, go }) {
+  const isSignup = screen === 'signup';
+  const [form, setForm] = useState({ email: '', password: '', nickname: '', requiredTerms: false, marketingTerms: false });
+  const [fieldErrors, setFieldErrors] = useState({});
+  const [serverError, setServerError] = useState('');
+  const [isSubmitting, setIsSubmitting] = useState(false);
+
+  const handleChange = (event) => {
+    const { name, type, value, checked } = event.target;
+    setForm((current) => ({ ...current, [name]: type === 'checkbox' ? checked : value }));
+    setFieldErrors((current) => {
+      if (!current[name]) return current;
+      const next = { ...current };
+      delete next[name];
+      return next;
+    });
+    setServerError('');
+  };
+
+  const handleAllTermsChange = ({ target: { checked } }) => {
+    setForm((current) => ({ ...current, requiredTerms: checked, marketingTerms: checked }));
+    setFieldErrors((current) => ({ ...current, requiredTerms: undefined }));
+    setServerError('');
+  };
+
+  const handleSubmit = async (event) => {
+    event.preventDefault();
+    if (isSubmitting) return;
+    const errors = validateAuthForm(form, isSignup);
+    setFieldErrors(errors);
+    setServerError('');
+    if (Object.keys(errors).length) return;
+    setIsSubmitting(true);
+    try {
+      const result = isSignup
+        ? await signup({ email: form.email.trim(), password: form.password, nickname: form.nickname.trim() })
+        : await login({ email: form.email.trim(), password: form.password });
+      saveAuth(result);
+      go(isSignup ? 'onboarding' : 'map');
+    } catch (error) {
+      setServerError(error instanceof Error ? error.message : '요청을 처리하지 못했어요.');
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+
+  return <section className="phone standard-screen auth-form-screen"><main className="page-scroll form-scroll auth-form-scroll" aria-busy={isSubmitting}>
+    <IconButton label="이전" className="auth-back" onClick={() => go('intro')} />
+    <div className="form-heading"><h2 id="auth-form-title">{isSignup ? '때마침을 시작해볼까요?' : '다시 만나서 반가워요'}</h2><p>{isSignup ? '가입 후 관심 장소와 알림을 설정할 수 있어요.' : '저장한 코스와 여행 기록을 이어서 확인하세요.'}</p></div>
+    <form className="auth-form" aria-labelledby="auth-form-title" noValidate onSubmit={handleSubmit}>
+      <AuthField id="auth-email" name="email" label="이메일" type="email" value={form.email} onChange={handleChange} error={fieldErrors.email} placeholder="이메일을 입력해주세요" autoComplete="email" disabled={isSubmitting} />
+      <AuthField id="auth-password" name="password" label="비밀번호" type="password" value={form.password} onChange={handleChange} error={fieldErrors.password} placeholder={isSignup ? '8자 이상 입력해주세요' : '비밀번호를 입력해주세요'} autoComplete={isSignup ? 'new-password' : 'current-password'} disabled={isSubmitting} />
+      {!isSignup && <button type="button" className="forgot-password" disabled={isSubmitting}>비밀번호 찾기</button>}
+      {isSignup && <><AuthField id="auth-nickname" name="nickname" label="닉네임" value={form.nickname} onChange={handleChange} error={fieldErrors.nickname} placeholder="사용할 닉네임을 입력해주세요" disabled={isSubmitting} /><div className="terms-group"><label className="check-row all-check"><input type="checkbox" checked={form.requiredTerms && form.marketingTerms} onChange={handleAllTermsChange} disabled={isSubmitting} /> 전체 동의</label><label className={`check-row ${fieldErrors.requiredTerms ? 'has-error' : ''}`}><input name="requiredTerms" type="checkbox" checked={form.requiredTerms} onChange={handleChange} disabled={isSubmitting} /> [필수] 이용약관 및 개인정보처리방침</label><label className="check-row"><input name="marketingTerms" type="checkbox" checked={form.marketingTerms} onChange={handleChange} disabled={isSubmitting} /> [선택] 장소 추천과 이벤트 알림</label>{fieldErrors.requiredTerms && <span className="field-error terms-error" role="alert">{fieldErrors.requiredTerms}</span>}</div></>}
+      {serverError && <p className="auth-server-error" role="alert">{serverError}</p>}
+      <ActionButton type="submit" disabled={isSubmitting}>{isSubmitting ? (isSignup ? '가입 중...' : '로그인 중...') : (isSignup ? '회원가입' : '로그인')}</ActionButton>
+      {!isSignup && <><div className="divider-text"><span />또는<span /></div><div className="social-actions"><ActionButton className="auth-kakao" disabled>카카오로 계속하기</ActionButton><ActionButton tone="secondary" disabled>Apple로 계속하기</ActionButton></div></>}
+      <p className="form-foot">{isSignup ? '이미 계정이 있나요?' : '계정이 없나요?'} <button onClick={() => go(isSignup ? 'login' : 'signup')} type="button" disabled={isSubmitting}>{isSignup ? '로그인' : '회원가입'}</button></p>
+    </form>
+  </main></section>;
+}
+
+function useUserLocation() {
+  const [userLocation, setUserLocation] = useState(null);
+
+  useEffect(() => {
+    if (!navigator.geolocation) return undefined;
+    const watchId = navigator.geolocation.watchPosition(
+      ({ coords }) => setUserLocation([coords.longitude, coords.latitude]),
+      () => setUserLocation(null),
+      { enableHighAccuracy: true, timeout: 10000, maximumAge: 5000 },
+    );
+    return () => navigator.geolocation.clearWatch(watchId);
+  }, []);
+
+  return userLocation;
+}
+
+function DetailMapSection({ title, meta, ariaLabel, places, userLocation, placeMarkerLabel }) {
+  const mapPlaces = useMemo(
+    () => (places ?? []).filter((place) => Number.isFinite(Number(place.latitude)) && Number.isFinite(Number(place.longitude))),
+    [places],
+  );
+  const mapCenter = useMemo(() => {
+    if (!mapPlaces.length) return [126.978, 37.5665];
+    return [
+      mapPlaces.reduce((sum, place) => sum + Number(place.longitude), 0) / mapPlaces.length,
+      mapPlaces.reduce((sum, place) => sum + Number(place.latitude), 0) / mapPlaces.length,
+    ];
+  }, [mapPlaces]);
+  const loadMapPlaces = useCallback(() => Promise.resolve(mapPlaces), [mapPlaces]);
+  const placeRequestKey = mapPlaces
+    .map((place) => `${place.id ?? place.name}-${place.latitude}-${place.longitude}`)
+    .join('|');
+
+  if (!mapPlaces.length) return null;
+
+  return (
+    <section className="filming-work-map-section">
+      <header>
+        <h2>{title}</h2>
+        {meta && <span>{meta}</span>}
+      </header>
+      <div className="filming-work-map-preview">
+        <VWorldMap
+          ariaLabel={ariaLabel}
+          center={mapCenter}
+          zoom={14.5}
+          interactive
+          loadPlacesInBounds={loadMapPlaces}
+          placeMarkerLabel={placeMarkerLabel}
+          clusterPlaces={false}
+          fitPlaceMarkers
+          fitUserLocation
+          userLocation={userLocation}
+          placeRequestKey={placeRequestKey}
+        />
+      </div>
+    </section>
+  );
+}
+
 function AuthScreen({ screen, go }) {
   const [themes, setThemes] = useState(['촬영지', '요즘 뜨는 곳']);
   const [pace, setPace] = useState('여유롭게');
@@ -548,8 +859,7 @@ function AuthScreen({ screen, go }) {
     return <ScrollOnboarding go={go} />;
   }
   if (screen === 'login' || screen === 'signup') {
-    const isSignup = screen === 'signup';
-    return <section className="phone standard-screen auth-form-screen"><main className="page-scroll form-scroll auth-form-scroll"><IconButton label="이전" className="auth-back" onClick={() => go('intro')}>‹</IconButton><div className="form-heading"><h2>{isSignup ? '때마침을 시작해볼까요?' : '다시 만나서 반가워요'}</h2><p>{isSignup ? '가입 후 관심 장소와 알림을 설정할 수 있어요.' : '저장한 코스와 여행 기록을 이어서 확인하세요.'}</p></div><label className="field-label">이메일<input type="email" placeholder="이메일을 입력해주세요" /></label><label className="field-label">비밀번호<input type="password" placeholder={isSignup ? '8자 이상 입력해주세요' : '비밀번호를 입력해주세요'} /></label>{!isSignup && <button type="button" className="forgot-password">비밀번호 찾기</button>}{isSignup && <><label className="field-label">닉네임<input placeholder="사용할 닉네임을 입력해주세요" /></label><label className="check-row all-check"><input type="checkbox" /> 전체 동의</label><label className="check-row"><input type="checkbox" /> [필수] 이용약관 및 개인정보처리방침</label><label className="check-row"><input type="checkbox" /> [선택] 장소 추천과 이벤트 알림</label></>}<ActionButton onClick={() => go(isSignup ? 'onboarding' : 'map')}>{isSignup ? '회원가입' : '로그인'}</ActionButton>{!isSignup && <><div className="divider-text"><span />또는<span /></div><div className="social-actions"><ActionButton className="auth-kakao" onClick={() => go('map')}>카카오로 계속하기</ActionButton><ActionButton tone="secondary" onClick={() => go('map')}>Apple로 계속하기</ActionButton></div></>}<p className="form-foot">{isSignup ? '이미 계정이 있나요?' : '계정이 없나요?'} <button onClick={() => go(isSignup ? 'login' : 'signup')} type="button">{isSignup ? '로그인' : '회원가입'}</button></p></main></section>;
+    return <AuthForm screen={screen} go={go} />;
   }
   const step = screen === 'onboarding' ? 1 : screen === 'onboarding-schedule' ? 2 : 3;
   const goNext = () => go(screen === 'onboarding' ? 'onboarding-schedule' : screen === 'onboarding-schedule' ? 'onboarding-permissions' : 'map');
@@ -1016,6 +1326,39 @@ function FilmingSceneSection({ filmingLocations }) {
   );
 }
 
+function PlaceDescriptionSection({ description }) {
+  const descriptionRef = useRef(null);
+  const [isExpanded, setIsExpanded] = useState(false);
+  const [canExpand, setCanExpand] = useState(false);
+
+  useEffect(() => {
+    setIsExpanded(false);
+    const measureOverflow = () => {
+      const element = descriptionRef.current;
+      if (!element) return;
+      const lineHeight = Number.parseFloat(window.getComputedStyle(element).lineHeight) || 20;
+      setCanExpand(element.scrollHeight > lineHeight * 3 + 1);
+    };
+    const frame = window.requestAnimationFrame(measureOverflow);
+    window.addEventListener('resize', measureOverflow);
+    return () => {
+      window.cancelAnimationFrame(frame);
+      window.removeEventListener('resize', measureOverflow);
+    };
+  }, [description]);
+
+  if (!description) return null;
+
+  return (
+    <ScreenSection title="장소 소개">
+      <div className="why-card place-why-card place-description-card">
+        <p ref={descriptionRef} className={`place-description-text${isExpanded ? ' is-expanded' : ''}`}>{description}</p>
+        {canExpand && <button type="button" aria-expanded={isExpanded} onClick={() => setIsExpanded((current) => !current)}>{isExpanded ? '접기' : '더보기'}</button>}
+      </div>
+    </ScreenSection>
+  );
+}
+
 function PlaceDetail({ go, placeId }) {
   const [place, setPlace] = useState(null);
   const [filmingLocations, setFilmingLocations] = useState([]);
@@ -1058,7 +1401,7 @@ function PlaceDetail({ go, placeId }) {
   }, [placeId]);
 
   if (status === 'mock') {
-    return <section className="phone standard-screen place-detail-screen"><main className="page-scroll"><div className="detail-hero"><img src={images.detail} alt="도토리가든 외관" /><div className="detail-controls"><IconButton label="이전" onClick={() => go('explore')}>‹</IconButton><IconButton label="저장" onClick={() => go('saved')}>♡</IconButton></div></div><div className="detail-content detail-content-v3"><p className="eyebrow">안국 · 카페</p><h1>도토리가든</h1><p className="detail-meta">매일 10:00-21:00</p><div className="chip-row"><Chip active>지금 여유</Chip><Chip>도보 8분</Chip></div><ScreenSection title="지금 가야 하는 이유"><div className="why-card place-why-card"><span>최근 후기 기반 · 오늘 업데이트</span><strong>최근 3일간 소금빵과 정원 사진을<br />저장한 사람이 빠르게 늘고 있어요.</strong><p>오후 2-4시는 사진 후기가 특히 많아요</p></div></ScreenSection><ScreenSection title="지금 현장에서는" action="12분 전"><div className="place-live-grid"><article><span>대기</span><b>약 10분</b></article><article><span>메뉴</span><b>소금빵 재고 있음</b></article></div></ScreenSection></div></main><div className="sticky-actions split place-actions"><ActionButton onClick={() => go('course-conditions')}>코스에 추가</ActionButton><ActionButton tone="secondary" onClick={() => go('write-review')}>후기 남기기</ActionButton></div></section>;
+    return <section className="phone standard-screen place-detail-screen"><main className="page-scroll"><div className="detail-hero"><img src={images.detail} alt="도토리가든 외관" /><DetailHeroControls onBack={() => go('explore')} /></div><DetailContentSheet className="detail-content detail-content-v3"><p className="eyebrow">안국 · 카페</p><h1>도토리가든</h1><p className="detail-meta">매일 10:00-21:00</p><div className="chip-row"><Chip active>지금 여유</Chip><Chip>도보 8분</Chip></div><ScreenSection title="지금 가야 하는 이유"><div className="why-card place-why-card"><span>최근 후기 기반 · 오늘 업데이트</span><strong>최근 3일간 소금빵과 정원 사진을<br />저장한 사람이 빠르게 늘고 있어요.</strong><p>오후 2-4시는 사진 후기가 특히 많아요</p></div></ScreenSection><ScreenSection title="지금 현장에서는" action="12분 전"><div className="place-live-grid"><article><span>대기</span><b>약 10분</b></article><article><span>메뉴</span><b>소금빵 재고 있음</b></article></div></ScreenSection></DetailContentSheet></main><div className="sticky-actions split place-actions"><PlaceBasketAction placeId={placeId} /><ActionButton tone="secondary" onClick={() => go('write-review')}>후기 남기기</ActionButton></div></section>;
   }
 
   if (status === 'loading') {
@@ -1072,13 +1415,14 @@ function PlaceDetail({ go, placeId }) {
   const heroImage = place.images?.[0]?.sourceUrl || images.detail;
   const hoursLabel = formatOperatingHours(place.operatingHours) || place.operatingHoursRaw || '운영시간 정보 없음';
 
-  return <section className="phone standard-screen place-detail-screen"><main className="page-scroll"><div className="detail-hero"><img src={heroImage} alt={`${place.name} 외관`} /><div className="detail-controls"><IconButton label="이전" onClick={() => go('explore')}>‹</IconButton><IconButton label="저장" onClick={() => go('saved')}>♡</IconButton></div></div><div className="detail-content detail-content-v3"><p className="eyebrow">{[place.district, place.categoryLabel].filter(Boolean).join(' · ')}</p><h1>{place.name}</h1><p className="detail-meta">{hoursLabel}</p><div className="chip-row">{place.phone && <Chip active>{place.phone}</Chip>}<Chip>{place.roadAddress || place.lotAddress || '주소 정보 없음'}</Chip></div>{place.description && <ScreenSection title="장소 소개"><div className="why-card place-why-card"><p>{place.description}</p></div></ScreenSection>}<FilmingSceneSection filmingLocations={filmingLocations} />{place.images?.length > 0 && <ScreenSection title="사진"><div className="horizontal-cards">{place.images.map((img) => <div className="place-card-image" key={img.id} style={{ width: 120, height: 120, flex: '0 0 auto' }}><img src={img.sourceUrl} alt="" /></div>)}</div></ScreenSection>}</div></main><div className="sticky-actions split place-actions"><ActionButton onClick={() => go('course-conditions')}>코스에 추가</ActionButton><ActionButton tone="secondary" onClick={() => go('write-review')}>후기 남기기</ActionButton></div></section>;
+  return <section className="phone standard-screen place-detail-screen"><main className="page-scroll"><div className="detail-hero"><img src={heroImage} alt={`${place.name} 외관`} /><DetailHeroControls onBack={() => go('explore')} /></div><DetailContentSheet className="detail-content detail-content-v3"><p className="eyebrow">{[place.district, place.categoryLabel].filter(Boolean).join(' · ')}</p><h1>{place.name}</h1><p className="detail-meta">{hoursLabel}</p><div className="chip-row">{place.phone && <Chip active>{place.phone}</Chip>}<Chip>{place.roadAddress || place.lotAddress || '주소 정보 없음'}</Chip></div><FilmingSceneSection filmingLocations={filmingLocations} />{place.images?.length > 0 && <ScreenSection title="사진"><div className="horizontal-cards">{place.images.map((img) => <div className="place-card-image" key={img.id} style={{ width: 120, height: 120, flex: '0 0 auto' }}><img src={img.sourceUrl} alt="" /></div>)}</div></ScreenSection>}<PlaceDescriptionSection description={place.description} /></DetailContentSheet></main><div className="sticky-actions split place-actions"><PlaceBasketAction placeId={placeId} /><ActionButton tone="secondary" onClick={() => go('write-review')}>후기 남기기</ActionButton></div></section>;
 }
 
 function EventDetail({ go, eventId }) {
   const [event, setEvent] = useState(null);
   const [status, setStatus] = useState(eventId ? 'loading' : 'error');
   const [retryAttempt, setRetryAttempt] = useState(0);
+  const userLocation = useUserLocation();
 
   useEffect(() => {
     if (!eventId) {
@@ -1119,6 +1463,12 @@ function EventDetail({ go, eventId }) {
   const dateLabel = formatDateRange(displayEvent.startDate, displayEvent.endDate) || '일정 정보 확인 중';
   const venueLabel = eventVenueLabel(displayEvent);
   const stateLabel = currentEventState(displayEvent);
+  const eventMapPlaces = [{
+    id: displayEvent.placeId ?? `event-${displayEvent.id}`,
+    name: displayEvent.placeName || venueLabel,
+    latitude: displayEvent.latitude,
+    longitude: displayEvent.longitude,
+  }];
   const officialUrl = displayEvent.detailUrl || displayEvent.homepageUrl || null;
   const primaryAction = officialUrl
     ? { label: '공식 정보 보기', icon: ExternalLink, onClick: () => openExternal(officialUrl) }
@@ -1135,7 +1485,7 @@ function EventDetail({ go, eventId }) {
       <main className="page-scroll">
         <div className={`detail-hero event-detail-hero ${displayEvent.mainImage ? '' : 'is-placeholder'}`}>
           <EventImage event={displayEvent} className="event-detail-media" />
-          <div className="detail-controls"><IconButton label="이전" onClick={() => go('popups')}>‹</IconButton></div>
+          <DetailHeroControls onBack={() => go('popups')} onSave={() => go('saved')} />
         </div>
         <div className="detail-content detail-content-v3 event-detail-content">
           <div className="event-status-row">
@@ -1173,6 +1523,13 @@ function EventDetail({ go, eventId }) {
               </div>
             </ScreenSection>
           )}
+          <DetailMapSection
+            title="행사 장소 한눈에 보기"
+            meta={venueLabel}
+            ariaLabel={`${displayEvent.name} 행사 장소 지도`}
+            places={eventMapPlaces}
+            userLocation={userLocation}
+          />
         </div>
       </main>
       {primaryAction && <div className="sticky-actions event-actions"><ActionButton onClick={primaryAction.onClick}>{(() => { const Icon = primaryAction.icon; return <Icon aria-hidden="true" size={17} strokeWidth={2} />; })()}{primaryAction.label}</ActionButton></div>}
@@ -1232,7 +1589,7 @@ function SearchResults({ screen, go }) {
 }
 
 function SavedConfirmation({ go }) {
-  return <section className="phone standard-screen saved-detail-screen"><main className="page-scroll"><div className="detail-hero"><img src={images.detail} alt="도토리가든 외관" /><div className="detail-controls"><IconButton label="이전" onClick={() => go('place')}>‹</IconButton><IconButton label="저장됨" onClick={() => go('my')}>♥</IconButton></div></div><div className="detail-content detail-content-v3"><p className="eyebrow">안국 · 카페</p><h1>도토리가든</h1><p className="detail-meta">매일 10:00-21:00</p><div className="chip-row"><Chip active>지금 여유</Chip><Chip>도보 8분</Chip></div><ScreenSection title="지금 가야 하는 이유"><div className="why-card place-why-card"><span>최근 후기 기반 · 오늘 업데이트</span><strong>최근 3일간 소금빵과 정원 사진을<br />저장한 사람이 빠르게 늘고 있어요.</strong><p>오후 2-4시는 사진 후기가 특히 많아요</p></div></ScreenSection><ScreenSection title="지금 현장에서는" action="12분 전"><div className="place-live-grid"><article><span>대기</span><b>약 10분</b></article><article><span>메뉴</span><b>소금빵 재고 있음</b></article></div></ScreenSection></div></main><section className="save-confirmation-toast" role="status"><span>✓</span><div><strong>저장한 장소에 추가했어요</strong><small>MY에서 언제든 다시 볼 수 있어요.</small></div><button type="button" onClick={() => go('my')}>보기</button></section><div className="sticky-actions split place-actions"><ActionButton onClick={() => go('course-conditions')}>코스에 추가</ActionButton><ActionButton tone="secondary" onClick={() => go('explore')}>탐색 계속</ActionButton></div></section>;
+  return <section className="phone standard-screen saved-detail-screen"><main className="page-scroll"><div className="detail-hero"><img src={images.detail} alt="도토리가든 외관" /><div className="detail-controls"><IconButton label="이전" onClick={() => go('place')}>‹</IconButton><IconButton label="장소 저장 취소" onClick={() => go('my')}>♥</IconButton></div></div><div className="detail-content detail-content-v3"><p className="eyebrow">안국 · 카페</p><h1>도토리가든</h1><p className="detail-meta">매일 10:00-21:00</p><div className="chip-row"><Chip active>지금 여유</Chip><Chip>도보 8분</Chip></div><ScreenSection title="지금 가야 하는 이유"><div className="why-card place-why-card"><span>최근 후기 기반 · 오늘 업데이트</span><strong>최근 3일간 소금빵과 정원 사진을<br />저장한 사람이 빠르게 늘고 있어요.</strong><p>오후 2-4시는 사진 후기가 특히 많아요</p></div></ScreenSection><ScreenSection title="지금 현장에서는" action="12분 전"><div className="place-live-grid"><article><span>대기</span><b>약 10분</b></article><article><span>메뉴</span><b>소금빵 재고 있음</b></article></div></ScreenSection></div></main><section className="save-confirmation-toast" role="status"><span>✓</span><div><strong>저장한 장소에 추가했어요</strong><small>MY에서 언제든 다시 볼 수 있어요.</small></div><button type="button" onClick={() => go('my')}>보기</button></section><div className="sticky-actions split place-actions"><ActionButton onClick={() => go('course-conditions')}>코스에 추가</ActionButton><ActionButton tone="secondary" onClick={() => go('explore')}>탐색 계속</ActionButton></div></section>;
 }
 
 const collectionInfo = {
@@ -1772,30 +2129,30 @@ function EventsCollection({ go }) {
           <h2>행사와 전시</h2>
           <small>종로구의 문화행사를 한눈에 확인해보세요.</small>
         </header>
-        <div className="collection-filters event-filter-bar" role="group" aria-label="행사 필터">
+        <div className="collection-filters event-filter-bar" role="group" aria-label="행사 필터와 정렬">
           {EVENT_COLLECTION_FILTERS.map((item) => (
             <Chip key={item} active={activeFilter === item} current={activeFilter === item} onClick={() => handleFilterChange(item)}>{item}</Chip>
           ))}
-        </div>
-        <div
-          className="event-sort-row"
-          role="tablist"
-          aria-label="행사 정렬"
-          aria-busy={isLocating ? 'true' : undefined}
-          aria-describedby={sortError ? 'event-sort-error' : undefined}
-        >
-          {EVENT_COLLECTION_SORTS.map((item) => (
-            <button
-              key={item.key}
-              type="button"
-              role="tab"
-              aria-selected={activeSort === item.key}
-              disabled={isLocating && item.key !== activeSort}
-              onClick={() => handleSortChange(item.key)}
-            >
-              {item.label}
-            </button>
-          ))}
+          <div
+            className="event-sort-row"
+            role="group"
+            aria-label="행사 정렬"
+            aria-busy={isLocating ? 'true' : undefined}
+            aria-describedby={sortError ? 'event-sort-error' : undefined}
+          >
+            {EVENT_COLLECTION_SORTS.map((item) => (
+              <button
+                key={item.key}
+                type="button"
+                aria-pressed={activeSort === item.key}
+                disabled={isLocating && item.key !== activeSort}
+                onClick={() => handleSortChange(item.key)}
+              >
+                <span className="event-sort-dot" aria-hidden="true" />
+                <span>{item.label}</span>
+              </button>
+            ))}
+          </div>
         </div>
         {isLocating && <p className="event-sort-status" role="status" aria-live="polite">현재 위치를 확인하고 있어요.</p>}
         {sortError && (
@@ -2029,12 +2386,96 @@ function FilmingWorkPlaceItem({ place, index, go }) {
   );
 }
 
+function FilmingWorkCreditAvatar({ credit }) {
+  const imageUrl = tmdbProfileUrl(credit.profilePath);
+  const [imageFailed, setImageFailed] = useState(false);
+
+  useEffect(() => {
+    setImageFailed(false);
+  }, [imageUrl]);
+
+  return (
+    <span className="filming-work-credit-avatar">
+      {imageUrl && !imageFailed
+        ? <img src={imageUrl} alt="" loading="lazy" decoding="async" onError={() => setImageFailed(true)} />
+        : <span className="filming-work-credit-avatar-fallback" aria-hidden="true"><UserRound size={27} strokeWidth={1.6} /></span>}
+    </span>
+  );
+}
+
+function filmingWorkCreditRoleLabel(credit) {
+  if (credit.role === 'DIRECTOR') return '감독';
+  const characterName = credit.characterNameKo || credit.characterName;
+  return characterName ? `${characterName} 역` : '출연';
+}
+
+function FilmingWorkCredits({ credits }) {
+  const scrollRef = useRef(null);
+  const visibleCredits = Array.isArray(credits) ? credits.slice(0, 12) : [];
+
+  useEffect(() => {
+    if (scrollRef.current) scrollRef.current.scrollLeft = 0;
+  }, [credits]);
+
+  if (!visibleCredits.length) return null;
+
+  const handleKeyDown = (event) => {
+    const scroll = event.currentTarget;
+    const reducedMotion = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
+    const behavior = reducedMotion ? 'auto' : 'smooth';
+    const step = Math.max(scroll.clientWidth * 0.75, 144);
+
+    if (event.key === 'ArrowRight' || event.key === 'ArrowLeft') {
+      event.preventDefault();
+      scroll.scrollBy({ left: event.key === 'ArrowRight' ? step : -step, behavior });
+    } else if (event.key === 'Home' || event.key === 'End') {
+      event.preventDefault();
+      scroll.scrollTo({ left: event.key === 'Home' ? 0 : scroll.scrollWidth, behavior });
+    }
+  };
+
+  return (
+    <section className="filming-work-credit-section" aria-labelledby="filming-work-credit-title">
+      <header>
+        <h2 id="filming-work-credit-title">감독·출연</h2>
+        <span>{visibleCredits.length}명</span>
+      </header>
+      <div
+        className="filming-work-credit-scroll"
+        ref={scrollRef}
+        tabIndex={0}
+        role="region"
+        aria-label="감독·출연 목록"
+        onKeyDown={handleKeyDown}
+      >
+        <ul className="filming-work-credit-list">
+          {visibleCredits.map((credit, index) => {
+            const roleLabel = filmingWorkCreditRoleLabel(credit);
+            const displayName = credit.nameKo || credit.name;
+            const creditKey = credit.personId ?? credit.tmdbPersonId ?? `${displayName}-${index}`;
+            return (
+              <li className="filming-work-credit-item" key={`${creditKey}-${credit.role}`}>
+                <FilmingWorkCreditAvatar credit={credit} />
+                <span className="filming-work-credit-copy">
+                  <strong className="filming-work-credit-name" title={displayName}>{displayName}</strong>
+                  <span className="filming-work-credit-role" title={roleLabel}>{roleLabel}</span>
+                </span>
+              </li>
+            );
+          })}
+        </ul>
+      </div>
+    </section>
+  );
+}
+
 function FilmingWorkDetail({ go, workId }) {
   const scrollRef = useRef(null);
   const [work, setWork] = useState(null);
   const [isLoading, setIsLoading] = useState(true);
   const [loadError, setLoadError] = useState(false);
   const [overviewExpanded, setOverviewExpanded] = useState(false);
+  const userLocation = useUserLocation();
 
   useEffect(() => {
     const frame = window.requestAnimationFrame(() => {
@@ -2085,6 +2526,7 @@ function FilmingWorkDetail({ go, workId }) {
           year: formatReleaseYear(media.releaseDate),
           poster: tmdbPosterUrl(media.posterPath),
           overview: media.overview,
+          credits: normalizeMediaCredits(media.credits),
           places,
         });
       })
@@ -2100,20 +2542,6 @@ function FilmingWorkDetail({ go, workId }) {
     return () => controller.abort();
   }, [workId]);
 
-  const mapPlaces = useMemo(
-    () => (work?.places ?? []).filter((place) => Number.isFinite(Number(place.latitude)) && Number.isFinite(Number(place.longitude))),
-    [work],
-  );
-  const mapCenter = useMemo(() => {
-    if (!mapPlaces.length) return [126.978, 37.5665];
-    return [
-      mapPlaces.reduce((sum, place) => sum + Number(place.longitude), 0) / mapPlaces.length,
-      mapPlaces.reduce((sum, place) => sum + Number(place.latitude), 0) / mapPlaces.length,
-    ];
-  }, [mapPlaces]);
-  const loadWorkMapPlaces = useCallback(() => Promise.resolve(mapPlaces), [mapPlaces]);
-  const workMarkerLabel = useCallback((place) => place.order, []);
-
   if (isLoading) {
     return <section className="phone standard-screen filming-work-detail-screen"><main className="page-scroll centered-state"><BrandLoading /><h1>작품 속 장소를 찾고 있어요</h1><p>작품 정보와 촬영 장면을 함께 불러오는 중이에요.</p></main></section>;
   }
@@ -2121,10 +2549,6 @@ function FilmingWorkDetail({ go, workId }) {
   if (loadError || !work) {
     return <section className="phone standard-screen filming-work-detail-screen"><BackHeader title="작품 상세" onBack={() => go('filming-locations')} /><main className="page-scroll centered-state"><SearchX size={38} /><h1>작품 정보를 불러오지 못했어요</h1><p>잠시 후 다시 시도해주세요.</p><ActionButton onClick={() => go('filming-locations')}>작품 목록으로</ActionButton></main></section>;
   }
-
-  const placeRouteLabel = work.places.length > 1
-    ? `${work.places[0].name}에서 ${work.places[work.places.length - 1].name}까지`
-    : work.places[0]?.name || '촬영지 위치';
 
   return (
     <section className="phone standard-screen filming-work-detail-screen">
@@ -2135,16 +2559,17 @@ function FilmingWorkDetail({ go, workId }) {
             : <div className="filming-work-detail-poster-fallback"><Clapperboard size={34} /><span>포스터 준비 중</span></div>}
           <div className="filming-work-detail-controls">
             <IconButton label="이전" onClick={() => go('filming-locations')}><ChevronLeft size={20} /></IconButton>
-            <IconButton label="작품 저장"><Heart size={19} /></IconButton>
           </div>
           <span className="filming-work-detail-count"><MapPin size={14} /> 촬영 장소 {work.places.length}곳</span>
         </div>
 
-        <div className="filming-work-detail-copy">
+        <DetailContentSheet className="filming-work-detail-copy">
           <p className="filming-work-detail-meta">{[work.type, work.year].filter(Boolean).join(' · ')}</p>
           <h1>{work.title}</h1>
           <p className={`filming-work-detail-overview${overviewExpanded ? ' is-expanded' : ''}`}>{work.overview || '작품 소개를 준비하고 있어요.'}</p>
           {work.overview?.length > 120 && <button className="filming-work-overview-toggle" type="button" aria-expanded={overviewExpanded} onClick={() => setOverviewExpanded((current) => !current)}>{overviewExpanded ? '접기' : '더보기'}</button>}
+
+          <FilmingWorkCredits credits={work.credits} />
 
           <section className="filming-work-place-section">
             <header>
@@ -2156,27 +2581,15 @@ function FilmingWorkDetail({ go, workId }) {
             </div> : <div className="filming-work-empty"><p>등록된 촬영 장소가 아직 없어요.</p></div>}
           </section>
 
-          {mapPlaces.length > 0 && <section className="filming-work-map-section">
-            <header>
-              <h2>촬영지 한눈에 보기</h2>
-              <span>{[...new Set(work.places.map((place) => place.category.split(' · ').at(-1)))].join(' · ')}</span>
-            </header>
-            <div className="filming-work-map-preview">
-              <VWorldMap
-                ariaLabel={`${work.title} 촬영지 지도`}
-                center={mapCenter}
-                zoom={14.5}
-                interactive={false}
-                loadPlacesInBounds={loadWorkMapPlaces}
-                placeMarkerLabel={workMarkerLabel}
-                clusterPlaces={false}
-                fitPlaceMarkers
-                placeRequestKey={`${work.id}-${mapPlaces.length}`}
-              />
-              <button className="filming-work-map-caption" type="button" onClick={() => go('map')}><MapPin size={15} /> {placeRouteLabel}</button>
-            </div>
-          </section>}
-        </div>
+          <DetailMapSection
+            title="촬영지 한눈에 보기"
+            meta={[...new Set(work.places.map((place) => place.category.split(' · ').at(-1)))].join(' · ')}
+            ariaLabel={`${work.title} 촬영지 지도`}
+            places={work.places}
+            userLocation={userLocation}
+            placeMarkerLabel={(place) => place.order}
+          />
+        </DetailContentSheet>
       </main>
       <div className="sticky-actions filming-work-detail-actions">
         <ActionButton onClick={() => go('map')}><MapPin size={18} /> 지도에서 촬영지 보기</ActionButton>
@@ -2216,8 +2629,8 @@ function FilmingScreen({ screen, go, id }) {
   if (screen === 'camera') return <CameraScreen go={go} />;
   if (screen === 'camera-permission') return <MapPermissionPrompt go={go} title="카메라 권한이 필요해요" copy="촬영 장면과 현재 화면을 겹쳐 보려면 카메라 접근이 필요해요." detail={['사진과 동영상 촬영 허용', '촬영한 사진은 저장하기 전까지 기기에 남지 않아요.']} action="카메라 권한 허용" next="camera" />;
   if (screen === 'scene-list') return <section className="phone standard-screen scene-list-v3"><BackHeader title="촬영 장면 · 운현궁" onBack={() => go('filming-content')} /><main className="page-scroll scene-list-scroll"><header><h1>이곳에서 촬영된 장면</h1><p>눈물의 여왕 · 장면 2개</p></header><div className="scene-sort-row"><Chip active>작품별</Chip><Chip>최신순</Chip></div><article className="scene-work-card"><img src="/assets/figma/intro-visual.png" alt="운현궁 촬영 장면" /><div><span>눈물의 여왕</span><small>tvN · 2024 · TMDB 작품 정보</small><p>EP.03 · 마당을 지나 대화를 나누는 장면<br />EP.11 · 처마 아래에서 재회하는 장면</p></div></article><p className="scene-list-note">스틸 이미지는 참고용으로 제공돼요</p><ScreenSection title="장면 선택"><div className="scene-choice-list"><button type="button" onClick={() => go('scene-detail')}><span><strong>EP.03</strong><small>낮 장면 · 구도 가이드 제공</small></span><b>장면 상세&nbsp; ›</b></button><button type="button" onClick={() => go('scene-detail')}><span><strong>EP.11</strong><small>저녁 장면 · 구도 가이드 제공</small></span><b>장면 보기&nbsp; ›</b></button></div></ScreenSection></main></section>;
-  if (screen === 'onsite') return <section className="phone standard-screen onsite-screen"><main className="page-scroll"><div className="onsite-hero"><img src="/assets/figma/intro-visual.png" alt="운현궁 전경" /><div className="onsite-overlay-actions"><IconButton label="이전" onClick={() => go('arrival')}>‹</IconButton><IconButton label="저장" onClick={() => go('saved')}>♡</IconButton></div></div><div className="onsite-copy"><p className="eyebrow">안국 · 궁궐</p><h1>운현궁</h1><p>화-일 09:00-18:00</p><div className="chip-row"><Chip active>지금 여유</Chip><Chip>관람 약 20분</Chip></div><ScreenSection title="운현궁에서 놓치지 말 것"><div className="why-card"><span>현장 위치 확인 완료 · 오늘 업데이트</span><strong>노안당과 이로당을 잇는<br />마당 동선을 천천히 걸어보세요.</strong><p>오후에는 처마 그림자가 선명해요.</p></div></ScreenSection><ScreenSection title="지금 현장에서는" action="방금 도착"><div className="onsite-fact-grid"><article><span>관람</span><b>약 20분</b></article><article><span>촬영</span><b>삼각대 사용 제한</b></article></div></ScreenSection></div></main><div className="sticky-actions split onsite-actions"><ActionButton onClick={() => go('complete')}>관람 완료</ActionButton><ActionButton tone="secondary" onClick={() => go('filming-content')}>후기 보기</ActionButton></div></section>;
-  if (screen === 'filming-content') return <section className="phone standard-screen filming-content-v3"><main className="page-scroll"><div className="filming-content-hero"><img src="/assets/figma/intro-visual.png" alt="운현궁 촬영지 전경" /><div className="filming-content-controls"><IconButton label="이전" onClick={() => go('onsite')}>‹</IconButton><IconButton label="저장" onClick={() => go('saved')}>♡</IconButton></div></div><div className="filming-content-copy"><p className="eyebrow">촬영지 · 서울 종로</p><h1>운현궁 · 눈물의 여왕</h1><p>tvN · 2024 · EP.03</p><div className="chip-row"><Chip active>현장 일치</Chip><Chip>장면 2개</Chip></div><ScreenSection title="이 장소에서 촬영된 장면"><div className="why-card filming-why-card"><span>공공데이터 위치 확인 · TMDB 작품 정보</span><strong>주인공이 마당을 지나 대화를 나누는 장면이에요.<br />같은 시선 높이에서 처마 끝을 맞춰보세요.</strong><p>TMDB 이미지 · 방송 장면 참고</p></div></ScreenSection><ScreenSection title="촬영 포인트" action="현재 위치"><div className="onsite-fact-grid"><article><span>카메라</span><b>1× 렌즈</b></article><article><span>빛 방향</span><b>오후 3시 추천</b></article></div></ScreenSection></div></main><div className="sticky-actions split filming-content-actions"><ActionButton onClick={() => go('scene-detail')}>구도 맞추기</ActionButton><ActionButton tone="secondary" onClick={() => go('scene-list')}>장면 보기</ActionButton></div></section>;
+  if (screen === 'onsite') return <section className="phone standard-screen onsite-screen"><main className="page-scroll"><div className="onsite-hero"><img src="/assets/figma/intro-visual.png" alt="운현궁 전경" /><div className="onsite-overlay-actions"><IconButton label="이전" onClick={() => go('arrival')}>‹</IconButton><IconButton label="장소 저장" onClick={() => go('saved')}>♡</IconButton></div></div><div className="onsite-copy"><p className="eyebrow">안국 · 궁궐</p><h1>운현궁</h1><p>화-일 09:00-18:00</p><div className="chip-row"><Chip active>지금 여유</Chip><Chip>관람 약 20분</Chip></div><ScreenSection title="운현궁에서 놓치지 말 것"><div className="why-card"><span>현장 위치 확인 완료 · 오늘 업데이트</span><strong>노안당과 이로당을 잇는<br />마당 동선을 천천히 걸어보세요.</strong><p>오후에는 처마 그림자가 선명해요.</p></div></ScreenSection><ScreenSection title="지금 현장에서는" action="방금 도착"><div className="onsite-fact-grid"><article><span>관람</span><b>약 20분</b></article><article><span>촬영</span><b>삼각대 사용 제한</b></article></div></ScreenSection></div></main><div className="sticky-actions split onsite-actions"><ActionButton onClick={() => go('complete')}>관람 완료</ActionButton><ActionButton tone="secondary" onClick={() => go('filming-content')}>후기 보기</ActionButton></div></section>;
+  if (screen === 'filming-content') return <section className="phone standard-screen filming-content-v3"><main className="page-scroll"><div className="filming-content-hero"><img src="/assets/figma/intro-visual.png" alt="운현궁 촬영지 전경" /><div className="filming-content-controls"><IconButton label="이전" onClick={() => go('onsite')}>‹</IconButton><IconButton label="장소 저장" onClick={() => go('saved')}>♡</IconButton></div></div><div className="filming-content-copy"><p className="eyebrow">촬영지 · 서울 종로</p><h1>운현궁 · 눈물의 여왕</h1><p>tvN · 2024 · EP.03</p><div className="chip-row"><Chip active>현장 일치</Chip><Chip>장면 2개</Chip></div><ScreenSection title="이 장소에서 촬영된 장면"><div className="why-card filming-why-card"><span>공공데이터 위치 확인 · TMDB 작품 정보</span><strong>주인공이 마당을 지나 대화를 나누는 장면이에요.<br />같은 시선 높이에서 처마 끝을 맞춰보세요.</strong><p>TMDB 이미지 · 방송 장면 참고</p></div></ScreenSection><ScreenSection title="촬영 포인트" action="현재 위치"><div className="onsite-fact-grid"><article><span>카메라</span><b>1× 렌즈</b></article><article><span>빛 방향</span><b>오후 3시 추천</b></article></div></ScreenSection></div></main><div className="sticky-actions split filming-content-actions"><ActionButton onClick={() => go('scene-detail')}>구도 맞추기</ActionButton><ActionButton tone="secondary" onClick={() => go('scene-list')}>장면 보기</ActionButton></div></section>;
   if (screen === 'scene-detail') return <section className="phone standard-screen scene-detail-v3"><main className="page-scroll"><div className="scene-detail-copy"><p className="eyebrow">눈물의 여왕 · EP.03</p><h1>마당을 지나던 장면</h1><p>00:24:18 · 운현궁 노안당 앞</p><div className="chip-row"><Chip active>스팟컷</Chip><Chip>1 / 2</Chip></div><ScreenSection title="장면 속 위치와 방향" action="좌표"><p className="scene-detail-description">노안당을 등지고 이로당 방향을 바라본 구도예요.<br />카메라 높이는 눈높이, 1× 렌즈를 권장해요.</p><small>TMDB 스틸 이미지 · 실제 방송 화면과 다를 수 있어요</small></ScreenSection><ScreenSection title="구도 정보" action="방향"><div className="scene-spec-grid"><article><span>렌즈</span><b>동쪽 · 92°</b></article><article><span>높이</span><b>눈높이 1.6m</b></article></div></ScreenSection></div></main><div className="sticky-actions split scene-detail-actions"><ActionButton onClick={() => go('camera-permission')}>구도 맞추기</ActionButton><ActionButton tone="secondary" onClick={() => go('scene-list')}>장면 보기</ActionButton></div></section>;
   if (screen === 'shot-result') return <ShotResultScreen go={go} />;
   if (screen === 'photo-saved') return <CourseComplete go={go} photoSaved />;
@@ -2253,7 +2666,7 @@ function RecordScreen({ screen, go }) {
     return <section className="phone standard-screen tab-screen record-overview"><main className="page-scroll record-overview-scroll"><h1>{saved ? '저장한 코스' : '오늘의 여행 기록'}</h1><JourneySummary saved={saved} /><ScreenSection title={saved ? '저장한 코스' : '오늘의 코스'}><button type="button" className="journey-map-card" onClick={() => go(saved ? 'route-map' : 'record-detail')}><VWorldMap ariaLabel="안국과 성수를 잇는 코스 지도" interactive={false} style={{ width: '100%', height: 122 }} /><span><strong>안국에서 성수까지, 여름 하루</strong><small>{saved ? '4곳 · 5시간 10분 · 최근 저장' : '5곳 · 6시간 20분 · 오늘'}</small></span></button></ScreenSection>{saved ? <ScreenSection title="빠른 메뉴"><div className="saved-quick-grid"><button type="button" onClick={() => go('saved')}><span>⌖</span><strong>저장한 장소</strong><small>12</small></button><button type="button" onClick={() => go('record')}><span>□</span><strong>완료한 코스</strong><small>2</small></button></div></ScreenSection> : <ScreenSection title="오늘의 기록"><div className="today-record-grid"><article><span>방문 사진</span><b>12</b></article><article><span>남긴 후기</span><b>2</b></article></div></ScreenSection>}</main><BottomNav active="my" onNavigate={(tab) => go(rootRoutes[tab])} /></section>;
   }
   if (screen === 'record-detail') return <section className="phone standard-screen tab-screen record-overview record-detail-v3"><main className="page-scroll record-overview-scroll"><h1>여행 기록 상세</h1><JourneySummary /><ScreenSection title="이동 타임라인"><button type="button" className="journey-map-card" onClick={() => go('active-course')}><VWorldMap ariaLabel="안국과 성수를 잇는 코스 지도" interactive={false} style={{ width: '100%', height: 122 }} /><span><strong>안국에서 성수까지, 여름 하루</strong><small>5곳 · 6시간 20분 · 오늘</small></span></button></ScreenSection><ScreenSection title="오늘의 기록"><div className="today-record-grid"><article><span>방문 사진</span><b>12</b></article><article><span>남긴 후기</span><b>2</b></article></div></ScreenSection></main><BottomNav active="my" onNavigate={(tab) => go(rootRoutes[tab])} /></section>;
-  if (screen === 'reviews') return <section className="phone standard-screen reviews-v3"><main className="page-scroll"><div className="reviews-hero"><img src={images.detail} alt="도토리가든" /><div className="detail-controls"><IconButton label="이전" onClick={() => go('place')}>‹</IconButton><IconButton label="저장" onClick={() => go('saved')}>♡</IconButton></div></div><div className="reviews-copy"><p className="eyebrow">안국 · 카페</p><h1>도토리가든</h1><p>매일 10:00-21:00</p><div className="chip-row"><Chip active>지금 여유</Chip><Chip>도보 8분</Chip></div><ScreenSection title="방문자 후기 126"><p className="review-section-lede">사진과 위치가 인증된 후기부터 보여줘요</p><article className="verified-review-card"><p>정원이 생각보다 조용했고 오후 햇빛이 예뻤어요.<br />소금빵은 3시 전에 가는 걸 추천해요.</p><span>유진 · 오늘 · 방문 인증</span><div><button type="button">후기 필터</button><b>최신순</b><small>사진 후기&nbsp; 82</small><small>추천&nbsp; 104</small></div></article></ScreenSection></div></main><div className="sticky-actions split reviews-actions"><ActionButton onClick={() => go('course-conditions')}>코스에 추가</ActionButton><ActionButton tone="secondary" onClick={() => go('write-review')}>후기 남기기</ActionButton></div></section>;
+  if (screen === 'reviews') return <section className="phone standard-screen reviews-v3"><main className="page-scroll"><div className="reviews-hero"><img src={images.detail} alt="도토리가든" /><div className="detail-controls"><IconButton label="이전" onClick={() => go('place')}>‹</IconButton></div></div><div className="reviews-copy"><p className="eyebrow">안국 · 카페</p><h1>도토리가든</h1><p>매일 10:00-21:00</p><div className="chip-row"><Chip active>지금 여유</Chip><Chip>도보 8분</Chip></div><ScreenSection title="방문자 후기 126"><p className="review-section-lede">사진과 위치가 인증된 후기부터 보여줘요</p><article className="verified-review-card"><p>정원이 생각보다 조용했고 오후 햇빛이 예뻤어요.<br />소금빵은 3시 전에 가는 걸 추천해요.</p><span>유진 · 오늘 · 방문 인증</span><div><button type="button">후기 필터</button><b>최신순</b><small>사진 후기&nbsp; 82</small><small>추천&nbsp; 104</small></div></article></ScreenSection></div></main><div className="sticky-actions split reviews-actions"><ActionButton onClick={() => go('course-conditions')}>코스에 추가</ActionButton><ActionButton tone="secondary" onClick={() => go('write-review')}>후기 남기기</ActionButton></div></section>;
   if (screen === 'review-detail') return <section className="phone standard-screen review-detail-v3"><BackHeader title="방문 인증 후기" onBack={() => go('reviews')} /><main className="page-scroll review-detail-scroll"><p className="eyebrow">추천해요 · 사진 3장</p><h1>오후 햇빛이 정말 예뻤어요</h1><p className="review-author">유진 · 오늘 14:25</p><div className="review-detail-photo"><img src="/assets/figma/intro-visual.png" alt="운현궁 방문 사진" /></div><section className="review-verified-note"><strong>운현궁을 다녀왔어요</strong><span>위치 좌표로 방문이 인증된 후기예요</span></section><p className="review-detail-body">사람이 많지 않아 천천히 보기 좋았어요.<br />처마 쪽에서 찍으면 구도가 예쁘게 나와요.</p><ScreenSection title="후기 정보"><div className="review-info-grid"><article><span>추천</span><b>추천해요</b></article><article><span>방문 당시</span><b>여유</b></article></div></ScreenSection></main><div className="sticky-actions split"><ActionButton onClick={() => go('scene-detail')}>구도 맞추기</ActionButton><ActionButton tone="secondary" onClick={() => go('scene-list')}>장면 보기</ActionButton></div></section>;
   if (screen === 'write-review') return <section className="phone standard-screen write-review-v3"><BackHeader title="후기 작성" onBack={() => go('record')} /><main className="page-scroll write-review-scroll"><p className="eyebrow">운현궁</p><h1>오늘의 장소는 어땠나요?</h1><p className="write-review-lede">경험을 남기면 다음 여행자에게 도움이 돼요.</p><ScreenSection title="평가"><div className="review-setting-list"><button type="button"><span>⌖ 전체 만족도</span><strong>아주 좋았어요&nbsp; ›</strong></button><button type="button"><span>◷ 방문 시간</span><strong>오늘 13:40-14:20&nbsp; ›</strong></button></div></ScreenSection><ScreenSection title="분위기"><div className="review-choice-row"><Chip>한적해요</Chip><Chip active>사진 좋아요</Chip><Chip>혼자 좋아요</Chip></div></ScreenSection><ScreenSection title="후기 내용"><div className="review-content-grid"><button type="button" className="selected"><strong>공간이 차분하고</strong><small>오후 햇빛이 예뻤어요</small></button><button type="button"><strong>사진 추가</strong><small>최대 5장까지 올릴 수 있어요</small></button></div></ScreenSection><ScreenSection title="공개 범위"><div className="review-choice-row"><Chip>전체</Chip><Chip active>팔로워</Chip><Chip>나만 보기</Chip></div></ScreenSection><StatusBanner tone="blue" title="위치와 방문 시간은 자동으로 기록돼요" copy="작성 후에도 수정하거나 삭제할 수 있어요." /></main><div className="sticky-actions"><ActionButton onClick={() => go('reviews')}>후기 등록</ActionButton></div></section>;
   const [title, heading, copy, next] = recordStates[screen];
@@ -2317,7 +2730,7 @@ function RenderScreen({ screen, id, go }) {
   else if (routeGroups.record.includes(screen)) renderedScreen = <RecordScreen screen={screen} go={go} />;
   else renderedScreen = <MyScreen screen={screen} go={go} />;
 
-  return <AppScreenFrame go={go} hideHeader={screen === 'filming-work'}>{renderedScreen}</AppScreenFrame>;
+  return <AppScreenFrame go={go} hideHeader={screen === 'filming-work' || screen === 'event-detail'}>{renderedScreen}</AppScreenFrame>;
 }
 
 export default function ProductFlow() {

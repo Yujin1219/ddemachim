@@ -2,6 +2,7 @@ package com.ddemachim.server.domain.event.repository;
 
 import com.ddemachim.server.domain.event.entity.Event;
 import java.time.LocalDate;
+import java.time.LocalTime;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.JpaRepository;
@@ -19,13 +20,32 @@ public interface EventRepository extends JpaRepository<Event, Long> {
                 or (
                     :status = 'ONGOING'
                     and e.startDate is not null
-                    and e.startDate <= :businessDate
-                    and (e.endDate is null or e.endDate >= :businessDate)
+                    and (
+                        e.startDate < :businessDate
+                        or (
+                            e.startDate = :businessDate
+                            and (e.eventStartTime is null or e.eventStartTime <= :businessTime)
+                        )
+                    )
+                    and (
+                        e.endDate is null
+                        or e.endDate > :businessDate
+                        or (
+                            e.endDate = :businessDate
+                            and (e.eventEndTime is null or e.eventEndTime >= :businessTime)
+                        )
+                    )
                 )
                 or (
                     :status = 'ENDED'
-                    and e.endDate is not null
-                    and e.endDate < :businessDate
+                    and (
+                        e.endDate < :businessDate
+                        or (
+                            e.endDate = :businessDate
+                            and e.eventEndTime is not null
+                            and e.eventEndTime < :businessTime
+                        )
+                    )
                 )
             )
             order by e.startDate asc nulls last, e.id asc
@@ -34,6 +54,7 @@ public interface EventRepository extends JpaRepository<Event, Long> {
             @Param("keyword") String keyword,
             @Param("status") String status,
             @Param("businessDate") LocalDate businessDate,
+            @Param("businessTime") LocalTime businessTime,
             Pageable pageable);
 
     @Query(
@@ -45,13 +66,32 @@ public interface EventRepository extends JpaRepository<Event, Long> {
                 or (
                     :status = 'ONGOING'
                     and e.startDate is not null
-                    and e.startDate <= :businessDate
-                    and (e.endDate is null or e.endDate >= :businessDate)
+                    and (
+                        e.startDate < :businessDate
+                        or (
+                            e.startDate = :businessDate
+                            and (e.eventStartTime is null or e.eventStartTime <= :businessTime)
+                        )
+                    )
+                    and (
+                        e.endDate is null
+                        or e.endDate > :businessDate
+                        or (
+                            e.endDate = :businessDate
+                            and (e.eventEndTime is null or e.eventEndTime >= :businessTime)
+                        )
+                    )
                 )
                 or (
                     :status = 'ENDED'
-                    and e.endDate is not null
-                    and e.endDate < :businessDate
+                    and (
+                        e.endDate < :businessDate
+                        or (
+                            e.endDate = :businessDate
+                            and e.eventEndTime is not null
+                            and e.eventEndTime < :businessTime
+                        )
+                    )
                 )
             )
             order by e.applyDate desc nulls last, e.id desc
@@ -60,6 +100,7 @@ public interface EventRepository extends JpaRepository<Event, Long> {
             @Param("keyword") String keyword,
             @Param("status") String status,
             @Param("businessDate") LocalDate businessDate,
+            @Param("businessTime") LocalTime businessTime,
             Pageable pageable);
 
     @Query(
@@ -73,13 +114,32 @@ public interface EventRepository extends JpaRepository<Event, Long> {
                         or (
                             cast(:status as text) = 'ONGOING'
                             and e.start_date is not null
-                            and e.start_date <= :businessDate
-                            and (e.end_date is null or e.end_date >= :businessDate)
+                            and (
+                                e.start_date < :businessDate
+                                or (
+                                    e.start_date = :businessDate
+                                    and (e.event_start_time is null or e.event_start_time <= :businessTime)
+                                )
+                            )
+                            and (
+                                e.end_date is null
+                                or e.end_date > :businessDate
+                                or (
+                                    e.end_date = :businessDate
+                                    and (e.event_end_time is null or e.event_end_time >= :businessTime)
+                                )
+                            )
                         )
                         or (
                             cast(:status as text) = 'ENDED'
-                            and e.end_date is not null
-                            and e.end_date < :businessDate
+                            and (
+                                e.end_date < :businessDate
+                                or (
+                                    e.end_date = :businessDate
+                                    and e.event_end_time is not null
+                                    and e.event_end_time < :businessTime
+                                )
+                            )
                         )
                     )
                     order by
@@ -100,13 +160,32 @@ public interface EventRepository extends JpaRepository<Event, Long> {
                         or (
                             cast(:status as text) = 'ONGOING'
                             and e.start_date is not null
-                            and e.start_date <= :businessDate
-                            and (e.end_date is null or e.end_date >= :businessDate)
+                            and (
+                                e.start_date < :businessDate
+                                or (
+                                    e.start_date = :businessDate
+                                    and (e.event_start_time is null or e.event_start_time <= :businessTime)
+                                )
+                            )
+                            and (
+                                e.end_date is null
+                                or e.end_date > :businessDate
+                                or (
+                                    e.end_date = :businessDate
+                                    and (e.event_end_time is null or e.event_end_time >= :businessTime)
+                                )
+                            )
                         )
                         or (
                             cast(:status as text) = 'ENDED'
-                            and e.end_date is not null
-                            and e.end_date < :businessDate
+                            and (
+                                e.end_date < :businessDate
+                                or (
+                                    e.end_date = :businessDate
+                                    and e.event_end_time is not null
+                                    and e.event_end_time < :businessTime
+                                )
+                            )
                         )
                     )
                     """,
@@ -115,6 +194,7 @@ public interface EventRepository extends JpaRepository<Event, Long> {
             @Param("keyword") String keyword,
             @Param("status") String status,
             @Param("businessDate") LocalDate businessDate,
+            @Param("businessTime") LocalTime businessTime,
             @Param("latitude") Double latitude,
             @Param("longitude") Double longitude,
             Pageable pageable);

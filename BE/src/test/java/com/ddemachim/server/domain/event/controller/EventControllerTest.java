@@ -16,6 +16,7 @@ import com.ddemachim.server.domain.event.exception.InvalidEventStatusException;
 import com.ddemachim.server.domain.event.service.EventQueryService;
 import com.ddemachim.server.global.apiPayload.exception.ExceptionAdvice;
 import java.time.LocalDate;
+import java.time.LocalTime;
 import java.util.List;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -63,7 +64,9 @@ class EventControllerTest {
                 "서울시립미술관",
                 "무료",
                 LocalDate.of(2026, 8, 10),
-                "10:00-18:00");
+                "10:00-18:00",
+                LocalTime.of(10, 0),
+                LocalTime.of(18, 0));
         when(eventQueryService.findEvents(null, null, null, null, null, pageable))
                 .thenReturn(new PageImpl<>(List.of(summary), pageable, 1));
 
@@ -73,7 +76,9 @@ class EventControllerTest {
                 .andExpect(jsonPath("$.isSuccess").value(true))
                 .andExpect(jsonPath("$.result.content[0].useFee").value("무료"))
                 .andExpect(jsonPath("$.result.content[0].applyDate").value("2026-08-10"))
-                .andExpect(jsonPath("$.result.content[0].eventTime").value("10:00-18:00"));
+                .andExpect(jsonPath("$.result.content[0].eventTime").value("10:00-18:00"))
+                .andExpect(jsonPath("$.result.content[0].eventStartTime").value("10:00:00"))
+                .andExpect(jsonPath("$.result.content[0].eventEndTime").value("18:00:00"));
     }
 
     @Test
@@ -176,6 +181,8 @@ class EventControllerTest {
                 "https://example.com",
                 LocalDate.of(2026, 8, 10),
                 "10:00-18:00",
+                LocalTime.of(10, 0),
+                LocalTime.of(18, 0),
                 "https://example.com/detail");
         when(eventQueryService.findEvent(42L)).thenReturn(detail);
 
@@ -191,6 +198,8 @@ class EventControllerTest {
                 .andExpect(jsonPath("$.result.placeName").value("서울시립미술관"))
                 .andExpect(jsonPath("$.result.orgName").value("서울시"))
                 .andExpect(jsonPath("$.result.useFee").value("무료"))
+                .andExpect(jsonPath("$.result.eventStartTime").value("10:00:00"))
+                .andExpect(jsonPath("$.result.eventEndTime").value("18:00:00"))
                 .andExpect(jsonPath("$.result.detailUrl").value("https://example.com/detail"));
     }
 

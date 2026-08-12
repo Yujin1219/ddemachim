@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import date
+from datetime import date, time
 from typing import Any
 
 from src.cleaners.common import clean_text, extract_district
+from src.normalizers.event_time import parse_event_time_bounds
+from src.normalizers.event_schedule import EventSchedule, parse_event_schedules
 
 
 @dataclass
@@ -14,10 +16,18 @@ class EventDTO:
     start_date: date | None
     end_date: date | None
     event_time: str | None
+    event_start_time: time | None
+    event_end_time: time | None
+    schedules: tuple[EventSchedule, ...]
     source: str
     source_id: str
     district: str | None
     venue_name: str | None  # place 매칭용 참고 이름(장소명은 아니고 addr2/eventplace)
+
+    @property
+    def event_schedules(self) -> tuple[EventSchedule, ...]:
+        """Explicit alias for consumers that prefer the table-oriented name."""
+        return self.schedules
 
 
 def _parse_yyyymmdd(value: str | None) -> date | None:
@@ -42,12 +52,18 @@ def normalize_record(raw: dict[str, Any]) -> EventDTO | None:
 
     venue_name = clean_text(raw.get("eventplace")) or clean_text(raw.get("addr2"))
 
+    event_time = clean_text(raw.get("playtime")) or clean_text(raw.get("eventplaytime"))
+    time_bounds = parse_event_time_bounds(event_time)
+
     return EventDTO(
         title=title,
         event_type="FESTIVAL",  # contentTypeId=15는 TourAPI 분류상 전부 "축제공연행사" 대분류라 세분류 없음
         start_date=_parse_yyyymmdd(raw.get("eventstartdate")),
         end_date=_parse_yyyymmdd(raw.get("eventenddate")),
-        event_time=clean_text(raw.get("playtime")) or clean_text(raw.get("eventplaytime")),
+        event_time=event_time,
+        event_start_time=time_bounds.event_start_time,
+        event_end_time=time_bounds.event_end_time,
+        schedules=parse_event_schedules(event_time),
         source="TOURAPI",
         source_id=str(content_id),
         district=district,

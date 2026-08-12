@@ -28,6 +28,11 @@ public class EventController {
     @Operation(
             summary = "문화행사 목록 조회",
             description = "제목 키워드와 행사 상태로 필터링해 문화행사 목록을 페이지 단위 조회합니다. "
+                    + "모든 상태 판정은 Asia/Seoul 현재 날짜와 시각을 기준으로 합니다. "
+                    + "ONGOING은 start_date가 오늘보다 이전이거나 오늘이면서 event_start_time이 없거나 현재 시각 이하이고, "
+                    + "end_date가 없거나 오늘보다 이후이거나 오늘이면서 event_end_time이 없거나 현재 시각 이상인 행사입니다. "
+                    + "ENDED는 end_date가 오늘보다 이전이거나 오늘이면서 명시된 event_end_time이 현재 시각보다 이전인 행사입니다. "
+                    + "따라서 시작 시각이 없으면 당일 00:00부터, 종료 시각이 없으면 종료일이 끝날 때까지 진행 중으로 보고, 다일 행사는 날짜 경계 사이에서 일별 휴장 여부를 판정하지 않습니다. "
                     + "status는 ONGOING(진행 중), ENDED(종료)를 지원하며 미입력 시 전체 행사를 조회합니다. "
                     + "sortMode를 생략하면 기존처럼 행사 시작일 오름차순으로 정렬합니다. "
                     + "LATEST는 원본 등록일(applyDate) 내림차순이며 등록일이 없는 행사는 뒤로 보내고 동일 등록일은 id 내림차순으로 정렬합니다. "
@@ -37,7 +42,7 @@ public class EventController {
     public ApiResponse<Page<EventSummaryResponse>> getEvents(
             @Parameter(description = "행사 제목 검색 키워드 (부분 일치)")
             @RequestParam(required = false) String keyword,
-            @Parameter(description = "행사 상태 필터 (ONGOING: 진행 중, ENDED: 종료, 미입력: 전체)", example = "ONGOING")
+            @Parameter(description = "Asia/Seoul 현재 날짜/시각 기준 행사 상태 필터 (ONGOING: 진행 중, ENDED: 종료, 미입력: 전체)", example = "ONGOING")
             @RequestParam(required = false) String status,
             @Parameter(
                     description = "정렬 기준 (LATEST: 원본 등록일 최신순, NEAREST: 사용자 좌표 기준 가까운 순, 미입력: 행사 시작일 오름차순)",
