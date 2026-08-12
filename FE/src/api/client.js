@@ -29,6 +29,10 @@ export function fetchMapPlaces({ category, tag, minLat, maxLat, minLng, maxLng, 
   return request(`/places/map${toQuery({ category, tag, minLat, maxLat, minLng, maxLng, limit })}`, { signal });
 }
 
+export function fetchJongnoCongestion({ signal } = {}) {
+  return request('/citydata/congestion/jongno', { signal });
+}
+
 export function fetchPlace(id, { signal } = {}) {
   return request(`/places/${id}`, { signal });
 }
