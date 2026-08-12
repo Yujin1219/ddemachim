@@ -4,15 +4,20 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 import com.ddemachim.server.domain.event.dto.EventDetailResponse;
 import com.ddemachim.server.domain.event.dto.EventSummaryResponse;
 import com.ddemachim.server.domain.event.entity.Event;
+import com.ddemachim.server.domain.event.exception.InvalidEventCoordinatesException;
+import com.ddemachim.server.domain.event.exception.InvalidEventSortModeException;
+import com.ddemachim.server.domain.event.exception.InvalidEventStatusException;
 import com.ddemachim.server.domain.event.exception.EventNotFoundException;
 import com.ddemachim.server.domain.event.repository.EventRepository;
 import com.ddemachim.server.domain.place.entity.Place;
 import java.time.LocalDate;
+import java.time.ZoneId;
 import java.util.List;
 import java.util.Optional;
 import org.junit.jupiter.api.Test;
@@ -22,6 +27,7 @@ import org.locationtech.jts.geom.GeometryFactory;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageImpl;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Pageable;
@@ -38,8 +44,9 @@ class EventQueryServiceTest {
     @Test
     void findEvents_mapsSummaryDecisionFields() {
         Pageable pageable = PageRequest.of(0, 10);
+        LocalDate businessDate = LocalDate.now(ZoneId.of("Asia/Seoul"));
         Event event = mock(Event.class);
-        when(eventRepository.search("전시", pageable))
+        when(eventRepository.searchByStartDate("전시", null, businessDate, pageable))
                 .thenReturn(new PageImpl<>(List.of(event), pageable, 1));
         when(event.getUseFee()).thenReturn("무료");
         when(event.getApplyDate()).thenReturn(LocalDate.of(2026, 8, 10));
@@ -52,7 +59,107 @@ class EventQueryServiceTest {
         assertThat(result.useFee()).isEqualTo("무료");
         assertThat(result.applyDate()).isEqualTo(LocalDate.of(2026, 8, 10));
         assertThat(result.eventTime()).isEqualTo("10:00-18:00");
-        verify(eventRepository).search("전시", pageable);
+        verify(eventRepository).searchByStartDate("전시", null, businessDate, pageable);
+    }
+
+    @Test
+    void findEvents_withoutStatus_passesNoStatusPredicateAndSeoulBusinessDate() {
+        Pageable pageable = PageRequest.of(0, 10);
+        LocalDate businessDate = LocalDate.now(ZoneId.of("Asia/Seoul"));
+        when(eventRepository.searchByStartDate(null, null, businessDate, pageable))
+                .thenReturn(new PageImpl<>(List.of(), pageable, 0));
+
+        Page<EventSummaryResponse> result = eventQueryService.findEvents(null, null, pageable);
+
+        assertThat(result).isEmpty();
+        verify(eventRepository).searchByStartDate(null, null, businessDate, pageable);
+    }
+
+    @Test
+    void findEvents_acceptsCaseInsensitiveOngoingStatus() {
+        Pageable pageable = PageRequest.of(0, 10);
+        LocalDate businessDate = LocalDate.now(ZoneId.of("Asia/Seoul"));
+        when(eventRepository.searchByStartDate("전시", "ONGOING", businessDate, pageable))
+                .thenReturn(new PageImpl<>(List.of(), pageable, 0));
+
+        Page<EventSummaryResponse> result = eventQueryService.findEvents("전시", " ongoing ", pageable);
+
+        assertThat(result).isEmpty();
+        verify(eventRepository).searchByStartDate("전시", "ONGOING", businessDate, pageable);
+    }
+
+    @Test
+    void findEvents_acceptsEndedStatus() {
+        Pageable pageable = PageRequest.of(0, 10);
+        LocalDate businessDate = LocalDate.now(ZoneId.of("Asia/Seoul"));
+        when(eventRepository.searchByStartDate(null, "ENDED", businessDate, pageable))
+                .thenReturn(new PageImpl<>(List.of(), pageable, 0));
+
+        Page<EventSummaryResponse> result = eventQueryService.findEvents(null, "ENDED", pageable);
+
+        assertThat(result).isEmpty();
+        verify(eventRepository).searchByStartDate(null, "ENDED", businessDate, pageable);
+    }
+
+    @Test
+    void findEvents_usesLatestApplyDateBranchAndIgnoresCoordinates() {
+        Pageable pageable = PageRequest.of(0, 10);
+        LocalDate businessDate = LocalDate.now(ZoneId.of("Asia/Seoul"));
+        when(eventRepository.searchByLatestApplyDate("전시", null, businessDate, pageable))
+                .thenReturn(new PageImpl<>(List.of(), pageable, 0));
+
+        Page<EventSummaryResponse> result = eventQueryService.findEvents(
+                "전시", null, " latest ", "not-a-coordinate", "also-not-a-coordinate", pageable);
+
+        assertThat(result).isEmpty();
+        verify(eventRepository).searchByLatestApplyDate("전시", null, businessDate, pageable);
+    }
+
+    @Test
+    void findEvents_usesNearestBranchWithValidatedCoordinates() {
+        Pageable pageable = PageRequest.of(0, 10);
+        LocalDate businessDate = LocalDate.now(ZoneId.of("Asia/Seoul"));
+        when(eventRepository.searchByNearestLocation(
+                        "전시", "ONGOING", businessDate, 37.5665, 126.9780, pageable))
+                .thenReturn(new PageImpl<>(List.of(), pageable, 0));
+
+        Page<EventSummaryResponse> result = eventQueryService.findEvents(
+                "전시", " ongoing ", "nearest", "37.5665", "126.9780", pageable);
+
+        assertThat(result).isEmpty();
+        verify(eventRepository).searchByNearestLocation(
+                "전시", "ONGOING", businessDate, 37.5665, 126.9780, pageable);
+    }
+
+    @Test
+    void findEvents_rejectsInvalidSortModeWithTypedEventException() {
+        Pageable pageable = PageRequest.of(0, 10);
+
+        assertThatThrownBy(() -> eventQueryService.findEvents(null, null, "POPULAR", null, null, pageable))
+                .isInstanceOf(InvalidEventSortModeException.class);
+        verifyNoInteractions(eventRepository);
+    }
+
+    @Test
+    void findEvents_rejectsMissingMalformedAndOutOfRangeNearestCoordinates() {
+        Pageable pageable = PageRequest.of(0, 10);
+
+        assertThatThrownBy(() -> eventQueryService.findEvents(null, null, "NEAREST", "37.5", null, pageable))
+                .isInstanceOf(InvalidEventCoordinatesException.class);
+        assertThatThrownBy(() -> eventQueryService.findEvents(null, null, "NEAREST", "NaN", "126.9", pageable))
+                .isInstanceOf(InvalidEventCoordinatesException.class);
+        assertThatThrownBy(() -> eventQueryService.findEvents(null, null, "NEAREST", "91", "126.9", pageable))
+                .isInstanceOf(InvalidEventCoordinatesException.class);
+        verifyNoInteractions(eventRepository);
+    }
+
+    @Test
+    void findEvents_rejectsInvalidStatusWithTypedEventException() {
+        Pageable pageable = PageRequest.of(0, 10);
+
+        assertThatThrownBy(() -> eventQueryService.findEvents(null, "UPCOMING", pageable))
+                .isInstanceOf(InvalidEventStatusException.class);
+        verifyNoInteractions(eventRepository);
     }
 
     @Test
