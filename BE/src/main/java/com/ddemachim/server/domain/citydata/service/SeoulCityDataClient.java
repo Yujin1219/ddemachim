@@ -1,7 +1,9 @@
 package com.ddemachim.server.domain.citydata.service;
 
 import com.ddemachim.server.global.properties.SeoulCityDataProperties;
+import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
 import org.springframework.stereotype.Component;
@@ -14,6 +16,7 @@ public class SeoulCityDataClient {
             DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm");
 
     private final SeoulCityDataProperties properties;
+    private final ObjectMapper objectMapper = new ObjectMapper();
     private final RestClient restClient;
 
     public SeoulCityDataClient(SeoulCityDataProperties properties) {
@@ -22,10 +25,11 @@ public class SeoulCityDataClient {
     }
 
     CityDataAreaCongestion fetchCurrentCongestion(CityDataArea area) {
-        JsonNode body = restClient.get()
+        String responseBody = restClient.get()
                 .uri("/{key}/json/citydata/1/5/{areaCode}", properties.getApiKey(), area.areaCode())
                 .retrieve()
-                .body(JsonNode.class);
+                .body(String.class);
+        JsonNode body = parseBody(responseBody);
         JsonNode livePopulation = body == null
                 ? null
                 : body.path("CITYDATA").path("LIVE_PPLTN_STTS").path(0);
@@ -41,6 +45,17 @@ public class SeoulCityDataClient {
                 integer(livePopulation, "AREA_PPLTN_MIN"),
                 integer(livePopulation, "AREA_PPLTN_MAX"),
                 dateTime(livePopulation, "PPLTN_TIME"));
+    }
+
+    private JsonNode parseBody(String responseBody) {
+        if (responseBody == null || responseBody.isBlank()) {
+            throw new IllegalStateException("서울 실시간 도시데이터 응답이 비어 있습니다.");
+        }
+        try {
+            return objectMapper.readTree(responseBody);
+        } catch (JsonProcessingException exception) {
+            throw new IllegalStateException("서울 실시간 도시데이터 JSON 응답을 파싱할 수 없습니다.", exception);
+        }
     }
 
     private static String text(JsonNode node, String field, String fallback) {

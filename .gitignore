@@ -48,6 +48,8 @@ BE/.env.*
 
 # Spring Boot local config
 BE/src/main/resources/application-local.yml
+BE/src/main/resources/application.yml
+BE/src/main/resources/application.yaml
 BE/src/main/resources/application-local.properties
 
 

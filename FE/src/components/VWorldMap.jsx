@@ -78,6 +78,32 @@ function congestionAreaStyle(feature) {
   })
 }
 
+function normalizeCongestionAreaCode(value) {
+  return typeof value === 'string' ? value.trim().toUpperCase() : ''
+}
+
+function congestionAreaFromFeature(feature) {
+  return {
+    areaCode: feature.get('areaCode') || '',
+    areaName: feature.get('areaName') || '혼잡도 영역',
+    category: feature.get('category') || '',
+    congestionLevel: feature.get('congestionLevel') || '정보없음',
+    congestionMessage: feature.get('congestionMessage') || null,
+    populationMin: feature.get('populationMin') ?? null,
+    populationMax: feature.get('populationMax') ?? null,
+    populationTime: feature.get('populationTime') || null,
+    updatedAt: feature.get('congestionUpdatedAt') || null,
+    stale: feature.get('congestionStale') ?? true,
+  }
+}
+
+function resolveCongestionResponse(data) {
+  if (!data || typeof data !== 'object') return null
+  if (Array.isArray(data.areas)) return data
+  if (data.result && typeof data.result === 'object' && Array.isArray(data.result.areas)) return data.result
+  return null
+}
+
 export default function VWorldMap({
   center = DEFAULT_CENTER,
   zoom = 15,
@@ -96,7 +122,10 @@ export default function VWorldMap({
   placeLimit = 300,
   congestionAreaUrl = '',
   congestionAreaKey = '',
+  congestionData = null,
+  showCongestionAreas = true,
   onPlaceClick = null,
+  onCongestionAreaClick = null,
   onPlacesChange = null,
 }) {
   const targetRef = useRef(null)
@@ -114,7 +143,9 @@ export default function VWorldMap({
   const placeMarkerFilterRef = useRef(placeMarkerFilter)
   const placeMarkerLabelRef = useRef(placeMarkerLabel)
   const onPlaceClickRef = useRef(onPlaceClick)
+  const onCongestionAreaClickRef = useRef(onCongestionAreaClick)
   const onPlacesChangeRef = useRef(onPlacesChange)
+  const congestionDataRef = useRef(congestionData)
   const [liveUserLocation, setLiveUserLocation] = useState(userLocation)
   const [tileError, setTileError] = useState(false)
   const apiKey = import.meta.env.VITE_VWORLD_API_KEY?.trim()
@@ -126,8 +157,55 @@ export default function VWorldMap({
     placeMarkerFilterRef.current = placeMarkerFilter
     placeMarkerLabelRef.current = placeMarkerLabel
     onPlaceClickRef.current = onPlaceClick
+    onCongestionAreaClickRef.current = onCongestionAreaClick
     onPlacesChangeRef.current = onPlacesChange
-  }, [loadPlacesInBounds, placeMarkerFilter, placeMarkerLabel, onPlaceClick, onPlacesChange])
+    congestionDataRef.current = congestionData
+  }, [loadPlacesInBounds, placeMarkerFilter, placeMarkerLabel, onPlaceClick, onCongestionAreaClick, onPlacesChange, congestionData])
+
+  function applyCongestionData(data) {
+    const layer = congestionAreaLayerRef.current
+    if (!layer) return
+
+    const response = resolveCongestionResponse(data)
+    const vectorSource = layer.getSource()
+    const features = vectorSource.getFeatures()
+    const areasByCode = new Map(
+      (Array.isArray(response?.areas) ? response.areas : [])
+        .map((area) => [normalizeCongestionAreaCode(area?.areaCode), area])
+        .filter(([areaCode]) => areaCode),
+    )
+    let matchedCount = 0
+
+    features.forEach((feature) => {
+      const staticAreaCode = feature.get('areaCode') || ''
+      const area = areasByCode.get(normalizeCongestionAreaCode(staticAreaCode))
+      if (area) matchedCount += 1
+      feature.setProperties({
+        areaCode: area?.areaCode || staticAreaCode,
+        areaName: area?.areaName || feature.get('areaName') || '혼잡도 영역',
+        category: area?.category || feature.get('category') || '',
+        congestionLevel: area?.congestionLevel || '정보없음',
+        congestionMessage: area?.congestionMessage || null,
+        populationMin: area?.populationMin ?? null,
+        populationMax: area?.populationMax ?? null,
+        populationTime: area?.populationTime || null,
+        congestionUpdatedAt: response?.updatedAt || null,
+        congestionStale: response ? Boolean(response.stale) : true,
+      }, false)
+      feature.changed()
+    })
+
+    if (import.meta.env.DEV) {
+      console.info('[jongno-congestion] applied to map', {
+        featureCount: features.length,
+        matchedCount,
+        dataCount: areasByCode.size,
+        stale: response ? Boolean(response.stale) : true,
+      })
+    }
+    vectorSource.changed()
+    layer.changed()
+  }
 
   function clearPlaceOverlays(map) {
     placeOverlaysRef.current.forEach((overlay) => map.removeOverlay(overlay))
@@ -324,11 +402,25 @@ export default function VWorldMap({
       source: new VectorSource(),
       style: congestionAreaStyle,
       zIndex: 1,
+      visible: showCongestionAreas,
       properties: { name: 'jongno-congestion-areas' },
     })
     map.addLayer(congestionAreaLayer)
     congestionAreaLayerRef.current = congestionAreaLayer
     mapRef.current = map
+
+    const handleCongestionAreaClick = (event) => {
+      const feature = map.forEachFeatureAtPixel(
+        event.pixel,
+        (candidate) => candidate,
+        {
+          layerFilter: (layer) => layer === congestionAreaLayer,
+          hitTolerance: 4,
+        },
+      )
+      onCongestionAreaClickRef.current?.(feature ? congestionAreaFromFeature(feature) : null)
+    }
+    if (interactive) map.on('singleclick', handleCongestionAreaClick)
 
     const loadVisiblePlaces = () => {
       const loader = loadPlacesRef.current
@@ -363,6 +455,7 @@ export default function VWorldMap({
 
     return () => {
       map.un('moveend', loadVisiblePlaces)
+      if (interactive) map.un('singleclick', handleCongestionAreaClick)
       if (loadVisiblePlacesRef.current === loadVisiblePlaces) loadVisiblePlacesRef.current = null
       placeAbortRef.current?.abort()
       clearPlaceOverlays(map)
@@ -398,8 +491,20 @@ export default function VWorldMap({
           dataProjection: 'EPSG:4326',
           featureProjection: 'EPSG:3857',
         })
+        features.forEach((feature) => {
+          feature.setProperties({
+            congestionLevel: feature.get('congestionLevel') || '정보없음',
+            congestionMessage: null,
+            populationMin: null,
+            populationMax: null,
+            populationTime: null,
+            congestionUpdatedAt: null,
+            congestionStale: true,
+          }, false)
+        })
         vectorSource.clear()
         vectorSource.addFeatures(features)
+        applyCongestionData(congestionDataRef.current)
       })
       .catch((error) => {
         if (error?.name === 'AbortError') return
@@ -411,6 +516,14 @@ export default function VWorldMap({
       controller.abort()
     }
   }, [congestionAreaUrl, congestionAreaKey])
+
+  useEffect(() => {
+    applyCongestionData(congestionData)
+  }, [congestionData])
+
+  useEffect(() => {
+    congestionAreaLayerRef.current?.setVisible(showCongestionAreas)
+  }, [showCongestionAreas])
 
   useEffect(() => {
     if (lastPlaceRequestKeyRef.current === placeRequestKey) return
