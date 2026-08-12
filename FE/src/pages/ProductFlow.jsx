@@ -825,6 +825,7 @@ function MapHome({ go }) {
       <MapStage
         mapProps={{
           loadPlacesInBounds: (bounds) => fetchMapPlaces({ ...bounds, ...mapApiFilterParams() }),
+          congestionAreaUrl: '/data/jongno-city-areas.geojson',
           placeMarkerFilter: filterMapPlace,
           placeMarkerFilterKey: `${activeMapFilter.type}:${activeMapFilter.codes?.join(',') || activeMapFilter.code}`,
           placeRequestKey: `${activeMapFilter.type}:${activeMapFilter.codes?.join(',') || activeMapFilter.code}`,

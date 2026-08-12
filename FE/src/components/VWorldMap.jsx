@@ -2,16 +2,27 @@ import { useEffect, useRef, useState } from 'react'
 import Map from 'ol/Map.js'
 import Overlay from 'ol/Overlay.js'
 import View from 'ol/View.js'
+import GeoJSON from 'ol/format/GeoJSON.js'
 import TileLayer from 'ol/layer/Tile.js'
+import VectorLayer from 'ol/layer/Vector.js'
+import VectorSource from 'ol/source/Vector.js'
 import XYZ from 'ol/source/XYZ.js'
 import { boundingExtent } from 'ol/extent.js'
 import { fromLonLat, transformExtent } from 'ol/proj.js'
+import { Fill, Stroke, Style } from 'ol/style.js'
 import 'ol/ol.css'
 import '../vworld-map.css'
 
 const DEFAULT_CENTER = [126.978, 37.5665]
 const CLUSTER_ZOOM_MAX = 14.5
 const CLUSTER_PIXEL_RADIUS = 44
+const CONGESTION_AREA_COLORS = {
+  여유: { fill: 'rgba(22, 163, 74, 0.18)', stroke: 'rgba(22, 163, 74, 0.58)' },
+  보통: { fill: 'rgba(8, 145, 178, 0.17)', stroke: 'rgba(8, 145, 178, 0.58)' },
+  '약간 붐빔': { fill: 'rgba(234, 88, 12, 0.19)', stroke: 'rgba(234, 88, 12, 0.62)' },
+  붐빔: { fill: 'rgba(220, 38, 38, 0.21)', stroke: 'rgba(220, 38, 38, 0.66)' },
+  정보없음: { fill: 'rgba(51, 65, 85, 0.10)', stroke: 'rgba(51, 65, 85, 0.34)' },
+}
 
 function normalizeCenter(center) {
   if (!Array.isArray(center) || center.length < 2) return DEFAULT_CENTER
@@ -55,6 +66,18 @@ function markerSizeClass(map) {
   return 'is-zoom-far'
 }
 
+function congestionAreaStyle(feature) {
+  const level = feature.get('congestionLevel') || '정보없음'
+  const colors = CONGESTION_AREA_COLORS[level] || CONGESTION_AREA_COLORS.정보없음
+  return new Style({
+    fill: new Fill({ color: colors.fill }),
+    stroke: new Stroke({
+      color: colors.stroke,
+      width: level === '정보없음' ? 1 : 1.4,
+    }),
+  })
+}
+
 export default function VWorldMap({
   center = DEFAULT_CENTER,
   zoom = 15,
@@ -72,15 +95,19 @@ export default function VWorldMap({
   fitUserLocation = false,
   placeRequestKey = '',
   placeLimit = 300,
+  congestionAreaUrl = '',
+  congestionAreaKey = '',
   onPlaceClick = null,
   onPlacesChange = null,
 }) {
   const targetRef = useRef(null)
   const mapRef = useRef(null)
   const locationOverlayRef = useRef(null)
+  const congestionAreaLayerRef = useRef(null)
   const placeOverlaysRef = useRef([])
   const rawPlacesRef = useRef([])
   const placeAbortRef = useRef(null)
+  const congestionAreaAbortRef = useRef(null)
   const fittedPlaceKeyRef = useRef('')
   const loadVisiblePlacesRef = useRef(null)
   const lastPlaceRequestKeyRef = useRef(placeRequestKey)
@@ -294,6 +321,14 @@ export default function VWorldMap({
       controls: [],
       interactions: interactive ? undefined : [],
     })
+    const congestionAreaLayer = new VectorLayer({
+      source: new VectorSource(),
+      style: congestionAreaStyle,
+      zIndex: 1,
+      properties: { name: 'jongno-congestion-areas' },
+    })
+    map.addLayer(congestionAreaLayer)
+    congestionAreaLayerRef.current = congestionAreaLayer
     mapRef.current = map
 
     const loadVisiblePlaces = () => {
@@ -332,12 +367,51 @@ export default function VWorldMap({
       if (loadVisiblePlacesRef.current === loadVisiblePlaces) loadVisiblePlacesRef.current = null
       placeAbortRef.current?.abort()
       clearPlaceOverlays(map)
+      congestionAreaAbortRef.current?.abort()
+      if (congestionAreaLayerRef.current === congestionAreaLayer) congestionAreaLayerRef.current = null
       source.un('tileloaderror', handleTileError)
       source.un('tileloadend', handleTileSuccess)
       map.setTarget(undefined)
       mapRef.current = null
     }
   }, [apiKey, interactive, Boolean(loadPlacesInBounds), placeLimit, clusterPlaces, fitPlaceMarkers])
+
+  useEffect(() => {
+    const layer = congestionAreaLayerRef.current
+    if (!layer) return undefined
+
+    const vectorSource = layer.getSource()
+    vectorSource.clear()
+    congestionAreaAbortRef.current?.abort()
+    if (!congestionAreaUrl) return undefined
+
+    const controller = new AbortController()
+    congestionAreaAbortRef.current = controller
+
+    fetch(congestionAreaUrl, { signal: controller.signal })
+      .then((response) => {
+        if (!response.ok) throw new Error(`GeoJSON ${congestionAreaUrl} failed: ${response.status}`)
+        return response.json()
+      })
+      .then((geojson) => {
+        if (controller.signal.aborted) return
+        const features = new GeoJSON().readFeatures(geojson, {
+          dataProjection: 'EPSG:4326',
+          featureProjection: 'EPSG:3857',
+        })
+        vectorSource.clear()
+        vectorSource.addFeatures(features)
+      })
+      .catch((error) => {
+        if (error?.name === 'AbortError') return
+        console.error('혼잡도 영역 정보를 불러오지 못했어요.', error)
+        vectorSource.clear()
+      })
+
+    return () => {
+      controller.abort()
+    }
+  }, [congestionAreaUrl, congestionAreaKey])
 
   useEffect(() => {
     if (lastPlaceRequestKeyRef.current === placeRequestKey) return
