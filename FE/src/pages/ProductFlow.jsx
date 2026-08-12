@@ -600,6 +600,7 @@ function MapHome({ go }) {
   const [filter, setFilter] = useState('전체');
   const [activeMapFilter, setActiveMapFilter] = useState(ALL_MAP_FILTER);
   const [isMapFilterOpen, setIsMapFilterOpen] = useState(false);
+  const [isCongestionLayerVisible, setIsCongestionLayerVisible] = useState(true);
   const [categorySourcePlaces, setCategorySourcePlaces] = useState([]);
   const [isLocated, setIsLocated] = useState(false);
   const [isNearbySheetCollapsed, setIsNearbySheetCollapsed] = useState(false);
@@ -718,6 +719,7 @@ function MapHome({ go }) {
         mapProps={{
           loadPlacesInBounds: (bounds) => fetchMapPlaces({ ...bounds, ...mapApiFilterParams() }),
           congestionAreaUrl: '/data/jongno-city-areas.geojson',
+          showCongestionAreas: isCongestionLayerVisible,
           placeMarkerFilter: filterMapPlace,
           placeMarkerFilterKey: `${activeMapFilter.type}:${activeMapFilter.codes?.join(',') || activeMapFilter.code}`,
           placeRequestKey: `${activeMapFilter.type}:${activeMapFilter.codes?.join(',') || activeMapFilter.code}`,
@@ -754,6 +756,14 @@ function MapHome({ go }) {
                 {item.label}
               </button>
             ))}
+            <button
+              className={`map-filter-chip map-congestion-toggle ${isCongestionLayerVisible ? 'is-active' : ''}`}
+              onClick={() => setIsCongestionLayerVisible((current) => !current)}
+              type="button"
+              aria-pressed={isCongestionLayerVisible}
+            >
+              혼잡도
+            </button>
           </div>
         </motion.header>
         <MapPlacePulse />

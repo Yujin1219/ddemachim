@@ -96,6 +96,7 @@ export default function VWorldMap({
   placeLimit = 300,
   congestionAreaUrl = '',
   congestionAreaKey = '',
+  showCongestionAreas = true,
   onPlaceClick = null,
   onPlacesChange = null,
 }) {
@@ -324,6 +325,7 @@ export default function VWorldMap({
       source: new VectorSource(),
       style: congestionAreaStyle,
       zIndex: 1,
+      visible: showCongestionAreas,
       properties: { name: 'jongno-congestion-areas' },
     })
     map.addLayer(congestionAreaLayer)
@@ -411,6 +413,10 @@ export default function VWorldMap({
       controller.abort()
     }
   }, [congestionAreaUrl, congestionAreaKey])
+
+  useEffect(() => {
+    congestionAreaLayerRef.current?.setVisible(showCongestionAreas)
+  }, [showCongestionAreas])
 
   useEffect(() => {
     if (lastPlaceRequestKeyRef.current === placeRequestKey) return

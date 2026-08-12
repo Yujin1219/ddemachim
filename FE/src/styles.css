@@ -640,6 +640,7 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, [role='button
 .map-filter-chip.is-walk { --filter-text: #0f766e; --filter-bg: rgba(240,253,250,.92); --filter-border: rgba(20,184,166,.3); --filter-active-text: #115e59; --filter-active-bg: rgba(204,251,241,.98); --filter-active-border: rgba(15,118,110,.46); }
 .map-filter-chip.is-photo-spot { --filter-text: #4338ca; --filter-bg: rgba(238,242,255,.92); --filter-border: rgba(79,70,229,.28); --filter-active-text: #3730a3; --filter-active-bg: rgba(224,231,255,.98); --filter-active-border: rgba(79,70,229,.45); }
 .map-filter-chip.is-filming { --filter-text: #7e22ce; --filter-bg: rgba(250,245,255,.92); --filter-border: rgba(147,51,234,.3); --filter-active-text: #6b21a8; --filter-active-bg: rgba(243,232,255,.98); --filter-active-border: rgba(147,51,234,.48); }
+.map-congestion-toggle { --filter-text: #334155; --filter-bg: rgba(255,255,255,.86); --filter-border: rgba(148,163,184,.34); --filter-active-text: #155e75; --filter-active-bg: rgba(207,250,254,.94); --filter-active-border: rgba(8,145,178,.42); }
 .map-location-button { border-radius: var(--radius-control); box-shadow: 0 7px 18px rgba(24,40,61,.10); }
 .bottom-sheet { padding-top: 26px; border-radius: 20px 20px 0 0; background: rgba(246,248,251,.97); box-shadow: 0 -10px 24px rgba(24,40,61,.08); }
 .sheet-handle { width: 36px; height: 3px; border-radius: 2px; background: #b9c5d3; }
