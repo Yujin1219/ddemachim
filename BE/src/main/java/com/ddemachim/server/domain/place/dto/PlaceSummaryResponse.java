@@ -1,6 +1,7 @@
 package com.ddemachim.server.domain.place.dto;
 
 import com.ddemachim.server.domain.place.entity.Place;
+import java.util.List;
 
 /** 장소 목록 조회용 응답. */
 public record PlaceSummaryResponse(
@@ -14,9 +15,11 @@ public record PlaceSummaryResponse(
         Double longitude,
         String phone,
         String[] tags,
+        List<String> filmingContentTypes,
         String thumbnailUrl) {
 
-    public static PlaceSummaryResponse of(Place place, String thumbnailUrl) {
+    public static PlaceSummaryResponse of(
+            Place place, List<String> filmingContentTypes, String thumbnailUrl) {
         Double latitude = place.getLocation() != null ? place.getLocation().getY() : null;
         Double longitude = place.getLocation() != null ? place.getLocation().getX() : null;
 
@@ -31,6 +34,7 @@ public record PlaceSummaryResponse(
                 longitude,
                 place.getPhone(),
                 place.getTags(),
+                filmingContentTypes,
                 thumbnailUrl);
     }
 }

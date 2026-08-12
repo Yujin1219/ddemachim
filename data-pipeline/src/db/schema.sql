@@ -128,6 +128,8 @@ CREATE TABLE IF NOT EXISTS filming_location (
     media_content_id    bigint REFERENCES media_content(id) ON DELETE SET NULL, -- null이면 TMDB 매칭 전
     match_confidence    numeric(4,3),  -- 0.000 ~ 1.000, null이면 미계산
     match_status        varchar(20) NOT NULL DEFAULT 'REVIEW_REQUIRED', -- AUTO_MATCH / REVIEW_REQUIRED / NO_MATCH
+    content_type        varchar(20) CONSTRAINT chk_filming_location_content_type
+                        CHECK (content_type IN ('DRAMA', 'VARIETY', 'MOVIE')),
     scene_description   text,
     source              varchar(30) NOT NULL,
     source_id           varchar(100) NOT NULL,
@@ -136,6 +138,7 @@ CREATE TABLE IF NOT EXISTS filming_location (
 
 CREATE INDEX IF NOT EXISTS idx_filming_location_place_id ON filming_location (place_id);
 CREATE INDEX IF NOT EXISTS idx_filming_location_media_content_id ON filming_location (media_content_id);
+CREATE INDEX IF NOT EXISTS idx_filming_location_content_type ON filming_location (content_type);
 
 -- 배우/감독 등 인물 (TMDB person_id로 중복 방지)
 CREATE TABLE IF NOT EXISTS person (

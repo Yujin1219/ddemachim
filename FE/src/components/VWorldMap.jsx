@@ -4,6 +4,7 @@ import Overlay from 'ol/Overlay.js'
 import View from 'ol/View.js'
 import TileLayer from 'ol/layer/Tile.js'
 import XYZ from 'ol/source/XYZ.js'
+import { boundingExtent } from 'ol/extent.js'
 import { fromLonLat, transformExtent } from 'ol/proj.js'
 import 'ol/ol.css'
 import '../vworld-map.css'
@@ -65,6 +66,9 @@ export default function VWorldMap({
   loadPlacesInBounds = null,
   placeMarkerFilter = null,
   placeMarkerFilterKey = '',
+  placeMarkerLabel = null,
+  clusterPlaces = true,
+  fitPlaceMarkers = false,
   placeRequestKey = '',
   placeLimit = 300,
   onPlaceClick = null,
@@ -76,10 +80,12 @@ export default function VWorldMap({
   const placeOverlaysRef = useRef([])
   const rawPlacesRef = useRef([])
   const placeAbortRef = useRef(null)
+  const fittedPlaceKeyRef = useRef('')
   const loadVisiblePlacesRef = useRef(null)
   const lastPlaceRequestKeyRef = useRef(placeRequestKey)
   const loadPlacesRef = useRef(loadPlacesInBounds)
   const placeMarkerFilterRef = useRef(placeMarkerFilter)
+  const placeMarkerLabelRef = useRef(placeMarkerLabel)
   const onPlaceClickRef = useRef(onPlaceClick)
   const onPlacesChangeRef = useRef(onPlacesChange)
   const [liveUserLocation, setLiveUserLocation] = useState(userLocation)
@@ -91,9 +97,10 @@ export default function VWorldMap({
   useEffect(() => {
     loadPlacesRef.current = loadPlacesInBounds
     placeMarkerFilterRef.current = placeMarkerFilter
+    placeMarkerLabelRef.current = placeMarkerLabel
     onPlaceClickRef.current = onPlaceClick
     onPlacesChangeRef.current = onPlacesChange
-  }, [loadPlacesInBounds, placeMarkerFilter, onPlaceClick, onPlacesChange])
+  }, [loadPlacesInBounds, placeMarkerFilter, placeMarkerLabel, onPlaceClick, onPlacesChange])
 
   function clearPlaceOverlays(map) {
     placeOverlaysRef.current.forEach((overlay) => map.removeOverlay(overlay))
@@ -113,9 +120,24 @@ export default function VWorldMap({
     const marker = document.createElement('button')
     marker.className = `vworld-place-marker is-${placeMarkerTone(place)} ${markerSizeClass(map)}`
     marker.type = 'button'
-    marker.setAttribute('aria-label', `${place.name} 장소 보기`)
+    const markerLabel = placeMarkerLabelRef.current?.(place)
+    const hasMarkerLabel = markerLabel !== undefined && markerLabel !== null && markerLabel !== ''
+    if (hasMarkerLabel) {
+      marker.classList.add('is-numbered')
+      const markerNumber = Number(markerLabel)
+      if (Number.isFinite(markerNumber) && markerNumber > 0) {
+        const markerIndex = markerNumber - 1
+        const radius = 18 + Math.floor(markerIndex / 4) * 10
+        const angle = (markerIndex % 4) * (Math.PI / 2) - (Math.PI / 2)
+        marker.style.setProperty('--marker-offset-x', `${Math.round(Math.cos(angle) * radius)}px`)
+        marker.style.setProperty('--marker-offset-y', `${Math.round(Math.sin(angle) * radius)}px`)
+      }
+    }
+    marker.setAttribute('aria-label', hasMarkerLabel ? `${markerLabel}번 ${place.name} 장소 보기` : `${place.name} 장소 보기`)
     marker.title = place.name
-    marker.innerHTML = '<span></span>'
+    const markerContent = document.createElement('span')
+    markerContent.textContent = hasMarkerLabel ? String(markerLabel) : ''
+    marker.appendChild(markerContent)
     marker.addEventListener('click', () => onPlaceClickRef.current?.(place))
 
     const overlay = new Overlay({
@@ -194,15 +216,39 @@ export default function VWorldMap({
     const visiblePlaces = typeof filterPlace === 'function' ? places.filter(filterPlace) : places
     const zoomLevel = map.getView().getZoom() ?? safeZoom
 
-    if (zoomLevel <= CLUSTER_ZOOM_MAX) {
+    if (clusterPlaces && zoomLevel <= CLUSTER_ZOOM_MAX) {
       buildClusters(map, visiblePlaces).forEach((cluster) => {
         if (cluster.places.length > 1) addClusterOverlay(map, cluster)
         else addPlaceOverlay(map, cluster.places[0])
       })
+      fitVisiblePlaces(map, visiblePlaces)
       return
     }
 
     visiblePlaces.forEach((place) => addPlaceOverlay(map, place))
+    fitVisiblePlaces(map, visiblePlaces)
+  }
+
+  function fitVisiblePlaces(map, places) {
+    if (!fitPlaceMarkers) return
+    const coordinates = places
+      .map(getPlaceCoordinate)
+      .filter(Boolean)
+      .map((coordinate) => fromLonLat(coordinate))
+    if (!coordinates.length) return
+    const coordinateKey = coordinates.map((coordinate) => coordinate.join(',')).join('|')
+    if (fittedPlaceKeyRef.current === coordinateKey) return
+    fittedPlaceKeyRef.current = coordinateKey
+    if (coordinates.length === 1) {
+      map.getView().setCenter(coordinates[0])
+      map.getView().setZoom(17)
+      return
+    }
+    map.getView().fit(boundingExtent(coordinates), {
+      padding: [34, 34, 58, 34],
+      maxZoom: 17,
+      duration: 0,
+    })
   }
 
   useEffect(() => {
@@ -290,11 +336,12 @@ export default function VWorldMap({
       map.setTarget(undefined)
       mapRef.current = null
     }
-  }, [apiKey, interactive, Boolean(loadPlacesInBounds), placeLimit])
+  }, [apiKey, interactive, Boolean(loadPlacesInBounds), placeLimit, clusterPlaces, fitPlaceMarkers])
 
   useEffect(() => {
     if (lastPlaceRequestKeyRef.current === placeRequestKey) return
     lastPlaceRequestKeyRef.current = placeRequestKey
+    fittedPlaceKeyRef.current = ''
     loadVisiblePlacesRef.current?.()
   }, [placeRequestKey])
 

@@ -13,6 +13,7 @@ class EventDTO:
     event_type: str | None
     start_date: date | None
     end_date: date | None
+    event_time: str | None
     source: str
     source_id: str
     district: str | None
@@ -30,7 +31,7 @@ def _parse_yyyymmdd(value: str | None) -> date | None:
 
 
 def normalize_record(raw: dict[str, Any]) -> EventDTO | None:
-    """TourAPI areaBasedList2(+detailIntro2 eventstartdate/eventenddate/eventplace) 병합 레코드를 EventDTO로 변환."""
+    """TourAPI areaBasedList2(+detailIntro2) 병합 레코드를 EventDTO로 변환."""
     title = clean_text(raw.get("title"))
     content_id = raw.get("contentid")
     if title is None or content_id is None:
@@ -46,6 +47,7 @@ def normalize_record(raw: dict[str, Any]) -> EventDTO | None:
         event_type="FESTIVAL",  # contentTypeId=15는 TourAPI 분류상 전부 "축제공연행사" 대분류라 세분류 없음
         start_date=_parse_yyyymmdd(raw.get("eventstartdate")),
         end_date=_parse_yyyymmdd(raw.get("eventenddate")),
+        event_time=clean_text(raw.get("playtime")) or clean_text(raw.get("eventplaytime")),
         source="TOURAPI",
         source_id=str(content_id),
         district=district,

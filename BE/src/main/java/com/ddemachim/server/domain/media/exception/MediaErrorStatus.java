@@ -10,6 +10,10 @@ import org.springframework.http.HttpStatus;
 @RequiredArgsConstructor
 public enum MediaErrorStatus implements BaseErrorCode {
 
+    INVALID_FILMING_CONTENT_TYPE(
+            HttpStatus.BAD_REQUEST,
+            "MEDIA4001",
+            "지원하지 않는 촬영 콘텐츠 유형입니다. DRAMA, VARIETY, MOVIE 중 하나를 사용해야 합니다."),
     MEDIA_CONTENT_NOT_FOUND(HttpStatus.NOT_FOUND, "MEDIA4041", "찾을 수 없는 작품입니다."),
     ;
 

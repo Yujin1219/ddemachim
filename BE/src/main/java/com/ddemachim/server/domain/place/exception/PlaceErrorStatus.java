@@ -11,6 +11,10 @@ import org.springframework.http.HttpStatus;
 public enum PlaceErrorStatus implements BaseErrorCode {
 
     INVALID_PLACE_BOUNDS(HttpStatus.BAD_REQUEST, "PLACE4001", "잘못된 지도 영역 요청입니다."),
+    INVALID_FILMING_CONTENT_TYPE(
+            HttpStatus.BAD_REQUEST,
+            "PLACE4002",
+            "지원하지 않는 촬영 콘텐츠 유형입니다. DRAMA, VARIETY, MOVIE 중 하나를 사용해야 합니다."),
     PLACE_NOT_FOUND(HttpStatus.NOT_FOUND, "PLACE4041", "찾을 수 없는 장소입니다."),
     ;
 

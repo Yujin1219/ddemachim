@@ -11,6 +11,16 @@ import org.springframework.data.repository.query.Param;
 public interface PlaceRepository extends JpaRepository<Place, Long> {
 
     @Query(
+            """
+            select distinct fl.place.id as placeId, fl.contentType as contentType
+            from FilmingLocation fl
+            where fl.place.id in :placeIds
+            and fl.contentType is not null
+            """)
+    List<PlaceFilmingContentTypeProjection> findFilmingContentTypesByPlaceIds(
+            @Param("placeIds") List<Long> placeIds);
+
+    @Query(
             value =
                     """
                     select p.*
@@ -19,8 +29,24 @@ public interface PlaceRepository extends JpaRepository<Place, Long> {
                     where (:category is null or c.code = any(string_to_array(:category, ',')))
                     and (:district is null or p.district = :district)
                     and (:tag is null or :tag = any(p.tags))
+                    and (:filmingContentType is null or exists (
+                        select 1 from filming_location fl
+                        where fl.place_id = p.id
+                        and fl.content_type = :filmingContentType
+                    ))
                     and (:keyword is null or p.normalized_name like concat('%', cast(:keyword as text), '%'))
-                    order by p.id
+                    order by
+                        case
+                            when :tag = 'FILMING_LOCATION'
+                                and exists (
+                                    select 1
+                                    from place_image pi
+                                    where pi.place_id = p.id
+                                )
+                            then 0
+                            else 1
+                        end,
+                        p.id
                     """,
             countQuery =
                     """
@@ -30,6 +56,11 @@ public interface PlaceRepository extends JpaRepository<Place, Long> {
                     where (:category is null or c.code = any(string_to_array(:category, ',')))
                     and (:district is null or p.district = :district)
                     and (:tag is null or :tag = any(p.tags))
+                    and (:filmingContentType is null or exists (
+                        select 1 from filming_location fl
+                        where fl.place_id = p.id
+                        and fl.content_type = :filmingContentType
+                    ))
                     and (:keyword is null or p.normalized_name like concat('%', cast(:keyword as text), '%'))
                     """,
             nativeQuery = true)
@@ -37,6 +68,7 @@ public interface PlaceRepository extends JpaRepository<Place, Long> {
             @Param("category") String category,
             @Param("district") String district,
             @Param("tag") String tag,
+            @Param("filmingContentType") String filmingContentType,
             @Param("keyword") String keyword,
             Pageable pageable);
 
