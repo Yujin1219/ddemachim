@@ -63,7 +63,6 @@ import {
   routeOptionByMode,
   shouldLocateForDestinationSelection,
 } from '../utils/routeComparison.js';
-import { useCurrentLocation } from '../hooks/useCurrentLocation.js';
 import { useRouteComparison } from '../hooks/useRouteComparison.js';
 
 const routeGroups = {
@@ -91,6 +90,10 @@ const images = {
 
 const EXPLORE_PAGE_SIZE = 6;
 const KAKAO_MAP_TARGET_KEY = 'ddemachim:kakao-map-target';
+const TEMPORARY_JONGNO_ORIGIN = Object.freeze({
+  latitude: 37.5716,
+  longitude: 126.9769,
+});
 
 function writeKakaoMapTarget(place) {
   try {
@@ -1100,13 +1103,10 @@ function MapHome({ go, basketState, onBasketAdded, onBasketRefresh, onAuthRequir
   const routeDestination = normalizeRouteCoordinate(selectedPlace
     ? { latitude: selectedPlace.latitude, longitude: selectedPlace.longitude }
     : null);
-  const {
-    location,
-    status: locationStatus,
-    errorCode: locationErrorCode,
-    locate,
-    clear: clearLocation,
-  } = useCurrentLocation({ auto: Boolean(routeDestination) });
+  const location = TEMPORARY_JONGNO_ORIGIN;
+  const locationStatus = 'ready';
+  const locationErrorCode = null;
+  const locate = useCallback(() => Promise.resolve(TEMPORARY_JONGNO_ORIGIN), []);
   const {
     data: routeData,
     status: routeStatus,
@@ -1329,7 +1329,7 @@ function MapHome({ go, basketState, onBasketAdded, onBasketRefresh, onAuthRequir
           </div>
         )}
         <button className={`map-location-button ${locationStatus === 'ready' ? 'is-located' : ''}`} type="button" aria-label="내 위치" aria-pressed={locationStatus === 'ready'} aria-busy={locationStatus === 'locating' || undefined} onClick={locate}><LocateFixed aria-hidden="true" size={20} strokeWidth={2.2} /></button>
-        {locationStatus === 'ready' && <p className="map-location-status" role="status">현재 위치를 기준으로 보고 있어요</p>}
+        {locationStatus === 'ready' && <p className="map-location-status" role="status">광화문 인근을 출발지로 사용 중이에요</p>}
         {isCongestionLayerVisible && selectedCongestionArea && (
           <aside className="map-congestion-detail" aria-live="polite">
             <button type="button" aria-label="혼잡도 상세 닫기" onClick={() => setSelectedCongestionArea(null)}><X aria-hidden="true" size={16} strokeWidth={2.2} /></button>

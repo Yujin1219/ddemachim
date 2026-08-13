@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import test from 'node:test';
 
 import * as routeComparison from './routeComparison.js';
@@ -16,6 +17,15 @@ import {
 
 const origin = { latitude: 37.5665, longitude: 126.978 };
 const destination = { latitude: 37.5559, longitude: 126.9723 };
+
+test('MapHome uses the temporary Jongno origin contract', () => {
+  const source = readFileSync(new URL('../pages/ProductFlow.jsx', import.meta.url), 'utf8');
+
+  assert.match(source, /TEMPORARY_JONGNO_ORIGIN\s*=\s*Object\.freeze/);
+  assert.match(source, /latitude:\s*37\.5716/);
+  assert.match(source, /longitude:\s*126\.9769/);
+  assert.match(source, /const location = TEMPORARY_JONGNO_ORIGIN/);
+});
 
 test('normalizes finite coordinates and rejects invalid bounds', () => {
   assert.deepEqual(normalizeRouteCoordinate({ latitude: '37.5665', longitude: '126.978' }), origin);
