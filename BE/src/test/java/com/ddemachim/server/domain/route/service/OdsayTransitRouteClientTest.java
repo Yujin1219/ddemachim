@@ -92,6 +92,33 @@ class OdsayTransitRouteClientTest {
     }
 
     @Test
+    void invalidCandidate_isSkippedWhenAnotherValidCandidateExists() {
+        TestClient testClient = testClient("test-key");
+        testClient.server().expect(requestTo(containsString("/v1/api/searchPubTransPathT")))
+                .andRespond(withSuccess("""
+                        {"result":{"path":[
+                          {"info":{"totalTime":"not-a-number","totalDistance":4200},
+                           "subPath":[]},
+                          {"info":{"totalTime":22,"totalDistance":4200,
+                                    "totalWalk":1000,"payment":1500,
+                                    "busTransitCount":1,"subwayTransitCount":0},
+                           "subPath":[
+                             {"trafficType":3,"sectionTime":5,"distance":300},
+                             {"trafficType":2,"sectionTime":10,"distance":3200,
+                              "lane":[{"busNo":"유효노선"}]},
+                             {"trafficType":3,"sectionTime":7,"distance":700}
+                           ]}
+                        ]}}
+                        """, MediaType.APPLICATION_JSON));
+
+        RouteOption route = testClient.client().findTransit(ORIGIN, DESTINATION);
+
+        assertThat(route.durationSeconds()).isEqualTo(1_320);
+        assertThat(route.legs().get(1).routeName()).isEqualTo("유효노선");
+        testClient.server().verify();
+    }
+
+    @Test
     void blankKey_isReportedAsNotConfiguredWithoutCallingUpstream() {
         OdsayTransitRouteClient client = testClient("   ").client();
 

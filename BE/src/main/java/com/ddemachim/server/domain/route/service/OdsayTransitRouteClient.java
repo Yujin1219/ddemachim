@@ -177,18 +177,30 @@ public class OdsayTransitRouteClient implements TransitRouteProviderClient {
     private static JsonNode fastestPath(JsonNode paths) {
         JsonNode fastest = null;
         Integer fastestMinutes = null;
+        boolean invalidCandidateFound = false;
         for (JsonNode path : paths) {
             if (path == null || !path.isObject()) {
-                throw unavailable();
+                invalidCandidateFound = true;
+                continue;
             }
-            Integer totalTime = integer(path.path("info"), "totalTime");
+            Integer totalTime;
+            try {
+                totalTime = integer(path.path("info"), "totalTime");
+            } catch (RouteProviderException exception) {
+                invalidCandidateFound = true;
+                continue;
+            }
             if (totalTime == null || totalTime < 0) {
-                throw unavailable();
+                invalidCandidateFound = true;
+                continue;
             }
             if (fastestMinutes == null || totalTime < fastestMinutes) {
                 fastest = path;
                 fastestMinutes = totalTime;
             }
+        }
+        if (fastest == null && invalidCandidateFound) {
+            throw unavailable();
         }
         return fastest;
     }
