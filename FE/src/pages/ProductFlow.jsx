@@ -50,6 +50,7 @@ import {
   NearbyMotion,
   RouteMotion,
 } from '../components/MotionAssets';
+import CourseHome from '../components/CourseHome';
 import { CongestionBadge, CongestionPointBadge } from '../components/CongestionInfo';
 import ScrollOnboarding from '../components/ScrollOnboarding';
 import {
@@ -71,7 +72,7 @@ import { useRouteComparison } from '../hooks/useRouteComparison.js';
 const routeGroups = {
   auth: ['splash', 'intro', 'login', 'signup', 'onboarding', 'onboarding-schedule', 'onboarding-permissions'],
   discovery: ['map', 'explore', 'place', 'event-detail', 'search', 'search-empty', 'saved', 'trending', 'filming-locations', 'popups', 'live-talk'],
-  course: ['course-conditions', 'basket', 'basket-natural', 'basket-glass', 'compare', 'route-map'],
+  course: ['course-home', 'course-conditions', 'basket', 'basket-natural', 'basket-glass', 'compare', 'route-map'],
   travel: ['progress', 'arrival', 'navigation', 'reroute', 'reroute-applied', 'transit', 'taxi', 'nearby', 'nearby-added', 'nearby-arrival', 'active-course', 'next-stop', 'gps-error', 'taxi-handoff', 'offline', 'closed-place', 'stop-course'],
   filming: ['onsite', 'filming-work', 'filming-content', 'camera', 'scene-list', 'scene-detail', 'camera-permission', 'shot-result', 'photo-saved', 'image-missing', 'filming-restricted', 'report'],
   record: ['complete', 'record', 'saved-courses', 'record-detail', 'write-review', 'reviews', 'review-detail'],
@@ -79,7 +80,7 @@ const routeGroups = {
 };
 
 const routes = new Set(Object.values(routeGroups).flat());
-const rootRoutes = { map: 'map', explore: 'explore', course: 'course-conditions', my: 'my' };
+const rootRoutes = { map: 'map', explore: 'explore', course: 'course-home', my: 'my' };
 const images = {
   cafe: '/assets/figma/explore-cafe.jpeg',
   mapPlace: '/assets/figma/map-place.jpeg',
@@ -3079,6 +3080,7 @@ function RenderScreen({ screen, id, go, basketState, onBasketAdded, onBasketRetr
   else if (screen === 'saved') renderedScreen = <SavedConfirmation go={go} />;
   else if (screen === 'trending' || screen === 'filming-locations' || screen === 'popups') renderedScreen = <CollectionScreen screen={screen} go={go} />;
   else if (screen === 'live-talk') renderedScreen = <LiveTalk go={go} />;
+  else if (screen === 'course-home') renderedScreen = <CourseHome go={go} onNavigate={(tab) => go(rootRoutes[tab])} />;
   else if (screen === 'course-conditions') renderedScreen = <CourseConditions go={go} />;
   else if (screen === 'basket' || screen === 'basket-natural' || screen === 'basket-glass') renderedScreen = <CourseBasket screen={screen} go={go} basketState={basketState} onRetry={onBasketRetry} onAuthRequired={onAuthRequired} />;
   else if (screen === 'compare' || screen === 'route-map') renderedScreen = <CourseCompare screen={screen} go={go} />;
