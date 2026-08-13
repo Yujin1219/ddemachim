@@ -20,11 +20,18 @@ const destination = { latitude: 37.5559, longitude: 126.9723 };
 
 test('MapHome uses the temporary Jongno origin contract', () => {
   const source = readFileSync(new URL('../pages/ProductFlow.jsx', import.meta.url), 'utf8');
+  const mapHomeSource = source.match(/function MapHome\([\s\S]*?\n}\n\nfunction ExploreReveal/)?.[0];
 
+  assert.ok(mapHomeSource, 'MapHome source should be present');
   assert.match(source, /TEMPORARY_JONGNO_ORIGIN\s*=\s*Object\.freeze/);
   assert.match(source, /latitude:\s*37\.5716/);
   assert.match(source, /longitude:\s*126\.9769/);
-  assert.match(source, /const location = TEMPORARY_JONGNO_ORIGIN/);
+  assert.match(mapHomeSource, /const location\s*=\s*TEMPORARY_JONGNO_ORIGIN/);
+  assert.match(mapHomeSource, /useRouteComparison\(\{\s*origin:\s*location,\s*destination:\s*routeDestination\s*\}\)/);
+  assert.match(mapHomeSource, /userLocation:\s*location\s*\?\s*\[location\.longitude,\s*location\.latitude\]\s*:\s*null/);
+  assert.doesNotMatch(source, /\buseCurrentLocation\b/);
+  assert.doesNotMatch(mapHomeSource, /(?:navigator\.)?geolocation/i);
+  assert.match(mapHomeSource, /광화문 인근을 출발지로 사용 중이에요/);
 });
 
 test('normalizes finite coordinates and rejects invalid bounds', () => {
