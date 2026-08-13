@@ -1,4 +1,4 @@
-import React, { Fragment } from 'react';
+import React, { Fragment, useEffect } from 'react';
 
 import {
   buildKakaoTaxiHref,
@@ -31,6 +31,18 @@ function routeList(data) {
 function routeOption(data, mode) {
   const normalized = { routes: routeList(data) };
   return routeOptionByMode(normalized, mode);
+}
+
+export function visibleRouteModes(routeStatus, routeData) {
+  if (routeStatus !== 'ready') return ROUTE_MODES;
+  const transit = routeOption(routeData, 'TRANSIT');
+  return transit?.status === 'AVAILABLE'
+    ? ROUTE_MODES
+    : ROUTE_MODES.filter((mode) => mode !== 'TRANSIT');
+}
+
+export function resolveAvailableRouteMode(activeMode, modes) {
+  return modes.includes(activeMode) ? activeMode : modes[0] || 'WALK';
 }
 
 function routeMetric(option) {
@@ -181,10 +193,15 @@ export default function SelectedPlaceRoutePanel({
   onRetryRoute,
   taxiHref = null,
 }) {
-  const safeMode = ROUTE_MODES.includes(activeMode) ? activeMode : 'WALK';
-  const activeOption = routeOption(routeData, safeMode);
+  const visibleModes = visibleRouteModes(routeStatus, routeData);
+  const resolvedMode = resolveAvailableRouteMode(activeMode, visibleModes);
+  const activeOption = routeOption(routeData, resolvedMode);
   const destination = resolveDestination(selectedPlace);
-  const resolvedTaxiHref = taxiHref || (safeMode === 'TAXI' ? buildKakaoTaxiHref(destination) : null);
+  const resolvedTaxiHref = taxiHref || (resolvedMode === 'TAXI' ? buildKakaoTaxiHref(destination) : null);
+
+  useEffect(() => {
+    if (activeMode !== resolvedMode) onModeChange?.(resolvedMode);
+  }, [activeMode, onModeChange, resolvedMode]);
 
   return h(
     'section',
@@ -197,13 +214,13 @@ export default function SelectedPlaceRoutePanel({
     h(
       'div',
       { className: 'route-mode-tabs', role: 'group', 'aria-label': '이동 수단 선택' },
-      ROUTE_MODES.map((mode) => h(
+      visibleModes.map((mode) => h(
         'button',
         {
           key: mode,
           type: 'button',
-          className: `route-mode-tab${safeMode === mode ? ' is-active' : ''}`,
-          'aria-pressed': safeMode === mode,
+          className: `route-mode-tab${resolvedMode === mode ? ' is-active' : ''}`,
+          'aria-pressed': resolvedMode === mode,
           onClick: () => onModeChange?.(mode),
         },
         h('span', { className: 'route-mode-label' }, ROUTE_MODE_LABELS[mode]),
@@ -217,7 +234,7 @@ export default function SelectedPlaceRoutePanel({
       locationErrorCode,
       routeStatus,
       routeData,
-      activeMode: safeMode,
+      activeMode: resolvedMode,
       onRetryLocation,
       onRetryRoute,
     }),
@@ -226,7 +243,7 @@ export default function SelectedPlaceRoutePanel({
       'div',
       { className: 'selected-route-details' },
       activeOption?.status === 'AVAILABLE'
-        ? h(RouteDetails, { option: activeOption, mode: safeMode, taxiHref: resolvedTaxiHref })
+        ? h(RouteDetails, { option: activeOption, mode: resolvedMode, taxiHref: resolvedTaxiHref })
         : null,
     ),
   );

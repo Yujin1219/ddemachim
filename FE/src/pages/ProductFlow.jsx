@@ -1352,24 +1352,21 @@ function MapHome({ go, basketState, onBasketAdded, onBasketRefresh, onAuthRequir
           <button className="map-sheet-handle-button" type="button" aria-label={isNearbySheetCollapsed ? '주변 장소 패널 펼치기' : '주변 장소 패널 접기'} aria-expanded={!isNearbySheetCollapsed} onPointerDown={(event) => nearbySheetDragControls.start(event)} onClick={() => setIsNearbySheetCollapsed((current) => !current)}><span className="sheet-handle" /></button>
           {selectedPlace && <button className="selected-route-close" type="button" aria-label="선택한 장소 닫기" onClick={clearSelectedPlace}><X aria-hidden="true" size={18} strokeWidth={2.2} /></button>}
           <ScreenSection title={nearby.title} action={selectedPlace ? null : '전체보기'} onAction={() => go('explore')}><PlaceRow place={nearby.place} onClick={selectedPlace ? undefined : () => go(nearby.next, nearby.place.id)} /></ScreenSection>
-          {selectedPlace && <SelectedPlaceRoutePanel
-            selectedPlace={selectedPlace}
-            location={location}
-            locationStatus={locationStatus}
-            locationErrorCode={locationErrorCode}
-            routeStatus={effectiveRouteStatus}
-            routeData={effectiveRouteData}
-            activeMode={activeRouteMode}
-            onModeChange={setActiveRouteMode}
-            onRetryLocation={locate}
-            onRetryRoute={retryRoute}
-            taxiHref={activeRouteMode === 'TAXI' ? buildKakaoTaxiHref(routeDestination) : null}
-          />}
-          {selectedPlace?.externalSource === 'KAKAO'
-            ? <KakaoPlaceActions place={selectedPlace} basketItems={basketState?.items} onAdded={onBasketAdded} onAuthRequired={onAuthRequired} onRefresh={onBasketRefresh} />
-            : selectedPlace
-              ? <div className="map-internal-actions"><PlaceBasketAction placeId={selectedPlace.id} basketItems={basketState?.items} onAdded={onBasketAdded} onAuthRequired={onAuthRequired} onRefresh={onBasketRefresh} /><button type="button" className="map-place-detail-button" onClick={() => go('place', selectedPlace.id)}>장소 상세</button></div>
-              : <button type="button" className="map-live-link" onClick={() => go('live-talk')}><span>내 주변 지금톡</span><small>현장 소식 6개&nbsp; ›</small></button>}
+          {selectedPlace
+            ? <SelectedPlaceRoutePanel
+                selectedPlace={selectedPlace}
+                location={location}
+                locationStatus={locationStatus}
+                locationErrorCode={locationErrorCode}
+                routeStatus={effectiveRouteStatus}
+                routeData={effectiveRouteData}
+                activeMode={activeRouteMode}
+                onModeChange={setActiveRouteMode}
+                onRetryLocation={locate}
+                onRetryRoute={retryRoute}
+                taxiHref={activeRouteMode === 'TAXI' ? buildKakaoTaxiHref(routeDestination) : null}
+              />
+            : <button type="button" className="map-live-link" onClick={() => go('live-talk')}><span>내 주변 지금톡</span><small>현장 소식 6개&nbsp; ›</small></button>}
         </motion.section>
       </MapStage>
       <BottomNav active="map" onNavigate={(tab) => go(rootRoutes[tab])} />
