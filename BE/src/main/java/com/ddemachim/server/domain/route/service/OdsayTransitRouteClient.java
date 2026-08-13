@@ -96,11 +96,11 @@ public class OdsayTransitRouteClient implements TransitRouteProviderClient {
                 throw unavailable();
             }
 
-            JsonNode fastest = fastestPath(paths);
+            RouteOption fastest = fastestPath(paths);
             if (fastest == null) {
                 throw noRoute();
             }
-            return normalize(fastest);
+            return fastest;
         } catch (RouteProviderException exception) {
             throw exception;
         } catch (RuntimeException exception) {
@@ -174,8 +174,8 @@ public class OdsayTransitRouteClient implements TransitRouteProviderClient {
         }
     }
 
-    private static JsonNode fastestPath(JsonNode paths) {
-        JsonNode fastest = null;
+    private static RouteOption fastestPath(JsonNode paths) {
+        RouteOption fastest = null;
         Integer fastestMinutes = null;
         boolean invalidCandidateFound = false;
         for (JsonNode path : paths) {
@@ -183,20 +183,15 @@ public class OdsayTransitRouteClient implements TransitRouteProviderClient {
                 invalidCandidateFound = true;
                 continue;
             }
-            Integer totalTime;
             try {
-                totalTime = integer(path.path("info"), "totalTime");
+                RouteOption candidate = normalize(path);
+                int totalTime = candidate.durationSeconds() / 60;
+                if (fastestMinutes == null || totalTime < fastestMinutes) {
+                    fastest = candidate;
+                    fastestMinutes = totalTime;
+                }
             } catch (RouteProviderException exception) {
                 invalidCandidateFound = true;
-                continue;
-            }
-            if (totalTime == null || totalTime < 0) {
-                invalidCandidateFound = true;
-                continue;
-            }
-            if (fastestMinutes == null || totalTime < fastestMinutes) {
-                fastest = path;
-                fastestMinutes = totalTime;
             }
         }
         if (fastest == null && invalidCandidateFound) {
