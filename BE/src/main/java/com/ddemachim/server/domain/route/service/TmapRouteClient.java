@@ -431,7 +431,9 @@ public class TmapRouteClient implements RouteProviderClient {
             if (mode == null || duration == null || duration < 0 || distance == null || distance < 0) {
                 throw unavailable();
             }
-            LineStringGeometry geometry = transitGeometry(leg.path("passShape").path("linestring"));
+            LineStringGeometry geometry = mode == RouteMode.WALK
+                    ? transitWalkGeometry(leg.path("steps"))
+                    : transitGeometry(leg.path("passShape").path("linestring"));
             String routeName = firstText(leg, "routeName", "route", "service");
             result.add(new RouteLeg(mode, routeName, duration, distance, geometry));
         }
@@ -460,6 +462,30 @@ public class TmapRouteClient implements RouteProviderClient {
             } catch (NumberFormatException exception) {
                 throw unavailable();
             }
+        }
+        if (coordinates.size() < 2) {
+            throw unavailable();
+        }
+        return new LineStringGeometry(coordinates);
+    }
+
+    private static LineStringGeometry transitWalkGeometry(JsonNode steps) {
+        if (!steps.isArray() || steps.isEmpty()) {
+            throw unavailable();
+        }
+        List<List<Double>> coordinates = new ArrayList<>();
+        for (JsonNode step : steps) {
+            if (step == null || !step.isObject()) {
+                throw unavailable();
+            }
+            LineStringGeometry geometry = transitGeometry(step.path("linestring"));
+            if (geometry == null) {
+                throw unavailable();
+            }
+            List<List<Double>> stepCoordinates = geometry.coordinates();
+            int startIndex = !coordinates.isEmpty()
+                    && coordinates.getLast().equals(stepCoordinates.getFirst()) ? 1 : 0;
+            coordinates.addAll(stepCoordinates.subList(startIndex, stepCoordinates.size()));
         }
         if (coordinates.size() < 2) {
             throw unavailable();

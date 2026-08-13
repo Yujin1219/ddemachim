@@ -180,21 +180,23 @@ public class RouteComparisonService {
                 && coordinate.longitude() <= 180.0;
     }
 
-    private static long cacheMaximumSize(TmapProperties properties) {
+    static long cacheMaximumSize(TmapProperties properties) {
         if (properties == null || properties.getCacheMaximumSize() <= 0) {
             return DEFAULT_CACHE_MAXIMUM_SIZE;
         }
-        return properties.getCacheMaximumSize();
+        return Math.min(properties.getCacheMaximumSize(), DEFAULT_CACHE_MAXIMUM_SIZE);
     }
 
-    private static Duration cacheTtl(TmapProperties properties) {
+    static Duration cacheTtl(TmapProperties properties) {
         if (properties == null
                 || properties.getCacheTtl() == null
                 || properties.getCacheTtl().isNegative()
                 || properties.getCacheTtl().isZero()) {
             return DEFAULT_CACHE_TTL;
         }
-        return properties.getCacheTtl();
+        return properties.getCacheTtl().compareTo(DEFAULT_CACHE_TTL) > 0
+                ? DEFAULT_CACHE_TTL
+                : properties.getCacheTtl();
     }
 
     private record RouteCacheKey(

@@ -6,6 +6,8 @@ import {
   formatRouteDistance,
   formatRouteDuration,
   formatRouteFare,
+  normalizeRouteCoordinate,
+  normalizeRouteNumber,
   routeOptionByMode,
   ROUTE_MODES,
 } from '../utils/routeComparison.js';
@@ -37,14 +39,40 @@ function routeMetric(option) {
   return [duration, distance].filter(Boolean);
 }
 
+function routeTabStatus(routeStatus, routeData, mode) {
+  if (routeStatus === 'loading') return '계산 중';
+  if (routeStatus !== 'ready') return '\u00a0';
+
+  const option = routeOption(routeData, mode);
+  if (option?.status === 'AVAILABLE') return formatRouteDuration(option.durationSeconds) || '이용 불가';
+  if (option?.unavailableReason === 'NO_ROUTE') return '경로 없음';
+  if (option?.unavailableReason === 'TIMEOUT' || option?.unavailableReason === 'PROVIDER_UNAVAILABLE') {
+    return '일시 오류';
+  }
+  return '이용 불가';
+}
+
+function locationErrorCopy(errorCode) {
+  if (errorCode === 'DENIED') {
+    return '위치 권한이 꺼져 있어요. 브라우저 설정에서 허용한 뒤 다시 시도해주세요.';
+  }
+  if (errorCode === 'UNSUPPORTED') return '이 브라우저에서는 현재 위치를 사용할 수 없어요.';
+  if (errorCode === 'TIMEOUT') return '현재 위치 확인이 지연되고 있어요. 다시 시도해주세요.';
+  return '현재 위치를 확인하지 못했어요. 다시 시도해주세요.';
+}
+
 function unavailableCopy(mode, reason) {
-  if (mode === 'TRANSIT' || reason === 'NO_ROUTE') return `${ROUTE_MODE_LABELS[mode]} 경로 없음`;
-  return `${ROUTE_MODE_LABELS[mode]} 경로를 계산하지 못했어요`;
+  if (reason === 'NO_ROUTE') return `${ROUTE_MODE_LABELS[mode]} 경로를 찾지 못했어요.`;
+  if (reason === 'TIMEOUT' || reason === 'PROVIDER_UNAVAILABLE') {
+    return `${ROUTE_MODE_LABELS[mode]} 정보를 잠시 불러오지 못했어요.`;
+  }
+  if (reason === 'NOT_CONFIGURED') return `${ROUTE_MODE_LABELS[mode]}는 지금 이용할 수 없어요.`;
+  return `${ROUTE_MODE_LABELS[mode]} 경로를 찾지 못했어요.`;
 }
 
 function resolveDestination(place) {
   if (!place) return null;
-  return { latitude: place.latitude, longitude: place.longitude };
+  return normalizeRouteCoordinate({ latitude: place.latitude, longitude: place.longitude });
 }
 
 function RouteStatusMessage({
@@ -63,10 +91,12 @@ function RouteStatusMessage({
   let message = '';
   let action = null;
 
-  if (locationStatus === 'locating') {
+  if (!destination) {
+    message = '이 장소는 경로를 계산할 수 없어요';
+  } else if (locationStatus === 'locating') {
     message = '현재 위치 확인 중…';
   } else if (locationStatus === 'error') {
-    message = '현재 위치를 확인하지 못했어요';
+    message = locationErrorCopy(locationErrorCode);
     action = h('button', { type: 'button', className: 'route-status-retry', onClick: onRetryLocation }, '다시 시도');
   } else if (nearDestination) {
     message = '이미 목적지 근처예요';
@@ -77,7 +107,12 @@ function RouteStatusMessage({
     action = h('button', { type: 'button', className: 'route-status-retry', onClick: onRetryRoute }, '다시 시도');
   } else if (routeStatus === 'ready') {
     const option = routeOption(routeData, activeMode);
-    if (option?.status === 'UNAVAILABLE') message = unavailableCopy(activeMode, option.unavailableReason);
+    if (option?.status === 'UNAVAILABLE') {
+      message = unavailableCopy(activeMode, option.unavailableReason);
+      if (option.unavailableReason === 'TIMEOUT' || option.unavailableReason === 'PROVIDER_UNAVAILABLE') {
+        action = h('button', { type: 'button', className: 'route-status-retry', onClick: onRetryRoute }, '다시 시도');
+      }
+    }
   } else if (locationStatus !== 'ready') {
     message = '현재 위치를 확인하면 경로를 보여드려요';
   }
@@ -100,8 +135,9 @@ function RouteDetails({ option, mode, taxiHref }) {
   const metrics = routeMetric(option);
   const fare = formatRouteFare(option.fareWon);
   const detailItems = [];
-  if (mode === 'TRANSIT' && Number.isFinite(Number(option.transferCount))) {
-    detailItems.push(`환승 ${Number(option.transferCount)}회`);
+  const transferCount = normalizeRouteNumber(option.transferCount);
+  if (mode === 'TRANSIT' && transferCount !== null) {
+    detailItems.push(`환승 ${transferCount}회`);
   }
   if (mode === 'TRANSIT' && formatRouteDistance(option.walkDistanceMeters)) {
     detailItems.push(`도보 ${formatRouteDistance(option.walkDistanceMeters)}`);
@@ -170,7 +206,8 @@ export default function SelectedPlaceRoutePanel({
           'aria-pressed': safeMode === mode,
           onClick: () => onModeChange?.(mode),
         },
-        ROUTE_MODE_LABELS[mode],
+        h('span', { className: 'route-mode-label' }, ROUTE_MODE_LABELS[mode]),
+        h('span', { className: 'route-mode-status' }, routeTabStatus(routeStatus, routeData, mode)),
       )),
     ),
     h(RouteStatusMessage, {

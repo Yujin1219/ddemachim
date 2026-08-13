@@ -309,3 +309,33 @@ test('useRouteComparison does not fetch when destination is within 30 meters', a
     globalThis.fetch = originalFetch;
   }
 });
+
+test('useRouteComparison does not fetch when a destination coordinate is null-like', async () => {
+  const originalFetch = globalThis.fetch;
+  let fetchCalls = 0;
+  globalThis.fetch = async () => {
+    fetchCalls += 1;
+    return successResponse({ marker: 'unexpected' });
+  };
+  let renderer;
+  const ref = createRef();
+
+  try {
+    await act(async () => {
+      renderer = create(createElement(RouteComparisonHarness, {
+        ref,
+        origin: { latitude: 37.5665, longitude: 126.978 },
+        destination: { latitude: null, longitude: '' },
+      }));
+      await flushPromises();
+    });
+    assert.equal(fetchCalls, 0);
+    assert.equal(ref.current.status, 'idle');
+    assert.equal(ref.current.data, null);
+  } finally {
+    await act(async () => {
+      renderer?.unmount();
+    });
+    globalThis.fetch = originalFetch;
+  }
+});

@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
+import * as routeComparison from './routeComparison.js';
 import {
   ROUTE_MODES,
   buildKakaoTaxiHref,
@@ -22,6 +23,23 @@ test('normalizes finite coordinates and rejects invalid bounds', () => {
   assert.equal(normalizeRouteCoordinate({ latitude: 37.5, longitude: -181 }), null);
   assert.equal(normalizeRouteCoordinate({ latitude: Number.NaN, longitude: 126.978 }), null);
   assert.equal(normalizeRouteCoordinate(null), null);
+});
+
+test('rejects null-like and coercible non-coordinate values instead of turning them into zero', () => {
+  const invalidValues = [null, undefined, '', '   ', false, true, [], [37.5], {}, { valueOf: () => 37.5 }];
+
+  for (const value of invalidValues) {
+    assert.equal(
+      normalizeRouteCoordinate({ latitude: value, longitude: 126.978 }),
+      null,
+      `latitude ${String(value)} must be rejected`,
+    );
+    assert.equal(
+      normalizeRouteCoordinate({ latitude: 37.5665, longitude: value }),
+      null,
+      `longitude ${String(value)} must be rejected`,
+    );
+  }
 });
 
 test('calculates great-circle distance and rejects invalid coordinates', () => {
@@ -47,6 +65,64 @@ test('formats route duration, distance, and fare values', () => {
   assert.equal(formatRouteFare(1500), '1,500원');
   assert.equal(formatRouteFare(8700.4), '8,700원');
   assert.equal(formatRouteFare(-1), null);
+});
+
+test('preserves missing metric semantics while keeping numeric zero valid', () => {
+  const missingValues = [null, undefined, '', '   ', false, true, [], {}, { valueOf: () => 0 }];
+
+  for (const value of missingValues) {
+    assert.equal(formatRouteDuration(value), null, `duration ${String(value)} must stay missing`);
+    assert.equal(formatRouteDistance(value), null, `distance ${String(value)} must stay missing`);
+    assert.equal(formatRouteFare(value), null, `fare ${String(value)} must stay missing`);
+  }
+
+  assert.equal(formatRouteDuration('0'), '1분');
+  assert.equal(formatRouteDistance('0'), '0m');
+  assert.equal(formatRouteFare('0'), '0원');
+});
+
+test('invalid destinations never qualify for destination-triggered location lookup', () => {
+  assert.equal(typeof routeComparison.shouldLocateForDestinationSelection, 'function');
+  assert.equal(
+    routeComparison.shouldLocateForDestinationSelection('idle', { latitude: null, longitude: 126.978 }),
+    false,
+  );
+  assert.equal(
+    routeComparison.shouldLocateForDestinationSelection('idle', { latitude: 37.5665, longitude: '' }),
+    false,
+  );
+});
+
+test('two destination selections reuse one ready geolocation lookup', () => {
+  let locationStatus = 'idle';
+  let lookupCount = 0;
+  const selectDestination = (nextDestination) => {
+    if (routeComparison.shouldLocateForDestinationSelection(locationStatus, nextDestination)) {
+      lookupCount += 1;
+      locationStatus = 'ready';
+    }
+  };
+
+  selectDestination(destination);
+  selectDestination({ latitude: 37.5796, longitude: 126.977 });
+
+  assert.equal(lookupCount, 1);
+  assert.equal(routeComparison.shouldLocateForDestinationSelection('locating', destination), false);
+  assert.equal(routeComparison.shouldLocateForDestinationSelection('error', destination), true);
+});
+
+test('route fitting disables animation when reduced motion is requested', () => {
+  assert.equal(typeof routeComparison.resolveRouteFitDuration, 'function');
+  const queries = [];
+  const reducedDuration = routeComparison.resolveRouteFitDuration((query) => {
+    queries.push(query);
+    return { matches: true };
+  });
+  const defaultDuration = routeComparison.resolveRouteFitDuration(() => ({ matches: false }));
+
+  assert.deepEqual(queries, ['(prefers-reduced-motion: reduce)']);
+  assert.equal(reducedDuration, 0);
+  assert.equal(defaultDuration, 220);
 });
 
 test('selects a route by mode and returns null for unavailable modes', () => {

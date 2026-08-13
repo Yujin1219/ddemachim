@@ -15,6 +15,7 @@ import com.ddemachim.server.domain.route.exception.RouteException;
 import com.ddemachim.server.domain.route.exception.RouteProviderException;
 import com.ddemachim.server.global.properties.TmapProperties;
 import java.time.Clock;
+import java.time.Duration;
 import java.time.Instant;
 import java.time.ZoneOffset;
 import java.util.ArrayList;
@@ -86,6 +87,32 @@ class RouteComparisonServiceTest {
         service.compare(request(37.56654, 126.97804, 37.55594, 126.97234));
 
         assertThat(provider.totalCalls()).isEqualTo(3);
+    }
+
+    @Test
+    void oversizedCacheTtl_isCappedAtTwoMinutes() {
+        TmapProperties properties = new TmapProperties();
+        properties.setCacheTtl(Duration.ofMinutes(15));
+
+        assertThat(RouteComparisonService.cacheTtl(properties)).isEqualTo(Duration.ofMinutes(2));
+    }
+
+    @Test
+    void oversizedCacheMaximumSize_isCappedAtOneThousand() {
+        TmapProperties properties = new TmapProperties();
+        properties.setCacheMaximumSize(5_000);
+
+        assertThat(RouteComparisonService.cacheMaximumSize(properties)).isEqualTo(1_000L);
+    }
+
+    @Test
+    void smallerPositiveCacheConfiguration_isKept() {
+        TmapProperties properties = new TmapProperties();
+        properties.setCacheTtl(Duration.ofSeconds(45));
+        properties.setCacheMaximumSize(250);
+
+        assertThat(RouteComparisonService.cacheTtl(properties)).isEqualTo(Duration.ofSeconds(45));
+        assertThat(RouteComparisonService.cacheMaximumSize(properties)).isEqualTo(250L);
     }
 
     private static RouteComparisonRequest request() {

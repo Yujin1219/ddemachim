@@ -18,6 +18,8 @@ import com.ddemachim.server.domain.route.exception.RouteProviderException;
 import com.ddemachim.server.global.properties.TmapProperties;
 import java.net.SocketTimeoutException;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 import org.springframework.http.MediaType;
 import org.springframework.test.web.client.MockRestServiceServer;
 import org.springframework.web.client.RestClient;
@@ -86,9 +88,49 @@ class TmapRouteClientTest {
         assertThat(route.fareWon()).isEqualTo(1_500);
         assertThat(route.legs()).extracting(RouteLeg::mode)
                 .containsExactly(RouteMode.WALK, RouteMode.TRANSIT, RouteMode.WALK);
+        assertThat(route.legs().getFirst().geometry()).isNotNull();
+        assertThat(route.legs().getFirst().geometry().coordinates())
+                .containsExactly(
+                        java.util.List.of(126.9780, 37.5665),
+                        java.util.List.of(126.9778, 37.5660),
+                        java.util.List.of(126.9775, 37.5655));
         assertThat(route.legs().get(1).routeName()).isEqualTo("종로01");
         assertThat(route.legs().get(1).geometry().coordinates().getFirst())
                 .containsExactly(126.9775, 37.5655);
+        assertThat(route.legs().getLast().geometry()).isNotNull();
+        assertThat(route.legs().getLast().geometry().coordinates().getFirst())
+                .containsExactly(126.9740, 37.5600);
+        assertThat(route.legs().getLast().geometry().coordinates().getLast())
+                .containsExactly(126.9723, 37.5559);
+        testClient.server().verify();
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = {
+            "",
+            ", \"steps\": []",
+            ", \"steps\": [{\"linestring\": \"malformed\"}]"
+    })
+    void transitWalkMissingEmptyOrMalformedSteps_areReportedAsProviderUnavailable(String stepsField) {
+        TestClient testClient = testClient("test-key");
+        testClient.server().expect(requestTo(org.hamcrest.Matchers.containsString("/transit/routes")))
+                .andRespond(withSuccess("""
+                        {
+                          "metaData": {"plan": {"itineraries": [{
+                            "totalTime": 180,
+                            "legs": [{
+                              "mode": "WALK",
+                              "sectionTime": 180,
+                              "distance": 180%s
+                            }]
+                          }]}}
+                        }
+                        """.formatted(stepsField), MediaType.APPLICATION_JSON));
+
+        assertThatThrownBy(() -> testClient.client().findTransit(ORIGIN, DESTINATION))
+                .isInstanceOf(RouteProviderException.class)
+                .extracting("reason")
+                .isEqualTo(RouteUnavailableReason.PROVIDER_UNAVAILABLE);
         testClient.server().verify();
     }
 
@@ -345,7 +387,10 @@ class TmapRouteClientTest {
                           "mode": "WALK",
                           "sectionTime": 180,
                           "distance": 180,
-                          "passShape": {"linestring": "126.9780,37.5665 126.9775,37.5655"}
+                          "steps": [
+                            {"linestring": "126.9780,37.5665 126.9778,37.5660"},
+                            {"linestring": "126.9778,37.5660 126.9775,37.5655"}
+                          ]
                         },
                         {
                           "mode": "BUS",
@@ -358,7 +403,10 @@ class TmapRouteClientTest {
                           "mode": "WALK",
                           "sectionTime": 180,
                           "distance": 820,
-                          "passShape": {"linestring": "126.9740,37.5600 126.9723,37.5559"}
+                          "steps": [
+                            {"linestring": "126.9740,37.5600 126.9730,37.5580"},
+                            {"linestring": "126.9730,37.5580 126.9723,37.5559"}
+                          ]
                         }
                       ]
                     }
