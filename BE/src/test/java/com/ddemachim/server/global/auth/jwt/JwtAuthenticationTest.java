@@ -7,13 +7,13 @@ import com.ddemachim.server.global.auth.jwt.provider.JwtTokenProvider;
 import com.ddemachim.server.global.auth.jwt.provider.JwtValidationType;
 import jakarta.servlet.ServletException;
 import java.io.IOException;
+import java.util.concurrent.atomic.AtomicBoolean;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.mock.web.MockHttpServletRequest;
 import org.springframework.mock.web.MockHttpServletResponse;
 import org.springframework.mock.web.MockFilterChain;
 import org.springframework.security.core.context.SecurityContextHolder;
-import tools.jackson.databind.ObjectMapper;
 
 class JwtAuthenticationTest {
 
@@ -37,17 +37,19 @@ class JwtAuthenticationTest {
     }
 
     @Test
-    void 잘못된_access_token은_인증되지_않는다() throws ServletException, IOException {
-        JwtAuthenticationFilter filter = new JwtAuthenticationFilter(jwtTokenProvider, new ObjectMapper());
+    void 잘못된_access_token은_공개_요청을_막지_않고_인증_실패를_표시한다() throws ServletException, IOException {
+        JwtAuthenticationFilter filter = new JwtAuthenticationFilter(jwtTokenProvider);
         MockHttpServletRequest request = new MockHttpServletRequest();
         request.addHeader("Authorization", "Bearer malformed-token");
         MockHttpServletResponse response = new MockHttpServletResponse();
-        MockFilterChain chain = new MockFilterChain();
+        AtomicBoolean continued = new AtomicBoolean();
 
-        filter.doFilter(request, response, chain);
+        filter.doFilter(request, response, (servletRequest, servletResponse) -> continued.set(true));
 
-        assertThat(response.getStatus()).isEqualTo(401);
-        assertThat(response.getContentAsString()).contains("AUTH4012");
+        assertThat(continued).isTrue();
+        assertThat(response.getStatus()).isEqualTo(200);
+        assertThat(request.getAttribute(JwtAuthenticationFilter.JWT_VALIDATION_FAILURE_ATTRIBUTE))
+                .isEqualTo(JwtValidationType.INVALID_JWT_TOKEN);
         assertThat(SecurityContextHolder.getContext().getAuthentication()).isNull();
     }
 
@@ -56,7 +58,7 @@ class JwtAuthenticationTest {
             throws ServletException, IOException {
         String token = jwtTokenProvider.issueAccessToken(
                 42L, com.ddemachim.server.domain.user.enums.Role.USER);
-        JwtAuthenticationFilter filter = new JwtAuthenticationFilter(jwtTokenProvider, new ObjectMapper());
+        JwtAuthenticationFilter filter = new JwtAuthenticationFilter(jwtTokenProvider);
         MockHttpServletRequest request = new MockHttpServletRequest();
         request.addHeader("Authorization", "Bearer " + token);
         MockHttpServletResponse response = new MockHttpServletResponse();
