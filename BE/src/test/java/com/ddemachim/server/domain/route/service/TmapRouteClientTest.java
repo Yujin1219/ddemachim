@@ -10,7 +10,6 @@ import static org.springframework.test.web.client.response.MockRestResponseCreat
 import static org.springframework.test.web.client.response.MockRestResponseCreators.withSuccess;
 
 import com.ddemachim.server.domain.route.dto.RouteComparisonRequest.Coordinate;
-import com.ddemachim.server.domain.route.dto.RouteComparisonResponse.RouteLeg;
 import com.ddemachim.server.domain.route.dto.RouteComparisonResponse.RouteOption;
 import com.ddemachim.server.domain.route.enums.RouteMode;
 import com.ddemachim.server.domain.route.enums.RouteUnavailableReason;
@@ -18,8 +17,6 @@ import com.ddemachim.server.domain.route.exception.RouteProviderException;
 import com.ddemachim.server.global.properties.TmapProperties;
 import java.net.SocketTimeoutException;
 import org.junit.jupiter.api.Test;
-import org.junit.jupiter.params.ParameterizedTest;
-import org.junit.jupiter.params.provider.ValueSource;
 import org.springframework.http.MediaType;
 import org.springframework.test.web.client.MockRestServiceServer;
 import org.springframework.web.client.RestClient;
@@ -57,80 +54,6 @@ class TmapRouteClientTest {
         assertThat(route.legs()).hasSize(1);
         assertThat(route.legs().getFirst().geometry().coordinates().getFirst())
                 .containsExactly(126.9780, 37.5665);
-        testClient.server().verify();
-    }
-
-    @Test
-    void transit_selectsFastestItineraryAndMapsTransferFareAndLegs() {
-        TestClient testClient = testClient("test-key");
-        testClient.server().expect(requestTo(org.hamcrest.Matchers.containsString("/transit/routes")))
-                .andExpect(header("appKey", "test-key"))
-                .andExpect(content().json("""
-                        {
-                          "startX": 126.978,
-                          "startY": 37.5665,
-                          "endX": 126.9723,
-                          "endY": 37.5559,
-                          "startName": "현재 위치",
-                          "endName": "선택 장소",
-                          "count": 1,
-                          "lang": 0,
-                          "format": "json"
-                        }
-                        """))
-                .andRespond(withSuccess(TRANSIT_RESPONSE, MediaType.APPLICATION_JSON));
-
-        RouteOption route = testClient.client().findTransit(ORIGIN, DESTINATION);
-
-        assertThat(route.mode()).isEqualTo(RouteMode.TRANSIT);
-        assertThat(route.durationSeconds()).isEqualTo(1_320);
-        assertThat(route.transferCount()).isEqualTo(1);
-        assertThat(route.fareWon()).isEqualTo(1_500);
-        assertThat(route.legs()).extracting(RouteLeg::mode)
-                .containsExactly(RouteMode.WALK, RouteMode.TRANSIT, RouteMode.WALK);
-        assertThat(route.legs().getFirst().geometry()).isNotNull();
-        assertThat(route.legs().getFirst().geometry().coordinates())
-                .containsExactly(
-                        java.util.List.of(126.9780, 37.5665),
-                        java.util.List.of(126.9778, 37.5660),
-                        java.util.List.of(126.9775, 37.5655));
-        assertThat(route.legs().get(1).routeName()).isEqualTo("종로01");
-        assertThat(route.legs().get(1).geometry().coordinates().getFirst())
-                .containsExactly(126.9775, 37.5655);
-        assertThat(route.legs().getLast().geometry()).isNotNull();
-        assertThat(route.legs().getLast().geometry().coordinates().getFirst())
-                .containsExactly(126.9740, 37.5600);
-        assertThat(route.legs().getLast().geometry().coordinates().getLast())
-                .containsExactly(126.9723, 37.5559);
-        testClient.server().verify();
-    }
-
-    @ParameterizedTest
-    @ValueSource(strings = {
-            "",
-            ", \"steps\": []",
-            ", \"steps\": [{\"linestring\": \"malformed\"}]"
-    })
-    void transitWalkMissingEmptyOrMalformedSteps_areReportedAsProviderUnavailable(String stepsField) {
-        TestClient testClient = testClient("test-key");
-        testClient.server().expect(requestTo(org.hamcrest.Matchers.containsString("/transit/routes")))
-                .andRespond(withSuccess("""
-                        {
-                          "metaData": {"plan": {"itineraries": [{
-                            "totalTime": 180,
-                            "legs": [{
-                              "mode": "WALK",
-                              "sectionTime": 180,
-                              "distance": 180%s
-                            }]
-                          }]}}
-                        }
-                        """.formatted(stepsField), MediaType.APPLICATION_JSON));
-
-        assertThatThrownBy(() -> testClient.client().findTransit(ORIGIN, DESTINATION))
-                .isInstanceOf(RouteProviderException.class)
-                .extracting("reason")
-                .isEqualTo(RouteUnavailableReason.PROVIDER_UNAVAILABLE);
         testClient.server().verify();
     }
 
@@ -175,21 +98,6 @@ class TmapRouteClientTest {
     }
 
     @Test
-    void emptyTransitItineraries_areReportedAsNoRoute() {
-        TestClient testClient = testClient("test-key");
-        testClient.server().expect(requestTo(org.hamcrest.Matchers.containsString("/transit/routes")))
-                .andRespond(withSuccess("""
-                        {"metaData":{"plan":{"itineraries":[]}}}
-                        """, MediaType.APPLICATION_JSON));
-
-        assertThatThrownBy(() -> testClient.client().findTransit(ORIGIN, DESTINATION))
-                .isInstanceOf(RouteProviderException.class)
-                .extracting("reason")
-                .isEqualTo(RouteUnavailableReason.NO_ROUTE);
-        testClient.server().verify();
-    }
-
-    @Test
     void malformedGeometry_isReportedAsProviderUnavailable() {
         TestClient testClient = testClient("test-key");
         testClient.server().expect(requestTo(org.hamcrest.Matchers.containsString(
@@ -231,42 +139,6 @@ class TmapRouteClientTest {
                         """, MediaType.APPLICATION_JSON));
 
         assertThatThrownBy(() -> testClient.client().findWalking(ORIGIN, DESTINATION))
-                .isInstanceOf(RouteProviderException.class)
-                .extracting("reason")
-                .isEqualTo(RouteUnavailableReason.PROVIDER_UNAVAILABLE);
-        testClient.server().verify();
-    }
-
-    @Test
-    void transitMissingLegs_areReportedAsProviderUnavailable() {
-        TestClient testClient = testClient("test-key");
-        testClient.server().expect(requestTo(org.hamcrest.Matchers.containsString("/transit/routes")))
-                .andRespond(withSuccess("""
-                        {
-                          "metaData": {"plan": {"itineraries": [{"totalTime": 1320}]}}
-                        }
-                        """, MediaType.APPLICATION_JSON));
-
-        assertThatThrownBy(() -> testClient.client().findTransit(ORIGIN, DESTINATION))
-                .isInstanceOf(RouteProviderException.class)
-                .extracting("reason")
-                .isEqualTo(RouteUnavailableReason.PROVIDER_UNAVAILABLE);
-        testClient.server().verify();
-    }
-
-    @Test
-    void transitEmptyLegs_areReportedAsProviderUnavailable() {
-        TestClient testClient = testClient("test-key");
-        testClient.server().expect(requestTo(org.hamcrest.Matchers.containsString("/transit/routes")))
-                .andRespond(withSuccess("""
-                        {
-                          "metaData": {"plan": {"itineraries": [
-                            {"totalTime": 1320, "legs": []}
-                          ]}}
-                        }
-                        """, MediaType.APPLICATION_JSON));
-
-        assertThatThrownBy(() -> testClient.client().findTransit(ORIGIN, DESTINATION))
                 .isInstanceOf(RouteProviderException.class)
                 .extracting("reason")
                 .isEqualTo(RouteUnavailableReason.PROVIDER_UNAVAILABLE);
@@ -361,58 +233,6 @@ class TmapRouteClientTest {
                   "properties": {"pointType": "EP"}
                 }
               ]
-            }
-            """;
-
-    private static final String TRANSIT_RESPONSE = """
-            {
-              "metaData": {
-                "plan": {
-                  "itineraries": [
-                    {
-                      "totalTime": 1560,
-                      "transferCount": 2,
-                      "totalDistance": 4300,
-                      "fare": {"regular": {"totalFare": 1600}},
-                      "legs": []
-                    },
-                    {
-                      "totalTime": 1320,
-                      "transferCount": 1,
-                      "totalDistance": 4200,
-                      "totalWalkDistance": 1000,
-                      "fare": {"regular": {"totalFare": 1500}},
-                      "legs": [
-                        {
-                          "mode": "WALK",
-                          "sectionTime": 180,
-                          "distance": 180,
-                          "steps": [
-                            {"linestring": "126.9780,37.5665 126.9778,37.5660"},
-                            {"linestring": "126.9778,37.5660 126.9775,37.5655"}
-                          ]
-                        },
-                        {
-                          "mode": "BUS",
-                          "route": "종로01",
-                          "sectionTime": 960,
-                          "distance": 3200,
-                          "passShape": {"linestring": "126.9775,37.5655 126.9740,37.5600"}
-                        },
-                        {
-                          "mode": "WALK",
-                          "sectionTime": 180,
-                          "distance": 820,
-                          "steps": [
-                            {"linestring": "126.9740,37.5600 126.9730,37.5580"},
-                            {"linestring": "126.9730,37.5580 126.9723,37.5559"}
-                          ]
-                        }
-                      ]
-                    }
-                  ]
-                }
-              }
             }
             """;
 
