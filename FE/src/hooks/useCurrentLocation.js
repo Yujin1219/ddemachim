@@ -86,7 +86,9 @@ export function useCurrentLocation({ auto = false } = {}) {
     if (autoStartedRef.current) return undefined;
     autoStartedRef.current = true;
     locate();
-    return undefined;
+    return () => {
+      autoStartedRef.current = false;
+    };
   }, [auto, locate]);
 
   return {
