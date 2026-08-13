@@ -1109,3 +1109,36 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, [role='button
   .event-list-item, .event-linked-place { transition: none; }
   .event-list-item:active, .event-linked-place:active, .event-actions .ui-button:active { transform: none; }
 }
+
+/* Member profile states */
+.profile-row { min-width: 0; align-items: flex-start; }
+.profile-identity { min-width: 0; flex: 1; display: grid; gap: 2px; }
+.profile-row h2 { min-width: 0; overflow-wrap: anywhere; word-break: break-word; }
+.profile-email, .profile-edit-account { min-width: 0; overflow-wrap: anywhere; word-break: break-word; }
+.profile-edit-link { min-height: 40px; display: inline-flex; flex: 0 0 auto; align-items: center; gap: 3px; padding: 4px 0 4px 8px; border: 0; color: var(--color-text-brand); background: transparent; font-size: 13px; font-weight: 600; line-height: 20px; }
+.profile-edit-link svg { flex: 0 0 auto; }
+.my-profile-status { margin-top: 14px; color: var(--color-text-secondary); font-size: 12px; line-height: 18px; }
+.my-profile-feedback { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-top: 14px; padding-top: 14px; border-top: 1px solid rgba(23, 88, 189, .14); }
+.my-profile-feedback p { min-width: 0; flex: 1; color: var(--color-text-secondary); font-size: 12px; line-height: 18px; overflow-wrap: anywhere; }
+.my-profile-feedback button:not(.ui-button) { flex: 0 0 auto; min-height: 40px; padding: 8px 0 8px 8px; border: 0; color: var(--color-text-brand); background: transparent; font-size: 13px; font-weight: 600; line-height: 20px; }
+.my-profile-feedback .ui-button { min-height: 40px; flex: 0 0 auto; padding: 8px 14px; }
+.my-profile-feedback-actions { display: flex; flex: 0 0 auto; align-items: center; gap: 10px; }
+.my-profile-feedback-actions button { padding-inline: 0 0 !important; }
+.my-grid button .my-grid-icon { width: 24px; height: 24px; display: inline-flex; align-items: center; justify-content: center; font-size: 0; }
+.my-grid button strong, .my-grid button small { overflow-wrap: anywhere; }
+.my-menu-list button { gap: 12px; }
+.my-menu-list button > span { min-width: 0; flex: 1; color: var(--color-text-primary); font-size: 14px; line-height: 21px; overflow-wrap: anywhere; }
+.my-menu-list button > svg { flex: 0 0 auto; color: #94a3b8; }
+.profile-edit-account { display: block; margin-top: 4px; color: var(--color-text-secondary); font-size: 14px; line-height: 21px; }
+.profile-edit-v3 .my-profile-feedback { margin-top: 20px; }
+.profile-info-list { overflow: hidden; margin-top: 12px; border-radius: 18px; background: #fff; }
+.profile-info-list > div { min-height: 54px; display: grid; grid-template-columns: minmax(72px, .45fr) minmax(0, 1fr); align-items: center; gap: 16px; padding: 10px 14px; border-bottom: 1px solid var(--color-border-default); }
+.profile-info-list > div:last-child { border-bottom: 0; }
+.profile-info-list dt { color: var(--color-text-secondary); font-size: 14px; line-height: 20px; }
+.profile-info-list dd { min-width: 0; margin: 0; color: var(--color-text-primary); font-size: 14px; font-weight: 500; line-height: 20px; overflow-wrap: anywhere; text-align: right; }
+
+@media (max-width: 350px) {
+  .profile-row { gap: 8px; }
+  .profile-edit-link { padding-left: 4px; }
+  .my-grid { grid-template-columns: 1fr; }
+}

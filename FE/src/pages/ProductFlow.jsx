@@ -9,14 +9,17 @@ import {
   fetchEvents,
   fetchFilmingWorks,
   fetchMapPlaces,
+  fetchMyProfile,
   fetchMediaContent,
   fetchMediaContents,
   fetchMediaFilmingLocations,
   fetchPlace,
   fetchPlaceFilmingLocations,
   fetchPlaces,
+  getUser,
   login,
   saveAuth,
+  saveUser,
   signup,
 } from '../api/client';
 import {
@@ -2361,7 +2364,7 @@ function RecordScreen({ screen, go }) {
 const settingsState = {
   'location-permission': ['위치 권한', '현재 위치를 허용할까요?', '내 주변 장소와 이동 경로를 더 정확하게 안내할 수 있어요.', '허용하기', 'my'],
   notifications: ['알림 설정', '여행 알림', '코스 출발, 장소 혼잡, 저장한 팝업 소식을 받을 수 있어요.', '알림 저장', 'my'],
-  'profile-edit': ['프로필 편집', '유진', '여행 기록에 표시될 이름을 수정할 수 있어요.', '저장하기', 'my'],
+  'profile-edit': ['계정 정보', '내 프로필', '로그인한 계정의 회원 정보를 확인할 수 있어요.', 'MY로 돌아가기', 'my'],
   privacy: ['개인정보 · 위치 관리', '위치 기록 관리', '방문 확인을 위한 위치 기록을 안전하게 관리할 수 있어요.', '변경사항 저장', 'my'],
   'app-permissions': ['앱 권한', '필요한 순간에만 사용해요', '위치, 카메라, 알림 권한을 직접 관리할 수 있어요.', '설정 열기', 'my'],
   support: ['공지 · 고객 지원', '무엇을 도와드릴까요?', '공지사항, 자주 묻는 질문, 문의하기를 확인할 수 있어요.', '문의하기', 'my'],
@@ -2369,11 +2372,111 @@ const settingsState = {
   'server-error': ['일시적인 오류', '정보를 불러오지 못했어요', '잠시 후 다시 시도해주세요. 저장된 기록은 안전해요.', '다시 시도', 'my'],
 };
 
+function normalizeMemberProfile(value) {
+  if (!value || typeof value !== 'object') return null;
+
+  const nickname = typeof value.nickname === 'string' ? value.nickname.trim() : '';
+  const email = typeof value.email === 'string' ? value.email.trim() : '';
+  const memberId = value.memberId ?? null;
+  if (!nickname && !email && memberId === null) return null;
+
+  return { ...value, nickname, email, memberId };
+}
+
+function profileInitial(nickname) {
+  const initial = Array.from(String(nickname ?? '').trim())[0];
+  return initial ? initial.toUpperCase() : '?';
+}
+
+function useMyProfile(enabled) {
+  const [profile, setProfile] = useState(() => normalizeMemberProfile(getUser()));
+  const [status, setStatus] = useState(() => enabled ? 'loading' : 'idle');
+  const [error, setError] = useState('');
+  const [retryKey, setRetryKey] = useState(0);
+
+  useEffect(() => {
+    if (!enabled) return undefined;
+
+    const controller = new AbortController();
+    let cancelled = false;
+    const cachedProfile = normalizeMemberProfile(getUser());
+
+    setProfile((current) => current ?? cachedProfile);
+    setStatus('loading');
+    setError('');
+
+    fetchMyProfile({ signal: controller.signal })
+      .then((result) => {
+        if (cancelled) return;
+        const nextProfile = normalizeMemberProfile(result);
+        if (nextProfile) saveUser(nextProfile);
+        setProfile(nextProfile);
+        setStatus(nextProfile ? 'success' : 'empty');
+      })
+      .catch((requestError) => {
+        if (cancelled || requestError?.name === 'AbortError') return;
+
+        console.error('회원 정보 조회 실패:', requestError);
+        if (requestError?.status === 401) {
+          setProfile(null);
+          setStatus('unauthorized');
+          setError('로그인이 만료됐어요. 다시 로그인하면 회원 정보를 확인할 수 있어요.');
+          return;
+        }
+
+        setStatus('error');
+        setError('회원 정보를 불러오지 못했어요. 네트워크 상태를 확인하고 다시 시도해주세요.');
+      });
+
+    return () => {
+      cancelled = true;
+      controller.abort();
+    };
+  }, [enabled, retryKey]);
+
+  return {
+    profile,
+    status,
+    error,
+    retry: () => setRetryKey((current) => current + 1),
+  };
+}
+
+function MyProfileStatus({ status, profile, error, onRetry, onLogin }) {
+  if (status === 'loading') {
+    return <p className="my-profile-status" role="status" aria-live="polite">최신 회원 정보를 확인하고 있어요.</p>;
+  }
+
+  if (status === 'error') {
+    return <div className="my-profile-feedback" role="alert" aria-live="assertive"><p>{profile ? '최신 회원 정보를 불러오지 못했어요. 저장된 로그인 정보로 표시 중이에요.' : error}</p><button type="button" onClick={onRetry}>다시 시도</button></div>;
+  }
+
+  if (status === 'unauthorized') {
+    return <div className="my-profile-feedback" role="alert" aria-live="assertive"><p>{error}</p><ActionButton tone="secondary" className="my-profile-login" onClick={onLogin}>로그인하기</ActionButton></div>;
+  }
+
+  if (status === 'empty') {
+    return <div className="my-profile-feedback" role="status" aria-live="polite"><p>회원 정보를 찾지 못했어요. 다시 로그인하거나 잠시 후 재시도해주세요.</p><div className="my-profile-feedback-actions"><button type="button" onClick={onRetry}>다시 시도</button><button type="button" onClick={onLogin}>로그인하기</button></div></div>;
+  }
+
+  return null;
+}
+
 function MyScreen({ screen, go }) {
+  const profileQuery = useMyProfile(screen === 'my' || screen === 'profile-edit');
+  const { profile, status, error, retry } = profileQuery;
+  const nickname = profile?.nickname || '';
+  const email = profile?.email || '';
+  const profileName = nickname || (status === 'loading' ? '프로필 불러오는 중' : '내 프로필');
+  const profileEmail = email || (status === 'loading' ? '회원 정보를 확인하고 있어요' : '이메일 정보가 없어요');
+  const initial = profileInitial(nickname);
+  const roleLabel = profile?.role === 'ROLE_USER' ? '일반 회원' : profile?.role || '정보 없음';
+  const goToLogin = () => go('login');
+
   if (screen === 'location-permission') return <MapPermissionPrompt go={go} title="위치 권한이 필요해요" copy="현재 위치와 도착 감지를 위해 허용해주세요." detail={['앱 사용 중에만 위치 사용', '설정에서 언제든 변경할 수 있어요.']} action="위치 권한 허용" next="map" />;
   if (screen === 'loading') return <MapLoadingPrompt go={go} />;
   if (screen === 'notifications') return <section className="phone standard-screen notifications-v3"><main className="page-scroll notifications-scroll"><header className="settings-page-heading"><p>알림 설정</p><span>여행 중 알림</span><h1>필요한 순간만 알려드릴게요</h1><small>혼잡 · 주변 장소 · 도착 알림을 선택할 수 있어요.</small></header><ScreenSection title="기본 알림"><div className="settings-row-list"><button type="button"><span>혼잡 변화</span><b>대중교통과 장소 혼잡이 높아질 때&nbsp; ›</b></button><button type="button"><span>주변 장소 추천</span><b>동선 근처에 볼거리가 있을 때&nbsp; ›</b></button></div></ScreenSection><ScreenSection title="알림 빈도"><div className="settings-segment"><button type="button">필수만</button><button type="button" className="selected">적당히</button><button type="button">모두</button></div></ScreenSection><ScreenSection title="도착 알림"><div className="settings-segment"><button type="button" className="selected">진동 켜기</button><button type="button">음성 안내</button></div><p className="settings-hint">장소 100m 이내에서 알려드려요</p></ScreenSection><ScreenSection title="방해 금지 시간"><div className="settings-segment"><button type="button">없음</button><button type="button" className="selected">22-08시</button><button type="button">직접 설정</button></div></ScreenSection><p className="settings-bottom-copy">운영시간 변경도 함께 알려드려요<br /><span>알림은 언제든 이 화면에서 바꿀 수 있어요.</span></p></main><div className="sticky-actions"><ActionButton onClick={() => go('my')}>설정 저장</ActionButton></div></section>;
-  if (screen === 'profile-edit') return <section className="phone standard-screen profile-edit-v3"><BackHeader title="프로필 편집" onBack={() => go('my')} /><main className="page-scroll profile-edit-scroll"><header className="profile-edit-heading"><p className="eyebrow">내 정보</p><h1>유진님의 프로필</h1><span>다른 사용자에게 보이는 정보를 관리해요.</span></header><ScreenSection title="기본 정보"><div className="review-setting-list"><button type="button"><span>⌖ 닉네임</span><strong>유진&nbsp; ›</strong></button><button type="button"><span>◷ 한 줄 소개</span><strong>서울의 골목과 촬영지를 걷고 있어요&nbsp; ›</strong></button></div></ScreenSection><ScreenSection title="관심 장소"><div className="review-choice-row"><Chip>촬영지</Chip><Chip active>팝업</Chip><Chip>카페</Chip></div></ScreenSection><ScreenSection title="프로필 공개"><div className="profile-visibility-grid"><button type="button" className="selected"><strong>전체 공개</strong><small>후기와 저장 목록을 보여줘요</small></button><button type="button"><strong>비공개</strong><small>내 활동을 나만 볼 수 있어요</small></button></div></ScreenSection><ScreenSection title="계정 연결"><div className="review-choice-row"><Chip>카카오</Chip><Chip active>Apple</Chip><Chip>이메일</Chip></div></ScreenSection><StatusBanner tone="blue" title="닉네임은 30일에 한 번 바꿀 수 있어요" copy="프로필 사진은 최대 5MB까지 등록할 수 있어요." /></main><div className="sticky-actions"><ActionButton onClick={() => go('my')}>변경사항 저장</ActionButton></div></section>;
+  if (screen === 'profile-edit') return <section className="phone standard-screen profile-edit-v3"><BackHeader title="계정 정보" onBack={() => go('my')} /><main className="page-scroll profile-edit-scroll"><header className="profile-edit-heading"><h1>{nickname ? `${nickname}님의 계정` : status === 'loading' ? '계정 정보를 불러오는 중' : '내 계정'}</h1><span className="profile-edit-account">{profileEmail}</span></header><MyProfileStatus status={status} profile={profile} error={error} onRetry={retry} onLogin={goToLogin} />{profile && <ScreenSection title="회원 정보"><dl className="profile-info-list"><div><dt>닉네임</dt><dd>{nickname || '정보 없음'}</dd></div><div><dt>이메일</dt><dd>{email || '정보 없음'}</dd></div><div><dt>회원 유형</dt><dd>{roleLabel}</dd></div></dl></ScreenSection>} {profile && <StatusBanner tone="blue" title="로그인한 계정의 최신 정보예요" copy="이메일과 닉네임은 로그인한 계정을 기준으로 표시해요." />}</main><div className="sticky-actions"><ActionButton onClick={() => go('my')}>MY로 돌아가기</ActionButton></div></section>;
   if (screen === 'privacy') return <section className="phone standard-screen privacy-v3"><BackHeader title="개인정보·위치 기록" onBack={() => go('my')} /><main className="page-scroll settings-detail-scroll"><header className="settings-page-heading"><p>데이터 관리</p><span>여행 기록</span><h1>내 위치 기록을 관리해요</h1><small>필요한 순간에만 수집하고, 보관 기간을 직접 정할 수 있어요.</small></header><ScreenSection title="위치 기록"><div className="settings-row-list detail-row-list"><button type="button"><span><strong>여행 중 위치 기록</strong><small>코스 진행 중에만 수집</small></span><b className="row-state active">켜짐</b></button><button type="button"><span><strong>사진 좌표 인증</strong><small>방문 인증할 때만 사용</small></span><b className="row-state active">켜짐</b></button></div></ScreenSection><ScreenSection title="보관 기간"><div className="settings-segment"><button type="button">30일</button><button type="button" className="selected">90일</button><button type="button">1년</button></div></ScreenSection><ScreenSection title="공개 설정"><div className="settings-segment"><button type="button" className="selected">나만</button><button type="button">친구</button><button type="button">전체</button></div></ScreenSection><ScreenSection title="기록 다운로드"><div className="settings-row-list detail-row-list"><button type="button"><span><strong>여행 기록 내보내기</strong><small>사진과 이동 기록을 파일로 받아요</small></span><b className="row-chevron">›</b></button><button type="button"><span><strong>전체 위치 기록 삭제</strong><small>삭제하면 되돌릴 수 없어요</small></span><b className="row-danger">삭제</b></button></div></ScreenSection><StatusBanner tone="blue" title="위치 기록은 추천과 도착 감지에만 사용해요" copy="설정 변경은 현재 진행 중인 코스부터 적용돼요." /></main><div className="sticky-actions"><ActionButton onClick={() => go('my')}>변경사항 저장</ActionButton></div></section>;
   if (screen === 'app-permissions') return <section className="phone standard-screen permissions-v3"><BackHeader title="앱 권한 설정" onBack={() => go('my')} /><main className="page-scroll settings-detail-scroll"><header className="settings-page-heading"><p>권한 관리</p><span>기능별 설정</span><h1>필요한 순간에만 사용해요</h1><small>각 권한은 여행 기능에 맞춰 언제든 바꿀 수 있어요.</small></header><ScreenSection title="현재 권한"><div className="settings-row-list detail-row-list"><button type="button"><span><strong>위치</strong><small>길 안내와 도착 감지</small></span><b className="row-state active">허용됨</b></button><button type="button"><span><strong>카메라</strong><small>촬영지 구도 맞추기</small></span><b className="row-state">허용 안 함</b></button><button type="button"><span><strong>알림</strong><small>혼잡 변화와 도착 안내</small></span><b className="row-state active">허용됨</b></button><button type="button"><span><strong>사진</strong><small>방문 인증 사진 저장</small></span><b className="row-state">선택 안 함</b></button></div></ScreenSection><ScreenSection title="권한 사용 방식"><div className="permission-note-grid"><article><strong>위치</strong><span>코스 시작부터 종료까지</span></article><article><strong>카메라</strong><span>촬영 화면을 열었을 때만</span></article></div></ScreenSection><StatusBanner tone="blue" title="권한이 없어도 장소 탐색은 계속할 수 있어요" copy="권한이 필요한 기능을 누르면 다시 요청할게요." /></main><div className="sticky-actions"><ActionButton onClick={() => go('my')}>시스템 설정 열기</ActionButton></div></section>;
   if (screen === 'support') return <section className="phone standard-screen support-v3"><BackHeader title="공지·문의" onBack={() => go('my')} /><main className="page-scroll support-scroll"><header className="support-heading"><span>?</span><p>고객센터</p><h1>무엇을 도와드릴까요?</h1><small>공지와 자주 묻는 질문을 빠르게 확인할 수 있어요.</small></header><div className="support-stats"><button type="button"><strong>2</strong><span>공지</span></button><button type="button"><strong>24</strong><span>FAQ</span></button><button type="button"><strong>1:1</strong><span>문의</span></button></div><ScreenSection title="최근 공지" action="전체보기"><button type="button" className="support-notice-card"><span><b>서비스 안내</b><small>2026.08.08</small></span><strong>촬영지 이미지 제공 정책 안내</strong><p>장면 이미지와 현장 정보의 출처를 더 투명하게 표시해요.</p><i>›</i></button></ScreenSection><ScreenSection title="빠른 도움"><div className="support-help-list"><button type="button"><span><strong>코스가 멈췄어요</strong><small>이동 중 문제가 생겼을 때</small></span><i>›</i></button><button type="button"><span><strong>장소 정보가 달라요</strong><small>운영시간과 위치를 알려주세요</small></span><i>›</i></button><button type="button"><span><strong>내 기록을 찾고 싶어요</strong><small>저장한 코스와 사진 확인</small></span><i>›</i></button></div></ScreenSection><p className="support-footnote">평일 10:00-18:00에 순서대로 답변드려요.</p></main><div className="sticky-actions"><ActionButton onClick={() => go('my')}>1:1 문의하기</ActionButton></div></section>;
@@ -2381,9 +2484,9 @@ function MyScreen({ screen, go }) {
   if (screen !== 'my') {
     const [title, heading, copy, action, next] = settingsState[screen];
     const isLoading = screen === 'loading';
-    return <section className="phone standard-screen system-screen"><BackHeader title={title} onBack={() => go('my')} /><main className="page-scroll centered-state">{isLoading ? <BrandLoading /> : <div className={`system-icon ${screen === 'server-error' ? 'error' : ''}`}>{screen === 'location-permission' ? '⌖' : screen === 'profile-edit' ? 'Y' : '⚙'}</div>}<h1>{heading}</h1><p>{copy}</p>{screen === 'notifications' && <div className="switch-list"><label>코스 출발 <input type="checkbox" defaultChecked /></label><label>현장 혼잡 <input type="checkbox" defaultChecked /></label><label>새로운 팝업 <input type="checkbox" /></label></div>}{screen === 'profile-edit' && <label className="field-label">닉네임<input defaultValue="유진" /></label>}{screen === 'privacy' && <div className="switch-list"><label>방문 기록 저장 <input type="checkbox" defaultChecked /></label><label>정확한 위치 사용 <input type="checkbox" defaultChecked /></label></div>}{screen === 'app-permissions' && <div className="permission-rows"><p><span>위치</span><b>허용됨</b></p><p><span>카메라</span><b>허용 안 함</b></p><p><span>알림</span><b>허용됨</b></p></div>}{screen === 'support' && <div className="support-list"><button type="button">공지사항 <span>›</span></button><button type="button">자주 묻는 질문 <span>›</span></button><button type="button">문의 내역 <span>›</span></button></div>}<ActionButton onClick={() => go(next)}>{action}</ActionButton></main></section>;
+    return <section className="phone standard-screen system-screen"><BackHeader title={title} onBack={() => go('my')} /><main className="page-scroll centered-state">{isLoading ? <BrandLoading /> : <div className={`system-icon ${screen === 'server-error' ? 'error' : ''}`}>{screen === 'location-permission' ? '⌖' : '⚙'}</div>}<h1>{heading}</h1><p>{copy}</p>{screen === 'notifications' && <div className="switch-list"><label>코스 출발 <input type="checkbox" defaultChecked /></label><label>현장 혼잡 <input type="checkbox" defaultChecked /></label><label>새로운 팝업 <input type="checkbox" /></label></div>}{screen === 'privacy' && <div className="switch-list"><label>방문 기록 저장 <input type="checkbox" defaultChecked /></label><label>정확한 위치 사용 <input type="checkbox" defaultChecked /></label></div>}{screen === 'app-permissions' && <div className="permission-rows"><p><span>위치</span><b>허용됨</b></p><p><span>카메라</span><b>허용 안 함</b></p><p><span>알림</span><b>허용됨</b></p></div>}{screen === 'support' && <div className="support-list"><button type="button">공지사항 <span>›</span></button><button type="button">자주 묻는 질문 <span>›</span></button><button type="button">문의 내역 <span>›</span></button></div>}<ActionButton onClick={() => go(next)}>{action}</ActionButton></main></section>;
   }
-  return <section className="phone standard-screen tab-screen my-screen"><main className="page-scroll my-scroll"><header className="my-title"><h1>MY</h1></header><section className="profile-hero"><div className="profile-row"><span className="avatar">Y</span><div><h2>유진</h2><p>이번 달 7곳을 걸었어요</p></div></div><div className="profile-stats"><span><b>3</b>내 코스</span><span><b>18</b>저장</span><span><b>6</b>후기</span></div></section><ScreenSection title="내 코스"><button type="button" className="my-course-card" onClick={() => go('active-course')}><VWorldMap ariaLabel="안국동 코스 지도" interactive={false} style={{ width: '100%', height: 122 }} /><span><strong>안국에서 성수까지, 여름 하루</strong><small>4곳 · 5시간 10분 · 8월 3일</small></span></button></ScreenSection><ScreenSection title="내 활동"><div className="activity-grid"><button type="button" onClick={() => go('saved-courses')}><span>저장한 장소</span><strong>18</strong></button><button type="button" onClick={() => go('reviews')}><span>내 후기</span><strong>6</strong></button></div></ScreenSection></main><BottomNav active="my" onNavigate={(tab) => go(rootRoutes[tab])} /></section>;
+  return <section className="phone standard-screen tab-screen my-screen"><main className="page-scroll my-scroll" aria-labelledby="my-page-title"><header className="my-title"><h1 id="my-page-title">MY</h1></header><section className="profile-hero" aria-labelledby="my-profile-heading" aria-busy={status === 'loading'}><div className="profile-row"><span className="avatar" aria-hidden="true">{initial}</span><div className="profile-identity"><h2 id="my-profile-heading">{profileName}</h2><p className="profile-email" title={email || undefined}>{profileEmail}</p></div>{profile && <button type="button" className="profile-edit-link" onClick={() => go('profile-edit')} aria-label="계정 정보 보기">정보<ChevronRight aria-hidden="true" size={16} strokeWidth={2} /></button>}</div><MyProfileStatus status={status} profile={profile} error={error} onRetry={retry} onLogin={goToLogin} /></section><ScreenSection title="빠른 이동"><div className="my-grid"><button type="button" onClick={() => go('map')}><span className="my-grid-icon"><MapPin aria-hidden="true" size={22} strokeWidth={1.9} /></span><strong>지도에서 장소 찾기</strong><small>서울의 장소와 현재 정보를 둘러봐요</small></button><button type="button" onClick={() => go('explore')}><span className="my-grid-icon"><Search aria-hidden="true" size={22} strokeWidth={1.9} /></span><strong>탐색 둘러보기</strong><small>촬영지와 이번 주 소식을 확인해요</small></button></div></ScreenSection><ScreenSection title="설정"><div className="my-menu-list"><button type="button" onClick={() => go('profile-edit')}><span>계정 정보</span><ChevronRight aria-hidden="true" size={18} strokeWidth={1.9} /></button><button type="button" onClick={() => go('notifications')}><span>알림 설정</span><ChevronRight aria-hidden="true" size={18} strokeWidth={1.9} /></button><button type="button" onClick={() => go('privacy')}><span>개인정보 · 위치 관리</span><ChevronRight aria-hidden="true" size={18} strokeWidth={1.9} /></button><button type="button" onClick={() => go('support')}><span>공지 · 고객 지원</span><ChevronRight aria-hidden="true" size={18} strokeWidth={1.9} /></button></div></ScreenSection></main><BottomNav active="my" onNavigate={(tab) => go(rootRoutes[tab])} /></section>;
 }
 
 function AppScreenFrame({ children, go, hideHeader = false }) {
