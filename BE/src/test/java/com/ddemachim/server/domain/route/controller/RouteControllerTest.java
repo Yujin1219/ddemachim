@@ -20,11 +20,14 @@ import java.util.List;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.springframework.http.converter.json.JacksonJsonHttpMessageConverter;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.http.MediaType;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.setup.MockMvcBuilders;
+import tools.jackson.databind.DeserializationFeature;
+import tools.jackson.databind.json.JsonMapper;
 
 @ExtendWith(MockitoExtension.class)
 class RouteControllerTest {
@@ -37,6 +40,11 @@ class RouteControllerTest {
     @BeforeEach
     void setUp() {
         mockMvc = MockMvcBuilders.standaloneSetup(new RouteController(service))
+                // Exercise the contract path where primitive creator values coerce null/missing input.
+                .setMessageConverters(new JacksonJsonHttpMessageConverter(
+                        JsonMapper.builder()
+                                .disable(DeserializationFeature.FAIL_ON_NULL_FOR_PRIMITIVES)
+                                .build()))
                 .setControllerAdvice(new ExceptionAdvice())
                 .build();
     }
@@ -60,6 +68,30 @@ class RouteControllerTest {
         mockMvc.perform(post("/api/routes/compare")
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("{\"origin\":{\"latitude\":91,\"longitude\":126.9},\"destination\":{\"latitude\":37.5,\"longitude\":127}}"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.isSuccess").value(false))
+                .andExpect(jsonPath("$.code").value("ROUTE4001"));
+
+        verifyNoInteractions(service);
+    }
+
+    @Test
+    void compare_rejectsMissingOriginLongitudeBeforeCallingService() throws Exception {
+        mockMvc.perform(post("/api/routes/compare")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"origin\":{\"latitude\":37.5665},\"destination\":{\"latitude\":37.5559,\"longitude\":126.9723}}"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.isSuccess").value(false))
+                .andExpect(jsonPath("$.code").value("ROUTE4001"));
+
+        verifyNoInteractions(service);
+    }
+
+    @Test
+    void compare_rejectsNullDestinationLatitudeBeforeCallingService() throws Exception {
+        mockMvc.perform(post("/api/routes/compare")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"origin\":{\"latitude\":37.5665,\"longitude\":126.978},\"destination\":{\"latitude\":null,\"longitude\":126.9723}}"))
                 .andExpect(status().isBadRequest())
                 .andExpect(jsonPath("$.isSuccess").value(false))
                 .andExpect(jsonPath("$.code").value("ROUTE4001"));

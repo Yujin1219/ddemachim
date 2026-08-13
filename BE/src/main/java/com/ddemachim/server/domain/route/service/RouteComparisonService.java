@@ -170,6 +170,8 @@ public class RouteComparisonService {
 
     private static boolean validCoordinate(Coordinate coordinate) {
         return coordinate != null
+                && coordinate.latitude() != null
+                && coordinate.longitude() != null
                 && Double.isFinite(coordinate.latitude())
                 && Double.isFinite(coordinate.longitude())
                 && coordinate.latitude() >= -90.0
