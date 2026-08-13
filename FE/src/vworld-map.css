@@ -13,6 +13,12 @@
   height: 100%;
 }
 
+/* Keep HTML place markers above the route vector layer and its hit surface. */
+.vworld-map .ol-overlaycontainer,
+.vworld-map .ol-overlaycontainer-stopevent {
+  z-index: 4;
+}
+
 .vworld-map__fallback {
   position: absolute;
   inset: 0;
@@ -49,6 +55,7 @@
 .vworld-place-marker.is-walk, .vworld-place-cluster.is-walk { --marker-color: #0f766e; }
 .vworld-place-marker.is-photo-spot, .vworld-place-cluster.is-photo-spot { --marker-color: #4f46e5; }
 .vworld-place-marker.is-filming, .vworld-place-cluster.is-filming { --marker-color: #9333ea; }
+.vworld-place-marker.is-search { --marker-color: #172033; --marker-size: 22px; border-width: 3px; outline: 2px solid rgb(255 212 42 / 85%); outline-offset: 2px; }
 .vworld-place-cluster { min-width: var(--cluster-size, 24px); height: var(--cluster-size, 24px); display: grid; place-items: center; padding: 0 6px; border: 1.5px solid #fff; border-radius: 999px; color: #fff; background: var(--marker-color, #1f4fbf); font-size: 10px; font-weight: 700; line-height: 1; cursor: pointer; transition: transform 160ms ease; }
 .vworld-place-cluster.is-zoom-far { --cluster-size: 22px; border-width: 1px; font-size: 9px; }
 .vworld-place-cluster.is-zoom-mid { --cluster-size: 24px; }

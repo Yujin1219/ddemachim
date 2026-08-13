@@ -1,6 +1,8 @@
+import { ShoppingBasket } from 'lucide-react';
+
 const ASSET_BASE = '/assets/app-header';
 
-export default function AppHeader({ onNotifications, onProfile }) {
+export default function AppHeader({ basketCount = 0, onBasket, onProfile }) {
   return (
     <header className="app-header" aria-label="때마침 공통 헤더">
       <div className="app-header-brand" aria-label="때마침 홈">
@@ -11,8 +13,9 @@ export default function AppHeader({ onNotifications, onProfile }) {
         <strong>때마침</strong>
       </div>
       <div className="app-header-actions">
-        <button type="button" className="app-header-action" onClick={onNotifications} aria-label="알림">
-          <img src={`${ASSET_BASE}/notification.svg`} alt="" />
+        <button type="button" className="app-header-action" onClick={onBasket} aria-label={`코스 장바구니${basketCount > 0 ? `, 담은 장소 ${basketCount}개` : ''}`} title="코스 장바구니">
+          <ShoppingBasket aria-hidden="true" size={22} strokeWidth={2} />
+          {basketCount > 0 && <span className="app-header-basket-count" aria-hidden="true">{basketCount > 99 ? '99+' : basketCount}</span>}
         </button>
         <button type="button" className="app-header-profile" onClick={onProfile} aria-label="프로필">
           <img src={`${ASSET_BASE}/avatar.svg`} alt="" />

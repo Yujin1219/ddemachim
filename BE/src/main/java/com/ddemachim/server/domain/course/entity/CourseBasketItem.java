@@ -1,6 +1,7 @@
 package com.ddemachim.server.domain.course.entity;
 
 import com.ddemachim.server.domain.place.entity.Place;
+import com.ddemachim.server.domain.place.entity.UserPlace;
 import com.ddemachim.server.domain.user.entity.Member;
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
@@ -21,9 +22,14 @@ import org.hibernate.annotations.CreationTimestamp;
 @Entity
 @Table(
         name = "course_basket_item",
-        uniqueConstraints = @UniqueConstraint(
-                name = "uk_course_basket_item_member_place",
-                columnNames = {"member_id", "place_id"}))
+        uniqueConstraints = {
+            @UniqueConstraint(
+                    name = "uk_course_basket_item_member_place",
+                    columnNames = {"member_id", "place_id"}),
+            @UniqueConstraint(
+                    name = "uk_course_basket_item_member_user_place",
+                    columnNames = {"member_id", "user_place_id"})
+        })
 @Getter
 @NoArgsConstructor(access = AccessLevel.PROTECTED)
 public class CourseBasketItem {
@@ -36,18 +42,29 @@ public class CourseBasketItem {
     @JoinColumn(name = "member_id", nullable = false)
     private Member member;
 
-    @ManyToOne(fetch = FetchType.LAZY, optional = false)
-    @JoinColumn(name = "place_id", nullable = false)
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "place_id")
     private Place place;
+
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "user_place_id")
+    private UserPlace userPlace;
 
     @CreationTimestamp
     @Column(name = "created_at", nullable = false, updatable = false)
     private OffsetDateTime createdAt;
 
-    public static CourseBasketItem of(Member member, Place place) {
+    public static CourseBasketItem forPlace(Member member, Place place) {
         CourseBasketItem item = new CourseBasketItem();
         item.member = member;
         item.place = place;
+        return item;
+    }
+
+    public static CourseBasketItem forUserPlace(Member member, UserPlace userPlace) {
+        CourseBasketItem item = new CourseBasketItem();
+        item.member = member;
+        item.userPlace = userPlace;
         return item;
     }
 }
