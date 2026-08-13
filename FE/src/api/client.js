@@ -15,11 +15,42 @@ export function getAccessToken() {
   return getStorage()?.getItem(ACCESS_TOKEN_KEY) || null;
 }
 
+export function getUser() {
+  const rawUser = getStorage()?.getItem(USER_KEY);
+  if (!rawUser) return null;
+
+  try {
+    return JSON.parse(rawUser);
+  } catch {
+    return null;
+  }
+}
+
+export function saveUser(user) {
+  const storage = getStorage();
+  if (!storage || !user) return false;
+
+  try {
+    storage.setItem(USER_KEY, JSON.stringify(user));
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 export function saveAuth({ accessToken, ...user } = {}) {
   if (!accessToken) throw new Error('인증 토큰을 받지 못했어요.');
+
   const storage = getStorage();
-  storage?.setItem(ACCESS_TOKEN_KEY, accessToken);
-  storage?.setItem(USER_KEY, JSON.stringify(user));
+  if (storage) {
+    try {
+      storage.setItem(ACCESS_TOKEN_KEY, accessToken);
+      storage.setItem(USER_KEY, JSON.stringify(user));
+    } catch {
+      throw new Error('로그인 정보를 저장하지 못했어요. 브라우저 저장소를 확인해주세요.');
+    }
+  }
+
   return { accessToken, user };
 }
 
@@ -49,13 +80,18 @@ async function request(path, options = {}) {
     try {
       body = JSON.parse(responseText);
     } catch {
+      if (response.status === 401) clearAuth();
       throw new Error(`API ${path} 응답을 읽지 못했어요.`);
     }
   }
   if (!response.ok || body.isSuccess === false) {
-    if (auth && response.status === 401) clearAuth();
+    const errorCode = String(body.code ?? '');
+    const isAuthError = response.status === 401
+      || /(?:401|UNAUTHORIZED|TOKEN[_-]?EXPIRED|AUTH[_-]?EXPIRED)/i.test(errorCode);
+    if (isAuthError) clearAuth();
+
     const error = new Error(body.message || `API ${path} failed: ${response.status}`);
-    error.status = response.status;
+    error.status = isAuthError ? 401 : response.status;
     error.code = body.code;
     throw error;
   }
@@ -74,6 +110,10 @@ export function signup({ email, password, nickname }) {
 export function login({ email, password }) {
   clearAuth();
   return post('/v1/auth/login', { email, password }, { auth: false });
+}
+
+export function fetchMyProfile({ signal } = {}) {
+  return request('/v1/members/me', { signal, auth: true });
 }
 
 function toQuery(params = {}) {
