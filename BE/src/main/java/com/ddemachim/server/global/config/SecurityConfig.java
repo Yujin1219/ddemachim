@@ -43,6 +43,8 @@ public class SecurityConfig {
                         .accessDeniedHandler(accessDeniedHandler))
                 .addFilterBefore(jwtAuthenticationFilter, UsernamePasswordAuthenticationFilter.class)
                 .authorizeHttpRequests(auth -> auth
+                        .requestMatchers("/api/course-basket/**")
+                        .authenticated()
                         .requestMatchers(HttpMethod.GET, "/api/v1/members/me")
                         .authenticated()
                         .anyRequest()

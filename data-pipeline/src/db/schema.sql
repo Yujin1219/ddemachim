@@ -80,6 +80,27 @@ CREATE TABLE IF NOT EXISTS place_image (
 
 CREATE INDEX IF NOT EXISTS idx_place_image_place_id ON place_image (place_id);
 
+-- 로그인 회원
+CREATE TABLE IF NOT EXISTS member (
+    member_id       bigserial PRIMARY KEY,
+    email           varchar(254) NOT NULL UNIQUE,
+    password        varchar(100) NOT NULL,
+    nickname        varchar(30) NOT NULL UNIQUE,
+    role            varchar(20) NOT NULL
+);
+
+-- 로그인 회원별 코스 장바구니의 장소 항목
+CREATE TABLE IF NOT EXISTS course_basket_item (
+    id              bigserial PRIMARY KEY,
+    member_id       bigint NOT NULL REFERENCES member(member_id) ON DELETE CASCADE,
+    place_id        bigint NOT NULL REFERENCES place(id) ON DELETE CASCADE,
+    created_at      timestamptz NOT NULL DEFAULT now(),
+    UNIQUE (member_id, place_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_course_basket_item_member_id
+    ON course_basket_item (member_id);
+
 -- 전시/축제/행사/팝업 (기간이 있는 이벤트)
 CREATE TABLE IF NOT EXISTS event (
     id              bigserial PRIMARY KEY,

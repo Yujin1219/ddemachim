@@ -47,7 +47,9 @@ public class MediaContentController {
 
     @Operation(
             summary = "작품 상세 조회",
-            description = "작품 id로 상세 정보(원제, 줄거리 등)를 조회합니다. 존재하지 않는 id면 404를 반환합니다.")
+            description = "작품 id로 상세 정보(원제, 줄거리, 감독·출연진 크레딧 등)를 조회합니다. "
+                    + "크레딧은 감독을 먼저, 출연진은 출연 순서 오름차순(순서가 없으면 뒤)으로 반환합니다. "
+                    + "존재하지 않는 id면 404를 반환합니다.")
     @GetMapping("/{id}")
     public ApiResponse<MediaContentDetailResponse> getDetail(
             @Parameter(description = "작품 id (media_content.id)") @PathVariable Long id) {
