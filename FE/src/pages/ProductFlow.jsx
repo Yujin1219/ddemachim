@@ -4,7 +4,7 @@ import { CalendarDays, ChevronLeft, ChevronRight, CircleDollarSign, CircleHelp, 
 import AppHeader from '../components/AppHeader';
 import BottomNav from '../components/BottomNav';
 import PlaceReviewPreview from '../components/PlaceReviewPreview';
-import SelectedPlaceRoutePanel from '../components/SelectedPlaceRoutePanel.jsx';
+import SelectedPlaceRoutePanel, { selectedPlaceDetailTarget } from '../components/SelectedPlaceRoutePanel.jsx';
 import VWorldMap from '../components/VWorldMap';
 import { PLACE_REVIEW_ITEMS, PLACE_REVIEW_SUMMARY } from '../components/placeReviewPreviewModel.js';
 import {
@@ -1189,6 +1189,7 @@ function MapHome({ go, basketState, onBasketAdded, onBasketRefresh, onAuthRequir
     : selectedPlace
       ? placeToCardProps({ ...selectedPlace, thumbnailUrl: selectedPlace.thumbnailUrl || images.mapPlace })
       : null;
+  const selectedPlaceDetail = selectedPlaceDetailTarget(selectedPlace);
   const nearby = selectedPlace
     ? {
         title: '선택한 장소',
@@ -1351,7 +1352,7 @@ function MapHome({ go, basketState, onBasketAdded, onBasketRefresh, onAuthRequir
         <motion.section className={`bottom-sheet map-nearby-sheet motion-depth-sheet${selectedPlace ? ' has-selected-route' : ''}`} data-collapsed={isNearbySheetCollapsed || undefined} initial={{ opacity: 0, y: 42 }} animate={{ opacity: 1, y: isNearbySheetCollapsed ? 176 : 0 }} transition={{ opacity: { duration: 0.28, delay: 0.08 }, y: { type: 'spring', stiffness: 420, damping: 38 } }} drag="y" dragControls={nearbySheetDragControls} dragListener={false} dragConstraints={{ top: 0, bottom: 176 }} dragElastic={0.06} dragMomentum={false} onDragEnd={settleNearbySheet}>
           <button className="map-sheet-handle-button" type="button" aria-label={isNearbySheetCollapsed ? '주변 장소 패널 펼치기' : '주변 장소 패널 접기'} aria-expanded={!isNearbySheetCollapsed} onPointerDown={(event) => nearbySheetDragControls.start(event)} onClick={() => setIsNearbySheetCollapsed((current) => !current)}><span className="sheet-handle" /></button>
           {selectedPlace && <button className="selected-route-close" type="button" aria-label="선택한 장소 닫기" onClick={clearSelectedPlace}><X aria-hidden="true" size={18} strokeWidth={2.2} /></button>}
-          <ScreenSection title={nearby.title} action={selectedPlace ? null : '전체보기'} onAction={() => go('explore')}><PlaceRow place={nearby.place} onClick={selectedPlace ? undefined : () => go(nearby.next, nearby.place.id)} /></ScreenSection>
+          <ScreenSection title={nearby.title} action={selectedPlace ? null : '전체보기'} onAction={() => go('explore')}><PlaceRow place={nearby.place} onClick={selectedPlace ? (selectedPlaceDetail ? () => go(selectedPlaceDetail.screen, selectedPlaceDetail.id) : undefined) : () => go(nearby.next, nearby.place.id)} /></ScreenSection>
           {selectedPlace
             ? <SelectedPlaceRoutePanel
                 selectedPlace={selectedPlace}

@@ -41,8 +41,18 @@ export function visibleRouteModes(routeStatus, routeData) {
     : ROUTE_MODES.filter((mode) => mode !== 'TRANSIT');
 }
 
-export function resolveAvailableRouteMode(activeMode, modes) {
-  return modes.includes(activeMode) ? activeMode : modes[0] || 'WALK';
+export function resolveAvailableRouteMode(activeMode, modes, routeData = null) {
+  if (modes.includes(activeMode)) return activeMode;
+  const firstAvailableMode = ROUTE_MODES.find((mode) => (
+    modes.includes(mode) && routeOption(routeData, mode)?.status === 'AVAILABLE'
+  ));
+  return firstAvailableMode || modes[0] || 'WALK';
+}
+
+export function selectedPlaceDetailTarget(place) {
+  if (!place || place.externalSource === 'KAKAO') return null;
+  if (place.id === undefined || place.id === null || String(place.id).trim() === '') return null;
+  return { screen: 'place', id: place.id };
 }
 
 function routeMetric(option) {
@@ -194,7 +204,7 @@ export default function SelectedPlaceRoutePanel({
   taxiHref = null,
 }) {
   const visibleModes = visibleRouteModes(routeStatus, routeData);
-  const resolvedMode = resolveAvailableRouteMode(activeMode, visibleModes);
+  const resolvedMode = resolveAvailableRouteMode(activeMode, visibleModes, routeData);
   const activeOption = routeOption(routeData, resolvedMode);
   const destination = resolveDestination(selectedPlace);
   const resolvedTaxiHref = taxiHref || (resolvedMode === 'TAXI' ? buildKakaoTaxiHref(destination) : null);

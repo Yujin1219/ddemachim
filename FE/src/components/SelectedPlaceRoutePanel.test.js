@@ -5,6 +5,7 @@ import { act, create } from 'react-test-renderer';
 
 import SelectedPlaceRoutePanel, {
   resolveAvailableRouteMode,
+  selectedPlaceDetailTarget,
   visibleRouteModes,
 } from './SelectedPlaceRoutePanel.js';
 
@@ -107,6 +108,16 @@ test('filters unavailable transit while keeping available walk and taxi modes', 
 
 test('resolves a disappeared active mode to the first visible mode', () => {
   assert.equal(resolveAvailableRouteMode('TRANSIT', ['WALK', 'TAXI']), 'WALK');
+});
+
+test('resolves a disappeared transit mode to the first available route by priority', () => {
+  assert.equal(resolveAvailableRouteMode('TRANSIT', ['WALK', 'TAXI'], {
+    routes: [
+      route('WALK', { status: 'UNAVAILABLE', unavailableReason: 'NO_ROUTE' }),
+      route('TRANSIT', { status: 'UNAVAILABLE', unavailableReason: 'TIMEOUT' }),
+      route('TAXI'),
+    ],
+  }), 'TAXI');
 });
 
 test('keeps all route mode tabs visible while routes are loading', () => {
@@ -220,6 +231,25 @@ test('notifies the controlled parent when the active mode is no longer visible',
   assert.deepEqual(modeChanges, ['WALK']);
 });
 
+test('renders the first available route when transit disappears and walk is unavailable', async () => {
+  const modeChanges = [];
+  const renderer = await renderPanel({
+    activeMode: 'TRANSIT',
+    onModeChange: (mode) => modeChanges.push(mode),
+    routeData: {
+      routes: [
+        route('WALK', { status: 'UNAVAILABLE', unavailableReason: 'NO_ROUTE' }),
+        route('TRANSIT', { status: 'UNAVAILABLE', unavailableReason: 'TIMEOUT' }),
+        route('TAXI'),
+      ],
+    },
+  });
+
+  assert.deepEqual(modeButtons(renderer).map((button) => button.props['aria-pressed']), [false, true]);
+  assert.equal(textContent(renderer.toJSON()).includes('예상 8,700원'), true);
+  assert.deepEqual(modeChanges, ['TAXI']);
+});
+
 test('shows a retry for temporary provider failure without hiding successful modes', async () => {
   let retryCount = 0;
   const renderer = await renderPanel({
@@ -243,6 +273,38 @@ test('shows a retry for temporary provider failure without hiding successful mod
   assert.equal(textContent(modeButtons(renderer)[1]), '택시일시 오류');
   await act(async () => retry.props.onClick());
   assert.equal(retryCount, 1);
+});
+
+test('shows a retry for an explicitly selected walk temporary provider failure', async () => {
+  let retryCount = 0;
+  const renderer = await renderPanel({
+    activeMode: 'WALK',
+    onRetryRoute: () => { retryCount += 1; },
+    routeData: {
+      routes: [
+        route('WALK', { status: 'UNAVAILABLE', unavailableReason: 'PROVIDER_UNAVAILABLE' }),
+        route('TRANSIT', { status: 'UNAVAILABLE', unavailableReason: 'TIMEOUT' }),
+        route('TAXI'),
+      ],
+    },
+  });
+  const copy = textContent(renderer.toJSON());
+  const retry = renderer.root.find(
+    (node) => node.type === 'button' && textContent(node) === '다시 시도',
+  );
+
+  assert.equal(copy.includes('도보 정보를 잠시 불러오지 못했어요.'), true);
+  assert.deepEqual(modeButtons(renderer).map((button) => textContent(button)), ['도보일시 오류', '택시10분']);
+  await act(async () => retry.props.onClick());
+  assert.equal(retryCount, 1);
+});
+
+test('keeps internal selected-place detail navigation separate from Kakao cards', () => {
+  assert.deepEqual(selectedPlaceDetailTarget({ id: 'place-1', externalSource: 'INTERNAL' }), {
+    screen: 'place',
+    id: 'place-1',
+  });
+  assert.equal(selectedPlaceDetailTarget({ id: 'kakao:place-1', externalSource: 'KAKAO' }), null);
 });
 
 test('explains when an active route mode is not configured', async () => {
