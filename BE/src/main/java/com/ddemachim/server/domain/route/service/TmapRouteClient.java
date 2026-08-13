@@ -106,7 +106,7 @@ public class TmapRouteClient implements RouteProviderClient {
         } catch (RouteProviderException exception) {
             throw exception;
         } catch (RuntimeException exception) {
-            throw unavailable(exception);
+            throw unavailable();
         }
     }
 
@@ -123,7 +123,7 @@ public class TmapRouteClient implements RouteProviderClient {
         try {
             JsonNode itineraries = response.path("metaData").path("plan").path("itineraries");
             if (!itineraries.isArray()) {
-                throw unavailable(null);
+                throw unavailable();
             }
             if (itineraries.isEmpty()) {
                 throw new RouteProviderException(RouteUnavailableReason.NO_ROUTE);
@@ -133,11 +133,11 @@ public class TmapRouteClient implements RouteProviderClient {
             int fastestTime = Integer.MAX_VALUE;
             for (JsonNode itinerary : itineraries) {
                 if (itinerary == null || !itinerary.isObject()) {
-                    throw unavailable(null);
+                    throw unavailable();
                 }
                 Integer totalTime = integer(itinerary, "totalTime");
                 if (totalTime == null || totalTime < 0) {
-                    throw unavailable(null);
+                    throw unavailable();
                 }
                 if (totalTime < fastestTime) {
                     fastest = itinerary;
@@ -173,7 +173,7 @@ public class TmapRouteClient implements RouteProviderClient {
         } catch (RouteProviderException exception) {
             throw exception;
         } catch (RuntimeException exception) {
-            throw unavailable(exception);
+            throw unavailable();
         }
     }
 
@@ -210,7 +210,7 @@ public class TmapRouteClient implements RouteProviderClient {
         } catch (RouteProviderException exception) {
             throw exception;
         } catch (RuntimeException exception) {
-            throw unavailable(exception);
+            throw unavailable();
         }
     }
 
@@ -258,25 +258,25 @@ public class TmapRouteClient implements RouteProviderClient {
                     .retrieve()
                     .body(String.class);
             if (responseBody == null || responseBody.isBlank()) {
-                throw unavailable(null);
+                throw unavailable();
             }
             try {
                 return objectMapper.readTree(responseBody);
             } catch (JacksonException | IllegalArgumentException exception) {
-                throw unavailable(exception);
+                throw unavailable();
             }
         } catch (RouteProviderException exception) {
             throw exception;
         } catch (RestClientException exception) {
             if (containsTimeout(exception)) {
-                throw new RouteProviderException(RouteUnavailableReason.TIMEOUT, exception);
+                throw new RouteProviderException(RouteUnavailableReason.TIMEOUT);
             }
-            throw unavailable(exception);
+            throw unavailable();
         } catch (RuntimeException exception) {
             if (containsTimeout(exception)) {
-                throw new RouteProviderException(RouteUnavailableReason.TIMEOUT, exception);
+                throw new RouteProviderException(RouteUnavailableReason.TIMEOUT);
             }
-            throw unavailable(exception);
+            throw unavailable();
         }
     }
 
@@ -286,7 +286,6 @@ public class TmapRouteClient implements RouteProviderClient {
             if (current instanceof SocketTimeoutException
                     || current instanceof HttpTimeoutException
                     || current instanceof TimeoutException
-                    || current instanceof java.net.http.HttpTimeoutException
                     || current instanceof IOException && current.getMessage() != null
                     && current.getMessage().toLowerCase(Locale.ROOT).contains("timeout")) {
                 return true;
@@ -296,14 +295,14 @@ public class TmapRouteClient implements RouteProviderClient {
         return false;
     }
 
-    private static RouteProviderException unavailable(Throwable cause) {
-        return new RouteProviderException(RouteUnavailableReason.PROVIDER_UNAVAILABLE, cause);
+    private static RouteProviderException unavailable() {
+        return new RouteProviderException(RouteUnavailableReason.PROVIDER_UNAVAILABLE);
     }
 
     private static List<LineFeature> lineFeatures(JsonNode response) {
         JsonNode features = response.path("features");
         if (!features.isArray()) {
-            throw unavailable(null);
+            throw unavailable();
         }
         List<LineFeature> lines = new ArrayList<>();
         for (JsonNode feature : features) {
@@ -326,18 +325,18 @@ public class TmapRouteClient implements RouteProviderClient {
 
     private static List<List<Double>> coordinates(JsonNode coordinates) {
         if (!coordinates.isArray() || coordinates.size() < 2) {
-            throw unavailable(null);
+            throw unavailable();
         }
         List<List<Double>> result = new ArrayList<>();
         for (JsonNode coordinate : coordinates) {
             if (!coordinate.isArray() || coordinate.size() < 2
                     || !coordinate.get(0).isNumber() || !coordinate.get(1).isNumber()) {
-                throw unavailable(null);
+                throw unavailable();
             }
             double longitude = coordinate.get(0).doubleValue();
             double latitude = coordinate.get(1).doubleValue();
-            if (!Double.isFinite(longitude) || !Double.isFinite(latitude)) {
-                throw unavailable(null);
+            if (!validWgs84(longitude, latitude)) {
+                throw unavailable();
             }
             result.add(List.of(longitude, latitude));
         }
@@ -350,7 +349,7 @@ public class TmapRouteClient implements RouteProviderClient {
             coordinates.addAll(line.coordinates());
         }
         if (coordinates.size() < 2) {
-            throw unavailable(null);
+            throw unavailable();
         }
         return new LineStringGeometry(coordinates);
     }
@@ -370,7 +369,7 @@ public class TmapRouteClient implements RouteProviderClient {
             }
         }
         if (!found) {
-            throw unavailable(null);
+            throw unavailable();
         }
         return sum;
     }
@@ -415,23 +414,20 @@ public class TmapRouteClient implements RouteProviderClient {
 
     private static List<RouteLeg> transitLegs(JsonNode itinerary) {
         JsonNode legs = itinerary.path("legs");
-        if (legs.isMissingNode()) {
-            return List.of();
-        }
-        if (!legs.isArray()) {
-            throw unavailable(null);
+        if (!legs.isArray() || legs.isEmpty()) {
+            throw unavailable();
         }
         List<RouteLeg> result = new ArrayList<>();
         for (JsonNode leg : legs) {
             if (leg == null || !leg.isObject()) {
-                throw unavailable(null);
+                throw unavailable();
             }
             String rawMode = text(leg, "mode");
             RouteMode mode = transitMode(rawMode);
             Integer duration = integer(leg, "sectionTime");
             Integer distance = integer(leg, "distance");
             if (mode == null || duration == null || duration < 0 || distance == null || distance < 0) {
-                throw unavailable(null);
+                throw unavailable();
             }
             LineStringGeometry geometry = transitGeometry(leg.path("passShape").path("linestring"));
             String routeName = firstText(leg, "routeName", "route", "service");
@@ -450,21 +446,21 @@ public class TmapRouteClient implements RouteProviderClient {
         for (String pair : pairs) {
             String[] values = pair.split(",");
             if (values.length != 2) {
-                throw unavailable(null);
+                throw unavailable();
             }
             try {
                 double longitude = Double.parseDouble(values[0]);
                 double latitude = Double.parseDouble(values[1]);
-                if (!Double.isFinite(longitude) || !Double.isFinite(latitude)) {
-                    throw unavailable(null);
+                if (!validWgs84(longitude, latitude)) {
+                    throw unavailable();
                 }
                 coordinates.add(List.of(longitude, latitude));
             } catch (NumberFormatException exception) {
-                throw unavailable(exception);
+                throw unavailable();
             }
         }
         if (coordinates.size() < 2) {
-            throw unavailable(null);
+            throw unavailable();
         }
         return new LineStringGeometry(coordinates);
     }
@@ -497,13 +493,22 @@ public class TmapRouteClient implements RouteProviderClient {
             try {
                 return Integer.valueOf(value);
             } catch (NumberFormatException exception) {
-                throw unavailable(exception);
+                throw unavailable();
             }
         }
         if (node.canConvertToInt()) {
             return node.intValue();
         }
-        throw unavailable(null);
+        throw unavailable();
+    }
+
+    private static boolean validWgs84(double longitude, double latitude) {
+        return Double.isFinite(longitude)
+                && Double.isFinite(latitude)
+                && longitude >= -180.0
+                && longitude <= 180.0
+                && latitude >= -90.0
+                && latitude <= 90.0;
     }
 
     private static String text(JsonNode node, String field) {

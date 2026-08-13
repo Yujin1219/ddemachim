@@ -171,6 +171,67 @@ class TmapRouteClientTest {
     }
 
     @Test
+    void outOfRangeGeometryCoordinates_areReportedAsProviderUnavailable() {
+        TestClient testClient = testClient("test-key");
+        testClient.server().expect(requestTo(org.hamcrest.Matchers.containsString(
+                        "/tmap/routes/pedestrian?version=1")))
+                .andRespond(withSuccess("""
+                        {
+                          "type": "FeatureCollection",
+                          "features": [{
+                            "type": "Feature",
+                            "geometry": {"type": "LineString", "coordinates": [
+                              [200.0, 100.0], [126.9723, 37.5559]
+                            ]},
+                            "properties": {"distance": 920, "time": 840}
+                          }]
+                        }
+                        """, MediaType.APPLICATION_JSON));
+
+        assertThatThrownBy(() -> testClient.client().findWalking(ORIGIN, DESTINATION))
+                .isInstanceOf(RouteProviderException.class)
+                .extracting("reason")
+                .isEqualTo(RouteUnavailableReason.PROVIDER_UNAVAILABLE);
+        testClient.server().verify();
+    }
+
+    @Test
+    void transitMissingLegs_areReportedAsProviderUnavailable() {
+        TestClient testClient = testClient("test-key");
+        testClient.server().expect(requestTo(org.hamcrest.Matchers.containsString("/transit/routes")))
+                .andRespond(withSuccess("""
+                        {
+                          "metaData": {"plan": {"itineraries": [{"totalTime": 1320}]}}
+                        }
+                        """, MediaType.APPLICATION_JSON));
+
+        assertThatThrownBy(() -> testClient.client().findTransit(ORIGIN, DESTINATION))
+                .isInstanceOf(RouteProviderException.class)
+                .extracting("reason")
+                .isEqualTo(RouteUnavailableReason.PROVIDER_UNAVAILABLE);
+        testClient.server().verify();
+    }
+
+    @Test
+    void transitEmptyLegs_areReportedAsProviderUnavailable() {
+        TestClient testClient = testClient("test-key");
+        testClient.server().expect(requestTo(org.hamcrest.Matchers.containsString("/transit/routes")))
+                .andRespond(withSuccess("""
+                        {
+                          "metaData": {"plan": {"itineraries": [
+                            {"totalTime": 1320, "legs": []}
+                          ]}}
+                        }
+                        """, MediaType.APPLICATION_JSON));
+
+        assertThatThrownBy(() -> testClient.client().findTransit(ORIGIN, DESTINATION))
+                .isInstanceOf(RouteProviderException.class)
+                .extracting("reason")
+                .isEqualTo(RouteUnavailableReason.PROVIDER_UNAVAILABLE);
+        testClient.server().verify();
+    }
+
+    @Test
     void malformedCoordinates_areReportedAsProviderUnavailableWithoutCallingUpstream() {
         TmapRouteClient client = testClient("test-key").client();
 
@@ -203,9 +264,11 @@ class TmapRouteClientTest {
                 .andRespond(withException(new SocketTimeoutException("sensitive timeout detail")));
 
         assertThatThrownBy(() -> testClient.client().findTaxi(ORIGIN, DESTINATION))
-                .isInstanceOf(RouteProviderException.class)
-                .extracting("reason")
-                .isEqualTo(RouteUnavailableReason.TIMEOUT);
+                .isInstanceOfSatisfying(RouteProviderException.class, exception -> {
+                    assertThat(exception.reason()).isEqualTo(RouteUnavailableReason.TIMEOUT);
+                    assertThat(exception.getCause()).isNull();
+                    assertThat(exception.getMessage()).doesNotContain("sensitive timeout detail");
+                });
         testClient.server().verify();
     }
 
