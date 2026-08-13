@@ -167,6 +167,56 @@ python scripts/run_seoul_culture_event.py      # 서울시 문화행사 정보
 python scripts/quality_report.py               # 전체 통계 리포트
 ```
 
+### 블로그 장소 트렌드 7단계 파이프라인
+
+기존 `blog_trend_pilot.py`는 검색/본문 파일럿 호환용으로 유지하고, 후속
+검증·집계·리포트는 [`scripts/blog_trend_pipeline.py`](scripts/blog_trend_pipeline.py)가
+순서대로 orchestration한다.
+
+```bash
+# 공개 extracted-places artifact만 사용한 계약/입력 dry-run
+python3 scripts/blog_trend_pipeline.py \
+  --input /private/tmp/ddemachim-live-pilot/extracted-places_20260812T042424Z.json \
+  --dry-run
+
+# 일반 반복 실행: Kakao 키가 없으면 validation만 unavailable로 기록하고
+# 나머지 로컬 단계와 관리자 review 리포트는 계속 생성한다.
+python3 scripts/blog_trend_pipeline.py \
+  --input results/blog_place_pilot/extracted-places_20260812T042328Z.json
+
+# Naver Search Trend를 사용할 때만 명시적으로 네트워크 호출
+python3 scripts/blog_trend_pipeline.py \
+  --input results/blog_place_pilot/extracted-places_20260812T042328Z.json \
+  --fetch-trend
+```
+
+실행 순서는 `1 Kakao Local 검증 → 2 raw 선별 점수 → 3 검증 ID 기준
+7일/이전 28일 집계 → 4 JSONL snapshot → 5 Search Trend 상대 ratio →
+6 반복 화제어 후보 → 7 JSON+TXT 최종 리포트`다. 각 단계는
+`--stage validate|select|aggregate|snapshot|trend|topics|report`로 진입할 수
+있고, `--dry-run`은 인증키·네트워크·snapshot append를 하지 않는다.
+
+Kakao client는 프로세스 `KAKAO_REST_API_KEY`만 읽고, Search Trend client는
+`NAVER_SEARCH_TREND_CLIENT_ID`/`NAVER_SEARCH_TREND_CLIENT_SECRET`를 우선
+사용한다(`NAVER_CLIENT_*`, 기존 `NAVER_API_HUB_CLIENT_*`도 호환 fallback).
+새 client들은 `.env`를 자동 로드하지 않으며 키 값과 API 원문 응답은 출력/저장하지
+않는다. 키가 없으면 해당 live 단계는 `unavailable`로 명시된다.
+
+기본 결과는 `results/blog_trend_pipeline/`에 저장된다.
+
+- `kakao-validation_*.json`: `matched`, `category_mismatch`, `location_mismatch`, `ambiguous`, `not_found`, `error`
+- `selection_*.json`, `metrics_*.json`, `topics_*.json`, `naver-trend_*.json`
+- `blog-post-snapshots.jsonl`: schema v1, append-only, `(collected_at, query, link)` idempotency
+- `final-report_*.json`와 `final-report_*.txt`: 기준일·근거·상태를 보존하며 관리자 `review_required` 상태를 유지
+
+최종 기본 기준은 local validation `matched`, 최근 unique link ≥ 3,
+blogger ≥ 3, weekly-average growth ≥ 2x, absolute delta ≥ 2다. Search Trend
+ratio는 절대량이 아닌 상대값이며 corroboration으로만 사용한다. prior가 0이면
+`new_candidate`로 분리하고 growth를 임의로 계산하지 않는다. 광고 표현은
+title/description의 관찰 가능한 signal/penalty만 남기며 광고라고 확정하지
+않는다. 고정 메뉴 목록 대신 장소명·지역명을 제외한 한국어 토큰/구문과
+unique blogger support ≥ 3만 evidence term으로 저장한다.
+
 모든 스크립트는 `--dry-run` 옵션으로 DB 적재 없이 통계만 미리 확인 가능(`run_seoul_tour.py`, `run_filming_location.py` 등 일부는 옵션 유무가 다를 수 있어 `--help`로 확인).
 
 ## 스케줄러(주기 수집)

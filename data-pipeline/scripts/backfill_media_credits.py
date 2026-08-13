@@ -25,6 +25,8 @@ from src.utils.logging import get_logger
 
 logger = get_logger(__name__)
 
+MIGRATION_PATH = Path(__file__).resolve().parent.parent / "src" / "db" / "add_media_credits.sql"
+
 
 @dataclass
 class Stats:
@@ -35,6 +37,12 @@ class Stats:
     cast_rows: int = 0
     director_rows: int = 0
     failed_titles: list[str] = field(default_factory=list)
+
+
+def _ensure_schema(conn: psycopg.Connection) -> None:
+    with conn.cursor() as cur:
+        cur.execute(MIGRATION_PATH.read_text(encoding="utf-8"))
+    conn.commit()
 
 
 def _upsert_person(conn: psycopg.Connection, tmdb_person_id: int, name: str, profile_path: str | None, stats: Stats) -> int:
@@ -49,7 +57,8 @@ def _upsert_person(conn: psycopg.Connection, tmdb_person_id: int, name: str, pro
             """
             INSERT INTO person (tmdb_person_id, name, profile_path)
             VALUES (%s, %s, %s)
-            ON CONFLICT (tmdb_person_id) DO UPDATE SET name = EXCLUDED.name
+            ON CONFLICT (tmdb_person_id) DO UPDATE
+            SET name = EXCLUDED.name, profile_path = EXCLUDED.profile_path
             RETURNING id
             """,
             (tmdb_person_id, name, profile_path),
@@ -87,6 +96,7 @@ def main() -> None:
 
     client = TmdbClient(key)
     conn = psycopg.connect("dbname=ddemachim user=postgres password=0000 host=localhost")
+    _ensure_schema(conn)
     stats = Stats()
 
     with conn.cursor() as cur:

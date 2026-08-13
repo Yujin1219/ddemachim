@@ -8,11 +8,16 @@ import static org.mockito.Mockito.when;
 
 import com.ddemachim.server.domain.media.dto.FilmingLocationResponse;
 import com.ddemachim.server.domain.media.dto.FilmingWorkSummaryResponse;
+import com.ddemachim.server.domain.media.dto.MediaContentDetailResponse;
 import com.ddemachim.server.domain.media.entity.FilmingLocation;
 import com.ddemachim.server.domain.media.entity.MediaContent;
+import com.ddemachim.server.domain.media.entity.MediaCredit;
+import com.ddemachim.server.domain.media.entity.Person;
+import com.ddemachim.server.domain.media.enums.MediaCreditRole;
 import com.ddemachim.server.domain.media.repository.FilmingLocationRepository;
 import com.ddemachim.server.domain.media.repository.MediaContentRepository;
 import com.ddemachim.server.domain.media.exception.InvalidMediaContentTypeException;
+import com.ddemachim.server.domain.media.repository.MediaCreditRepository;
 import com.ddemachim.server.domain.place.entity.Place;
 import com.ddemachim.server.domain.place.repository.PlaceImageRepository;
 import java.math.BigDecimal;
@@ -33,6 +38,9 @@ class MediaQueryServiceTest {
     private MediaContentRepository mediaContentRepository;
 
     @Mock
+    private MediaCreditRepository mediaCreditRepository;
+
+    @Mock
     private FilmingLocationRepository filmingLocationRepository;
 
     @Mock
@@ -40,6 +48,31 @@ class MediaQueryServiceTest {
 
     @InjectMocks
     private MediaQueryService mediaQueryService;
+
+    @Test
+    void getDetail_returnsDirectorAndCastCredits() {
+        MediaContent mediaContent = mediaContent(10L, "테스트 작품");
+        MediaCredit director = mediaCredit(1L, mediaContent, person(1L, 101, "Original Director", "테스트 감독"),
+                MediaCreditRole.DIRECTOR, null, null, null);
+        MediaCredit cast = mediaCredit(2L, mediaContent, person(2L, 102, "Original Actor", "테스트 배우"),
+                MediaCreditRole.CAST, "Original Character", "한글 배역", 0);
+
+        when(mediaContentRepository.findById(10L)).thenReturn(java.util.Optional.of(mediaContent));
+        when(mediaCreditRepository.findByMediaContentIdWithPersonOrderByRoleAndCastOrder(10L))
+                .thenReturn(List.of(director, cast));
+
+        MediaContentDetailResponse response = mediaQueryService.getDetail(10L);
+
+        assertThat(response.credits()).hasSize(2);
+        assertThat(response.credits().get(0).role()).isEqualTo("DIRECTOR");
+        assertThat(response.credits().get(0).name()).isEqualTo("Original Director");
+        assertThat(response.credits().get(0).nameKo()).isEqualTo("테스트 감독");
+        assertThat(response.credits().get(1).name()).isEqualTo("Original Actor");
+        assertThat(response.credits().get(1).nameKo()).isEqualTo("테스트 배우");
+        assertThat(response.credits().get(1).characterName()).isEqualTo("Original Character");
+        assertThat(response.credits().get(1).characterNameKo()).isEqualTo("한글 배역");
+        assertThat(response.credits().get(1).castOrder()).isZero();
+    }
 
     @Test
     void getFilmingLocationsByPlace_returnsSceneDescriptionForAutoMatchRows() {
@@ -118,6 +151,35 @@ class MediaQueryServiceTest {
         return mediaContent;
     }
 
+    private static Person person(Long id, Integer tmdbPersonId, String name, String nameKo) {
+        Person person = new TestPerson();
+        ReflectionTestUtils.setField(person, "id", id);
+        ReflectionTestUtils.setField(person, "tmdbPersonId", tmdbPersonId);
+        ReflectionTestUtils.setField(person, "name", name);
+        ReflectionTestUtils.setField(person, "nameKo", nameKo);
+        ReflectionTestUtils.setField(person, "profilePath", "/profile.jpg");
+        return person;
+    }
+
+    private static MediaCredit mediaCredit(
+            Long id,
+            MediaContent mediaContent,
+            Person person,
+            MediaCreditRole role,
+            String characterName,
+            String characterNameKo,
+            Integer castOrder) {
+        MediaCredit credit = new TestMediaCredit();
+        ReflectionTestUtils.setField(credit, "id", id);
+        ReflectionTestUtils.setField(credit, "mediaContent", mediaContent);
+        ReflectionTestUtils.setField(credit, "person", person);
+        ReflectionTestUtils.setField(credit, "role", role);
+        ReflectionTestUtils.setField(credit, "characterName", characterName);
+        ReflectionTestUtils.setField(credit, "characterNameKo", characterNameKo);
+        ReflectionTestUtils.setField(credit, "castOrder", castOrder);
+        return credit;
+    }
+
     private static class TestFilmingLocation extends FilmingLocation {
     }
 
@@ -125,5 +187,11 @@ class MediaQueryServiceTest {
     }
 
     private static class TestMediaContent extends MediaContent {
+    }
+
+    private static class TestPerson extends Person {
+    }
+
+    private static class TestMediaCredit extends MediaCredit {
     }
 }
