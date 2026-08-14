@@ -26,6 +26,10 @@ class DataPipelineSchedulerPropertiesTest {
                 .isEqualTo(Path.of("scripts", "run_seoul_culture_event.py"));
         assertThat(properties.getSeoulCultureEvents().getCron())
                 .isEqualTo(DataPipelineSchedulerProperties.DEFAULT_SEOUL_CULTURE_CRON);
+        assertThat(properties.getRepeatedBlogTrend().getScript())
+                .isEqualTo(Path.of("scripts", "repeated_blog_trend.py"));
+        assertThat(properties.getRepeatedBlogTrend().getCron())
+                .isEqualTo(DataPipelineSchedulerProperties.DEFAULT_REPEATED_BLOG_TREND_CRON);
 
         properties.validate();
     }
@@ -52,5 +56,7 @@ class DataPipelineSchedulerPropertiesTest {
         assertThat(properties.getTourApiEvents().getScript())
                 .isEqualTo(Path.of("scripts", "run_events.py"));
         assertThat(properties.getTourApiEvents().getCron()).isEqualTo("0 30 6 ? * MON");
+        assertThat(properties.getRepeatedBlogTrend().getScript())
+                .isEqualTo(Path.of("scripts", "repeated_blog_trend.py"));
     }
 }

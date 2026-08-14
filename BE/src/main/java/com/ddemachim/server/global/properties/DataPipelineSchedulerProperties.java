@@ -14,6 +14,7 @@ public class DataPipelineSchedulerProperties {
     public static final String DEFAULT_ZONE = "Asia/Seoul";
     public static final String DEFAULT_TOUR_API_CRON = "0 0 6 ? * MON";
     public static final String DEFAULT_SEOUL_CULTURE_CRON = "0 10 6 ? * MON";
+    public static final String DEFAULT_REPEATED_BLOG_TREND_CRON = "0 30 4 * * *";
 
     private boolean enabled = true;
     private String pythonExecutable = defaultPythonExecutable();
@@ -26,6 +27,9 @@ public class DataPipelineSchedulerProperties {
     private Job seoulCultureEvents = new Job(
             Path.of("scripts", "run_seoul_culture_event.py"),
             DEFAULT_SEOUL_CULTURE_CRON);
+    private Job repeatedBlogTrend = new Job(
+            Path.of("scripts", "repeated_blog_trend.py"),
+            DEFAULT_REPEATED_BLOG_TREND_CRON);
 
     public void validate() {
         applyMissingJobDefaults();
@@ -49,6 +53,7 @@ public class DataPipelineSchedulerProperties {
 
         validateJob("tour-api-events", tourApiEvents);
         validateJob("seoul-culture-events", seoulCultureEvents);
+        validateJob("repeated-blog-trend", repeatedBlogTrend);
     }
 
     private void applyMissingJobDefaults() {
@@ -60,6 +65,10 @@ public class DataPipelineSchedulerProperties {
                 seoulCultureEvents,
                 Path.of("scripts", "run_seoul_culture_event.py"),
                 DEFAULT_SEOUL_CULTURE_CRON);
+        applyMissingJobDefaults(
+                repeatedBlogTrend,
+                Path.of("scripts", "repeated_blog_trend.py"),
+                DEFAULT_REPEATED_BLOG_TREND_CRON);
     }
 
     private static void applyMissingJobDefaults(Job job, Path defaultScript, String defaultCron) {
@@ -148,6 +157,18 @@ public class DataPipelineSchedulerProperties {
                 seoulCultureEvents,
                 Path.of("scripts", "run_seoul_culture_event.py"),
                 DEFAULT_SEOUL_CULTURE_CRON);
+    }
+
+    public Job getRepeatedBlogTrend() {
+        return repeatedBlogTrend;
+    }
+
+    public void setRepeatedBlogTrend(Job repeatedBlogTrend) {
+        this.repeatedBlogTrend = repeatedBlogTrend;
+        applyMissingJobDefaults(
+                repeatedBlogTrend,
+                Path.of("scripts", "repeated_blog_trend.py"),
+                DEFAULT_REPEATED_BLOG_TREND_CRON);
     }
 
     public static class Job {
