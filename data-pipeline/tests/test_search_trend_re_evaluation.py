@@ -224,6 +224,11 @@ class SearchTrendReEvaluationTest(unittest.TestCase):
         run = {
             "collectionDate": AS_OF.isoformat(),
             "semantics": "repeated observations in collected Naver search-result samples; not total Naver Blog volume",
+            "stats": {
+                "WATCH": 99,
+                "TRENDING": 99,
+                "INSUFFICIENT_EVIDENCE": 99,
+            },
             "evidence": [_place(index) for index in range(33)],
         }
         result = re_evaluation.reevaluate_run(run, as_of=AS_OF, client=FakeTrendClient())
@@ -241,6 +246,17 @@ class SearchTrendReEvaluationTest(unittest.TestCase):
         self.assertTrue(result["searchTrend"]["relativeRatioOnly"])
         self.assertFalse(result["searchTrend"]["absoluteVolumeAvailable"])
         self.assertTrue(all("monthValues" in row["trend"] for row in result["evidence"]))
+        classification_counts = {
+            status: sum(
+                row["classification"]["status"] == status
+                for row in result["evidence"]
+            )
+            for status in ("WATCH", "TRENDING", "INSUFFICIENT_EVIDENCE")
+        }
+        self.assertEqual(
+            {status: result["stats"][status] for status in classification_counts},
+            classification_counts,
+        )
 
 
 if __name__ == "__main__":

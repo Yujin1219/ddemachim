@@ -570,6 +570,11 @@ def reevaluate_run(
         _text(row.get("trend", {}).get("status")) or "INSUFFICIENT_DATA"
         for row in updated_evidence
     )
+    classification_counts = Counter(
+        _text(row.get("classification", {}).get("status"))
+        or "INSUFFICIENT_EVIDENCE"
+        for row in updated_evidence
+    )
     api_failure_count = sum(
         1
         for row in updated_evidence
@@ -628,6 +633,8 @@ def reevaluate_run(
     stats["searchTrendBatches"] = len(batches)
     stats["searchTrendApiFailures"] = api_failure_count
     stats["searchTrendDataInsufficient"] = status_counts.get("INSUFFICIENT_DATA", 0)
+    for status in ("WATCH", "TRENDING", "INSUFFICIENT_EVIDENCE"):
+        stats[status] = classification_counts.get(status, 0)
     result["stats"] = stats
     return result
 
