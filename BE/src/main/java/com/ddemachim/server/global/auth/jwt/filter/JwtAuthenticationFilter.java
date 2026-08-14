@@ -1,7 +1,5 @@
 package com.ddemachim.server.global.auth.jwt.filter;
 
-import com.ddemachim.server.domain.user.exception.AuthErrorStatus;
-import com.ddemachim.server.global.apiPayload.ApiResponse;
 import com.ddemachim.server.global.auth.jwt.provider.JwtTokenProvider;
 import com.ddemachim.server.global.auth.jwt.provider.JwtValidationType;
 import com.ddemachim.server.global.auth.security.MemberAuthentication;
@@ -11,24 +9,23 @@ import jakarta.servlet.ServletException;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
 import java.io.IOException;
-import java.nio.charset.StandardCharsets;
 import java.util.List;
 import lombok.NonNull;
 import lombok.RequiredArgsConstructor;
-import org.springframework.http.MediaType;
 import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.security.web.authentication.WebAuthenticationDetailsSource;
 import org.springframework.stereotype.Component;
 import org.springframework.util.StringUtils;
 import org.springframework.web.filter.OncePerRequestFilter;
-import tools.jackson.databind.ObjectMapper;
 
 @Component
 @RequiredArgsConstructor
 public class JwtAuthenticationFilter extends OncePerRequestFilter {
 
+    public static final String JWT_VALIDATION_FAILURE_ATTRIBUTE =
+            JwtAuthenticationFilter.class.getName() + ".validationFailure";
+
     private final JwtTokenProvider jwtTokenProvider;
-    private final ObjectMapper objectMapper;
 
     @Override
     protected void doFilterInternal(
@@ -44,9 +41,8 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
         JwtValidationType validationType = jwtTokenProvider.validateToken(token);
         if (validationType != JwtValidationType.VALID_JWT) {
             SecurityContextHolder.clearContext();
-            writeFailure(response, validationType == JwtValidationType.EXPIRED_JWT_TOKEN
-                    ? AuthErrorStatus.EXPIRED_ACCESS_TOKEN
-                    : AuthErrorStatus.INVALID_ACCESS_TOKEN);
+            request.setAttribute(JWT_VALIDATION_FAILURE_ATTRIBUTE, validationType);
+            filterChain.doFilter(request, response);
             return;
         }
 
@@ -61,7 +57,8 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
             filterChain.doFilter(request, response);
         } catch (JwtException | IllegalArgumentException exception) {
             SecurityContextHolder.clearContext();
-            writeFailure(response, AuthErrorStatus.INVALID_ACCESS_TOKEN);
+            request.setAttribute(JWT_VALIDATION_FAILURE_ATTRIBUTE, JwtValidationType.INVALID_JWT_TOKEN);
+            filterChain.doFilter(request, response);
         }
     }
 
@@ -73,15 +70,4 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
         return null;
     }
 
-    private void writeFailure(HttpServletResponse response, AuthErrorStatus status) throws IOException {
-        if (response.isCommitted()) {
-            return;
-        }
-        response.setStatus(status.getHttpStatus().value());
-        response.setContentType(MediaType.APPLICATION_JSON_VALUE);
-        response.setCharacterEncoding(StandardCharsets.UTF_8.name());
-        objectMapper.writeValue(
-                response.getWriter(),
-                ApiResponse.onFailure(status.getCode(), status.getMessage(), null));
-    }
 }

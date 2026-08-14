@@ -19,7 +19,6 @@ export default function AppHeader({ basketCount = 0, onBasket, onProfile }) {
         </button>
         <button type="button" className="app-header-profile" onClick={onProfile} aria-label="프로필">
           <img src={`${ASSET_BASE}/avatar.svg`} alt="" />
-          <span>유</span>
         </button>
       </div>
     </header>
