@@ -3,6 +3,7 @@ import React, { Fragment, useEffect } from 'react';
 import {
   buildKakaoTaxiHref,
   distanceBetweenMeters,
+  fastestAvailableRouteMode,
   formatRouteDistance,
   formatRouteDuration,
   formatRouteFare,
@@ -55,12 +56,6 @@ export function selectedPlaceDetailTarget(place) {
   return { screen: 'place', id: place.id };
 }
 
-function routeMetric(option) {
-  const duration = formatRouteDuration(option?.durationSeconds);
-  const distance = formatRouteDistance(option?.distanceMeters);
-  return [duration, distance].filter(Boolean);
-}
-
 function routeTabStatus(routeStatus, routeData, mode) {
   if (routeStatus === 'loading') return '계산 중';
   if (routeStatus !== 'ready') return '\u00a0';
@@ -72,6 +67,19 @@ function routeTabStatus(routeStatus, routeData, mode) {
     return '일시 오류';
   }
   return '이용 불가';
+}
+
+function routeRowSecondary(routeStatus, routeData, mode) {
+  if (routeStatus !== 'ready') return null;
+  const option = routeOption(routeData, mode);
+  if (option?.status !== 'AVAILABLE') return null;
+  if (mode === 'WALK') return formatRouteDistance(option.distanceMeters);
+  if (mode === 'TRANSIT') {
+    const transferCount = normalizeRouteNumber(option.transferCount);
+    return transferCount === null ? null : `환승 ${transferCount}회`;
+  }
+  const fare = formatRouteFare(option.fareWon);
+  return fare ? `예상 ${fare}` : null;
 }
 
 function locationErrorCopy(errorCode) {
@@ -154,8 +162,6 @@ function RouteStatusMessage({
 
 function RouteDetails({ option, mode, taxiHref }) {
   if (!option || option.status === 'UNAVAILABLE') return null;
-  const metrics = routeMetric(option);
-  const fare = formatRouteFare(option.fareWon);
   const detailItems = [];
   const transferCount = normalizeRouteNumber(option.transferCount);
   if (mode === 'TRANSIT' && transferCount !== null) {
@@ -168,14 +174,12 @@ function RouteDetails({ option, mode, taxiHref }) {
   return h(
     Fragment,
     null,
-    h(
-      'div',
-      { className: 'route-detail-summary' },
-      metrics[0] && h('strong', null, metrics[0]),
-      metrics[1] && h('span', null, metrics[1]),
-      mode === 'TAXI' && fare && h('span', null, `예상 ${fare}`),
-    ),
     detailItems.length > 0 && h('p', { className: 'route-detail-meta' }, detailItems.join(' · ')),
+    detailItems.length === 0 && (mode === 'WALK' || mode === 'TRANSIT') && h(
+      'p',
+      { className: 'route-detail-meta is-placeholder', 'aria-hidden': true },
+      '\u00a0',
+    ),
     mode === 'TAXI' && h('p', { className: 'route-taxi-note' }, '앱에서 출발지와 목적지를 확인한 뒤 호출을 완료해주세요.'),
     mode === 'TAXI' && taxiHref && h(
       'a',
@@ -198,7 +202,10 @@ export default function SelectedPlaceRoutePanel({
   routeStatus = 'idle',
   routeData = null,
   activeMode = 'WALK',
+  originLabel = '광화문',
+  placeCard = null,
   onModeChange,
+  onResolvedModeChange,
   onRetryLocation,
   onRetryRoute,
   taxiHref = null,
@@ -208,10 +215,13 @@ export default function SelectedPlaceRoutePanel({
   const activeOption = routeOption(routeData, resolvedMode);
   const destination = resolveDestination(selectedPlace);
   const resolvedTaxiHref = taxiHref || (resolvedMode === 'TAXI' ? buildKakaoTaxiHref(destination) : null);
+  const fastestMode = routeStatus === 'ready'
+    ? fastestAvailableRouteMode({ routes: routeList(routeData) }, visibleModes)
+    : null;
 
   useEffect(() => {
-    if (activeMode !== resolvedMode) onModeChange?.(resolvedMode);
-  }, [activeMode, onModeChange, resolvedMode]);
+    if (activeMode !== resolvedMode) onResolvedModeChange?.(resolvedMode);
+  }, [activeMode, onResolvedModeChange, resolvedMode]);
 
   return h(
     'section',
@@ -219,8 +229,9 @@ export default function SelectedPlaceRoutePanel({
       className: 'selected-place-route-panel',
       'aria-labelledby': 'selected-place-route-title',
     },
-    h('div', { className: 'selected-route-origin' }, '현재 위치에서'),
-    h('h2', { id: 'selected-place-route-title' }, selectedPlace?.name || '선택한 장소'),
+    placeCard && h('div', { className: 'selected-route-place-card' }, placeCard),
+    h('h2', { id: 'selected-place-route-title', className: 'sr-only' }, selectedPlace?.name || '선택한 장소'),
+    h('p', { className: 'selected-route-origin' }, `${originLabel} 출발`),
     h(
       'div',
       { className: 'route-mode-tabs', role: 'group', 'aria-label': '이동 수단 선택' },
@@ -234,7 +245,14 @@ export default function SelectedPlaceRoutePanel({
           onClick: () => onModeChange?.(mode),
         },
         h('span', { className: 'route-mode-label' }, ROUTE_MODE_LABELS[mode]),
-        h('span', { className: 'route-mode-status' }, routeTabStatus(routeStatus, routeData, mode)),
+        h(
+          'span',
+          { className: 'route-mode-metrics' },
+          h('span', { className: 'route-mode-status' }, routeTabStatus(routeStatus, routeData, mode)),
+          routeRowSecondary(routeStatus, routeData, mode)
+            && h('span', { className: 'route-mode-secondary' }, routeRowSecondary(routeStatus, routeData, mode)),
+          fastestMode === mode && h('span', { className: 'route-fastest-badge' }, '가장 빠름'),
+        ),
       )),
     ),
     h(RouteStatusMessage, {

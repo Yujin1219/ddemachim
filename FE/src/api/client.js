@@ -89,6 +89,10 @@ export function fetchPlaces({ category, district, tag, filmingContentType, keywo
   return request(`/places${toQuery({ category, district, tag, filmingContentType, keyword, page, size })}`, { signal });
 }
 
+export function fetchPlaceTrends({ limit = 6, signal } = {}) {
+  return request(`/places/trends${toQuery({ limit })}`, { signal });
+}
+
 export function fetchKakaoPlaces(query, { latitude, longitude, radius, signal } = {}) {
   return request(`/place-search/kakao${toQuery({ query, latitude, longitude, radius })}`, { signal });
 }

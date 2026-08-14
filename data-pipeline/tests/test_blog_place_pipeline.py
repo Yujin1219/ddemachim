@@ -49,6 +49,16 @@ def _map_html(places: list[dict]) -> str:
     return f'<html><script class="__se_module_data" data-module-v2="{value}"></script></html>'
 
 
+def _map_script(place: dict) -> str:
+    payload = {"type": "v2_map", "data": {"places": [place]}}
+    value = html.escape(json.dumps(payload, ensure_ascii=False), quote=True)
+    return f'<script class="__se_module_data" data-module-v2="{value}"></script>'
+
+
+def _text_paragraph(value: str) -> str:
+    return f'<p class="se-text-paragraph"><span>{value}</span></p>'
+
+
 class BlogPlacePipelineTest(unittest.TestCase):
     def test_selection_uses_25_15_10_quotas_without_duplicates(self) -> None:
         items = [_item(index, days_ago=index % 60) for index in range(80)]
@@ -263,6 +273,73 @@ class BlogPlacePipelineTest(unittest.TestCase):
         self.assertEqual(stats["fetched_posts"], 1)
         self.assertEqual(stats["map_found_posts"], 0)
         self.assertEqual(stats["no_map"], 1)
+
+    def test_extracted_post_keeps_place_evidence_but_not_body_topics(self) -> None:
+        place = {
+            "placeId": "map-1",
+            "name": "온카페",
+            "address": "서울 종로구 율곡로 1",
+        }
+        body = "".join(
+            [
+                "<html>",
+                _text_paragraph("온카페의 말차 크림 라떼와 한옥 정원이 인상적이에요"),
+                _map_script(place),
+                "</html>",
+            ]
+        )
+
+        class ContextFetcher:
+            def fetch(self, link: str) -> BodyFetchResult:
+                return BodyFetchResult(link, body, link, None, 1)
+
+        selected = {
+            **_item(1, title="안국 온카페 방문 후기"),
+            "query": "안국 신상 카페",
+        }
+        extracted, _, _ = extract_selected_posts(
+            [selected],
+            fetch_bodies=True,
+            fetcher=ContextFetcher(),
+        )
+
+        post = extracted[0]
+        self.assertEqual(post["representative_status"], "auto_confirmed")
+        self.assertNotIn("body_topic_candidates", post)
+        self.assertNotIn("body_topic_text", post)
+        self.assertNotIn("body_html", post)
+
+    def test_extracted_post_does_not_drop_late_candidates_from_long_context(self) -> None:
+        place = {
+            "placeId": "map-1",
+            "name": "온카페",
+            "address": "서울 종로구 율곡로 1",
+        }
+        filler = " ".join(f"가나다{index}" for index in range(140))
+        body = "".join(
+            [
+                "<html>",
+                _text_paragraph(f"온카페 {filler} 흑임자 크림 라떼"),
+                _map_script(place),
+                "</html>",
+            ]
+        )
+
+        class ContextFetcher:
+            def fetch(self, link: str) -> BodyFetchResult:
+                return BodyFetchResult(link, body, link, None, 1)
+
+        selected = {
+            **_item(1, title="안국 온카페 방문 후기"),
+            "query": "안국 신상 카페",
+        }
+        extracted, _, _ = extract_selected_posts(
+            [selected],
+            fetch_bodies=True,
+            fetcher=ContextFetcher(),
+        )
+
+        self.assertNotIn("body_topic_candidates", extracted[0])
 
     def test_body_selection_is_capped_at_50_for_one_query(self) -> None:
         items = [_item(index, days_ago=index % 60) for index in range(80)]

@@ -57,7 +57,7 @@ def build_report(conn) -> dict:
     )
     no_image = fetch_one(
         conn,
-        "SELECT count(*) FROM place p WHERE NOT EXISTS (SELECT 1 FROM place_image i WHERE i.place_id = p.id)",
+        "SELECT count(*) FROM place WHERE image_url IS NULL",
     )
     no_phone = fetch_one(conn, "SELECT count(*) FROM place WHERE phone IS NULL")
 

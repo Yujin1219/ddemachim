@@ -27,6 +27,9 @@ CREATE TABLE IF NOT EXISTS place (
     phone               varchar(50),
     website             text,
     description         text,
+    image_url           text,
+    image_source        varchar(30),
+    image_attribution   text,
     -- 아래 4개는 구조화 파싱이 어려운 원문을 그대로 보존하는 용도(예: 서울시 관광명소의
     -- 운영시간/휴무일 자유서식 텍스트). 요일별 구조화 값은 place_operating_hours에 별도로 둔다.
     operating_hours_raw text,
@@ -69,17 +72,6 @@ CREATE TABLE IF NOT EXISTS place_operating_hours (
 
 CREATE INDEX IF NOT EXISTS idx_place_operating_hours_place_id ON place_operating_hours (place_id);
 
--- 장소 이미지
-CREATE TABLE IF NOT EXISTS place_image (
-    id              bigserial PRIMARY KEY,
-    place_id        bigint NOT NULL REFERENCES place(id) ON DELETE CASCADE,
-    source          varchar(30) NOT NULL,
-    source_url      text NOT NULL,
-    attribution     text
-);
-
-CREATE INDEX IF NOT EXISTS idx_place_image_place_id ON place_image (place_id);
-
 -- 로그인 회원
 CREATE TABLE IF NOT EXISTS member (
     member_id       bigserial PRIMARY KEY,
@@ -89,17 +81,56 @@ CREATE TABLE IF NOT EXISTS member (
     role            varchar(20) NOT NULL
 );
 
+-- 로그인 회원이 외부 검색 제공자에서 직접 담은 장소
+CREATE TABLE IF NOT EXISTS user_place (
+    id                  bigserial PRIMARY KEY,
+    member_id           bigint NOT NULL REFERENCES member(member_id) ON DELETE CASCADE,
+    provider            varchar(20) NOT NULL,
+    provider_place_id   varchar(100) NOT NULL,
+    name                varchar(200) NOT NULL,
+    category_name       varchar(300),
+    category_group_code varchar(20),
+    road_address        text,
+    lot_address         text,
+    longitude           double precision NOT NULL,
+    latitude            double precision NOT NULL,
+    phone               varchar(50),
+    place_url           text NOT NULL,
+    created_at          timestamptz NOT NULL DEFAULT now(),
+    CONSTRAINT chk_user_place_longitude
+        CHECK (longitude BETWEEN -180.0 AND 180.0),
+    CONSTRAINT chk_user_place_latitude
+        CHECK (latitude BETWEEN -90.0 AND 90.0),
+    CONSTRAINT uq_user_place_member_provider_place
+        UNIQUE (member_id, provider, provider_place_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_user_place_member_id
+    ON user_place (member_id);
+
 -- 로그인 회원별 코스 장바구니의 장소 항목
 CREATE TABLE IF NOT EXISTS course_basket_item (
     id              bigserial PRIMARY KEY,
     member_id       bigint NOT NULL REFERENCES member(member_id) ON DELETE CASCADE,
-    place_id        bigint NOT NULL REFERENCES place(id) ON DELETE CASCADE,
+    place_id        bigint REFERENCES place(id) ON DELETE CASCADE,
+    user_place_id   bigint REFERENCES user_place(id) ON DELETE CASCADE,
     created_at      timestamptz NOT NULL DEFAULT now(),
-    UNIQUE (member_id, place_id)
+    CONSTRAINT chk_course_basket_item_exactly_one_place
+        CHECK (
+            (place_id IS NOT NULL AND user_place_id IS NULL)
+            OR (place_id IS NULL AND user_place_id IS NOT NULL)
+        ),
+    CONSTRAINT uq_course_basket_item_member_place
+        UNIQUE (member_id, place_id),
+    CONSTRAINT uq_course_basket_item_member_user_place
+        UNIQUE (member_id, user_place_id)
 );
 
 CREATE INDEX IF NOT EXISTS idx_course_basket_item_member_id
     ON course_basket_item (member_id);
+
+CREATE INDEX IF NOT EXISTS idx_course_basket_item_user_place_id
+    ON course_basket_item (user_place_id);
 
 -- 전시/축제/행사/팝업 (기간이 있는 이벤트)
 CREATE TABLE IF NOT EXISTS event (
@@ -224,3 +255,106 @@ CREATE TABLE IF NOT EXISTS source_raw_data (
 );
 
 CREATE INDEX IF NOT EXISTS idx_source_raw_data_source ON source_raw_data (source);
+
+-- 네이버 블로그 검색 표본에서 관측한 장소별 원시 근거. 본문 HTML/원문은 저장하지 않는다.
+CREATE TABLE IF NOT EXISTS blog_trend_observation (
+    id                      bigserial PRIMARY KEY,
+    place_id                bigint NOT NULL REFERENCES place(id) ON DELETE CASCADE,
+    collection_date         date NOT NULL,
+    query                   varchar(300) NOT NULL,
+    post_url                text NOT NULL,
+    author                  text NOT NULL,
+    author_name             varchar(200),
+    published_at            date,
+    collected_at            timestamptz NOT NULL,
+    region                  varchar(50),
+    intent                  varchar(100),
+    intent_category         varchar(30),
+    search_rank             integer,
+    observed_place_name     varchar(200),
+    is_ad_suspected         boolean NOT NULL DEFAULT false,
+    ad_signals              text[],
+    created_at              timestamptz NOT NULL DEFAULT now(),
+    updated_at              timestamptz NOT NULL DEFAULT now(),
+    CONSTRAINT uq_blog_trend_observation_identity
+        UNIQUE (collection_date, query, post_url)
+);
+
+CREATE INDEX IF NOT EXISTS idx_blog_trend_observation_place_date
+    ON blog_trend_observation (place_id, collection_date DESC);
+CREATE INDEX IF NOT EXISTS idx_blog_trend_observation_author
+    ON blog_trend_observation (author);
+
+-- 해당 날짜까지 누적된 장소별 집계 스냅샷. 같은 날짜 재실행은 UPSERT하고 날짜가
+-- 바뀌면 새 이력이 생성된다.
+CREATE TABLE IF NOT EXISTS place_trend_snapshot (
+    id                              bigserial PRIMARY KEY,
+    place_id                        bigint NOT NULL REFERENCES place(id) ON DELETE CASCADE,
+    snapshot_date                   date NOT NULL,
+    status                          varchar(30) NOT NULL,
+    aliases                         text[],
+    unique_posts                    integer NOT NULL,
+    unique_authors                  integer NOT NULL,
+    unique_queries                  integer NOT NULL,
+    unique_intent_categories        integer NOT NULL,
+    relative_mention_rate           double precision NOT NULL DEFAULT 0,
+    sampled_mention_posts           integer NOT NULL DEFAULT 0,
+    sampled_author_count            integer NOT NULL DEFAULT 0,
+    sampled_query_count             integer NOT NULL DEFAULT 0,
+    query_mention_rates             jsonb NOT NULL DEFAULT '[]'::jsonb,
+    collection_days                 integer NOT NULL,
+    recent_observed_posts           integer NOT NULL,
+    average_observed_rank           double precision,
+    first_observed_at               timestamptz,
+    latest_observed_at              timestamptz,
+    ad_suspected_ratio              double precision NOT NULL,
+    minimum_evidence_passed         boolean NOT NULL,
+    watch_signal_count              integer NOT NULL,
+    trend_available                 boolean NOT NULL,
+    trend_rising                    boolean NOT NULL,
+    trend_ratio                     double precision,
+    recent_trend_value              double precision,
+    previous_trend_value            double precision,
+    recent_nonzero_observations     integer,
+    baseline_nonzero_observations   integer,
+    trend_reason                    varchar(80),
+    trend_checked_at                timestamptz,
+    trend_status                    varchar(30),
+    short_ratio                     double precision,
+    six_month_ratio                 double precision,
+    recent_search_interest_average  double precision,
+    previous_14d_search_interest_average double precision,
+    six_month_baseline_search_interest_average double precision,
+    recent_valid_observation_days   integer,
+    previous_valid_observation_days integer,
+    six_month_baseline_valid_observation_days integer,
+    trend_source                    varchar(80),
+    trend_recent_start              date,
+    trend_recent_end                date,
+    trend_previous_start            date,
+    trend_previous_end              date,
+    trend_baseline_start            date,
+    trend_baseline_end              date,
+    trend_time_unit                 varchar(10),
+    trend_baseline_months           integer,
+    trend_comparison_label          varchar(120),
+    trend_current_month             varchar(7),
+    trend_current_month_ratio       double precision,
+    trend_current_value             double precision,
+    trend_baseline_value            double precision,
+    monthly_ratio                   double precision,
+    trend_partial_month_adjusted    boolean,
+    trend_partial_month_days_used   integer,
+    trend_month_values              jsonb,
+    trend_missing_months            text[],
+    semantics                       text NOT NULL,
+    created_at                      timestamptz NOT NULL DEFAULT now(),
+    updated_at                      timestamptz NOT NULL DEFAULT now(),
+    CONSTRAINT uq_place_trend_snapshot_identity
+        UNIQUE (place_id, snapshot_date)
+);
+
+CREATE INDEX IF NOT EXISTS idx_place_trend_snapshot_status_date
+    ON place_trend_snapshot (status, snapshot_date DESC);
+CREATE INDEX IF NOT EXISTS idx_place_trend_snapshot_place_date
+    ON place_trend_snapshot (place_id, snapshot_date DESC);

@@ -52,7 +52,6 @@ def evaluate_place_decision(
     *,
     validation_status: str = "matched",
     trend: Mapping[str, Any] | None = None,
-    topics: Sequence[Mapping[str, Any]] = (),
     criteria: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
     effective = dict(DEFAULT_CRITERIA)
@@ -93,7 +92,6 @@ def evaluate_place_decision(
         "conditions": conditions,
         "metrics": dict(metric),
         "trend_corroboration": trend_evidence,
-        "topic_evidence": [dict(topic) for topic in topics if isinstance(topic, Mapping)],
         "advertising_signal": metric.get("advertising_signal", {"ad_suspected": False, "flag_only": True}),
         "hard_fail_reasons": [
             name for name, passed in conditions.items() if not passed and name != "local_validation"
@@ -107,13 +105,11 @@ def build_final_report(
     as_of: date,
     validation_status_by_place: Mapping[str, str] | None = None,
     trend_by_place: Mapping[str, Mapping[str, Any]] | None = None,
-    topics_by_place: Mapping[str, Sequence[Mapping[str, Any]]] | None = None,
     criteria: Mapping[str, Any] | None = None,
     source_artifacts: Sequence[str] = (),
 ) -> dict[str, Any]:
     validation = validation_status_by_place or {}
     trends = trend_by_place or {}
-    topics = topics_by_place or {}
     decisions: list[dict[str, Any]] = []
     for metric in metrics:
         if not isinstance(metric, Mapping):
@@ -124,7 +120,6 @@ def build_final_report(
                 metric,
                 validation_status=validation.get(place_id, "matched"),
                 trend=trends.get(place_id),
-                topics=topics.get(place_id, ()),
                 criteria=criteria,
             )
         )
@@ -183,18 +178,11 @@ def write_final_report(output_dir: Path, report: Mapping[str, Any], *, run_id: s
                 trend=(decision.get("trend_corroboration") or {}).get("state", "unavailable"),
             )
         )
-        topics = decision.get("topic_evidence")
-        topic_terms = [
-            str(topic.get("topic_candidate"))
-            for topic in topics
-            if isinstance(topic, Mapping) and topic.get("topic_candidate")
-        ] if isinstance(topics, Sequence) else []
         signal = decision.get("advertising_signal")
         ad_flag = bool(signal.get("ad_suspected")) if isinstance(signal, Mapping) else False
         lines.append(
-            "  evidence: reasons={reasons}; topic_terms={topics}; advertising_signal_flag={ad}".format(
+            "  evidence: reasons={reasons}; advertising_signal_flag={ad}".format(
                 reasons=",".join(str(reason) for reason in decision.get("hard_fail_reasons", [])) or "base-criteria",
-                topics=",".join(topic_terms) or "none",
                 ad=ad_flag,
             )
         )

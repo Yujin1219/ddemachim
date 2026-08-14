@@ -151,8 +151,8 @@ public class OdsayTransitRouteClient implements TransitRouteProviderClient {
                             .queryParam("SearchPathType", 0)
                             .queryParam("lang", 0)
                             .queryParam("output", "json")
-                            .queryParam("apiKey", properties.getApiKey().trim())
-                            .build())
+                            .queryParam("apiKey", "{apiKey}")
+                            .build(properties.getApiKey().trim()))
                     .accept(MediaType.APPLICATION_JSON)
                     .retrieve()
                     .body(String.class);

@@ -33,5 +33,5 @@ public record FilmingWorkSummaryResponse(
     }
 
     @Schema(description = "카드에 미리 보여줄 대표 촬영 장소")
-    public record RepresentativePlace(Long placeId, String placeName, String thumbnailUrl) {}
+    public record RepresentativePlace(Long placeId, String placeName, String imageUrl) {}
 }

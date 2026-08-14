@@ -1,29 +1,36 @@
 package com.ddemachim.server.domain.place.service;
 
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
-import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
+import com.ddemachim.server.domain.place.dto.PlaceDetailResponse;
+import com.ddemachim.server.domain.place.dto.PlaceTrendSummaryResponse;
+import com.ddemachim.server.domain.place.entity.Place;
+import com.ddemachim.server.domain.place.entity.PlaceTrendSnapshot;
+import com.ddemachim.server.domain.place.enums.PlaceTrendStatus;
 import com.ddemachim.server.domain.place.exception.InvalidFilmingContentTypeException;
-import com.ddemachim.server.domain.place.repository.PlaceImageRepository;
+import com.ddemachim.server.domain.place.exception.InvalidPlaceTrendLimitException;
 import com.ddemachim.server.domain.place.repository.PlaceFilmingContentTypeProjection;
 import com.ddemachim.server.domain.place.repository.PlaceOperatingHoursRepository;
 import com.ddemachim.server.domain.place.repository.PlaceRepository;
+import com.ddemachim.server.domain.place.repository.PlaceTrendSnapshotRepository;
+import java.time.LocalDate;
+import java.util.List;
+import java.util.Optional;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.data.domain.PageImpl;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
-import org.springframework.data.domain.PageImpl;
 import org.springframework.data.domain.Pageable;
 import org.springframework.test.util.ReflectionTestUtils;
-import com.ddemachim.server.domain.place.entity.Place;
-import java.util.List;
-import static org.assertj.core.api.Assertions.assertThat;
 
 @ExtendWith(MockitoExtension.class)
 class PlaceQueryServiceTest {
@@ -32,10 +39,10 @@ class PlaceQueryServiceTest {
     private PlaceRepository placeRepository;
 
     @Mock
-    private PlaceImageRepository placeImageRepository;
+    private PlaceOperatingHoursRepository placeOperatingHoursRepository;
 
     @Mock
-    private PlaceOperatingHoursRepository placeOperatingHoursRepository;
+    private PlaceTrendSnapshotRepository placeTrendSnapshotRepository;
 
     @InjectMocks
     private PlaceQueryService placeQueryService;
@@ -69,20 +76,89 @@ class PlaceQueryServiceTest {
         ReflectionTestUtils.setField(place, "id", 10L);
         ReflectionTestUtils.setField(place, "name", "테스트 촬영지");
         ReflectionTestUtils.setField(place, "normalizedName", "테스트촬영지");
+        ReflectionTestUtils.setField(place, "imageUrl", "https://example.com/place.jpg");
         PlaceFilmingContentTypeProjection drama = contentType(10L, "DRAMA");
         PlaceFilmingContentTypeProjection movie = contentType(10L, "MOVIE");
         when(placeRepository.search(null, null, "FILMING_LOCATION", null, null, pageable))
                 .thenReturn(new PageImpl<>(List.of(place), pageable, 1));
         when(placeRepository.findFilmingContentTypesByPlaceIds(List.of(10L)))
                 .thenReturn(List.of(movie, drama));
-        when(placeImageRepository.findByPlaceIdInOrderByPlaceIdAscIdAsc(List.of(10L)))
-                .thenReturn(List.of());
 
         var result = placeQueryService.search(
                 null, null, "FILMING_LOCATION", null, null, pageable);
 
         assertThat(result.getContent().getFirst().filmingContentTypes())
                 .containsExactly("DRAMA", "MOVIE");
+        assertThat(result.getContent().getFirst().imageUrl())
+                .isEqualTo("https://example.com/place.jpg");
+    }
+
+    @Test
+    void getTrends_projectsStatusAndDateWithoutBlogTrendExplanation() {
+        Place place = place(10L, "콘웨이커피 안국점", "종로구");
+        PlaceTrendSnapshot snapshot = snapshot(
+                place,
+                PlaceTrendStatus.TRENDING,
+                LocalDate.of(2026, 8, 13));
+        when(placeTrendSnapshotRepository.findLatestVisibleSnapshots(PageRequest.of(0, 6)))
+                .thenReturn(List.of(snapshot));
+
+        List<PlaceTrendSummaryResponse> result = placeQueryService.getTrends(6);
+
+        assertThat(result).hasSize(1);
+        assertThat(result.getFirst().placeId()).isEqualTo(10L);
+        assertThat(result.getFirst().name()).isEqualTo("콘웨이커피 안국점");
+        assertThat(result.getFirst().imageUrl()).isNull();
+        assertThat(result.getFirst().trend().status()).isEqualTo(PlaceTrendStatus.TRENDING);
+        assertThat(result.getFirst().trend().updatedAt()).isEqualTo(LocalDate.of(2026, 8, 13));
+        verify(placeTrendSnapshotRepository).findLatestVisibleSnapshots(PageRequest.of(0, 6));
+    }
+
+    @Test
+    void getTrends_rejectsLimitsOutsideThePublicRange() {
+        assertThatThrownBy(() -> placeQueryService.getTrends(0))
+                .isInstanceOf(InvalidPlaceTrendLimitException.class);
+        assertThatThrownBy(() -> placeQueryService.getTrends(21))
+                .isInstanceOf(InvalidPlaceTrendLimitException.class);
+
+        verifyNoInteractions(placeTrendSnapshotRepository);
+    }
+
+    @Test
+    void getDetail_returnsNullTrendWhenTheLatestSnapshotIsNotVisible() {
+        Place place = place(55L, "관찰 중인 장소", "종로구");
+        PlaceTrendSnapshot latestSnapshot = mock(PlaceTrendSnapshot.class);
+        when(latestSnapshot.getStatus()).thenReturn(PlaceTrendStatus.INSUFFICIENT_EVIDENCE);
+        when(placeRepository.findById(55L)).thenReturn(Optional.of(place));
+        when(placeOperatingHoursRepository.findByPlaceIdOrderByDayOfWeek(55L)).thenReturn(List.of());
+        when(placeTrendSnapshotRepository.findFirstByPlaceIdOrderBySnapshotDateDesc(55L))
+                .thenReturn(Optional.of(latestSnapshot));
+
+        PlaceDetailResponse result = placeQueryService.getDetail(55L);
+
+        assertThat(result.trend()).isNull();
+    }
+
+    @Test
+    void getDetail_projectsVisibleTrendWithoutBlogTrendExplanation() {
+        Place place = place(56L, "주목할 장소", "종로구");
+        PlaceTrendSnapshot snapshot = detailSnapshot(
+                PlaceTrendStatus.WATCH,
+                LocalDate.of(2026, 8, 12));
+        when(placeRepository.findById(56L)).thenReturn(Optional.of(place));
+        when(placeOperatingHoursRepository.findByPlaceIdOrderByDayOfWeek(56L)).thenReturn(List.of());
+        when(place.getImageUrl()).thenReturn("https://example.com/place.jpg");
+        when(place.getImageSource()).thenReturn("KAKAO");
+        when(place.getImageAttribution()).thenReturn("Kakao Local");
+        when(placeTrendSnapshotRepository.findFirstByPlaceIdOrderBySnapshotDateDesc(56L))
+                .thenReturn(Optional.of(snapshot));
+        PlaceDetailResponse result = placeQueryService.getDetail(56L);
+
+        assertThat(result.trend().status()).isEqualTo(PlaceTrendStatus.WATCH);
+        assertThat(result.trend().updatedAt()).isEqualTo(LocalDate.of(2026, 8, 12));
+        assertThat(result.imageUrl()).isEqualTo("https://example.com/place.jpg");
+        assertThat(result.imageSource()).isEqualTo("KAKAO");
+        assertThat(result.imageAttribution()).isEqualTo("Kakao Local");
     }
 
     private static PlaceFilmingContentTypeProjection contentType(Long placeId, String contentType) {
@@ -90,6 +166,32 @@ class PlaceQueryServiceTest {
         when(projection.getPlaceId()).thenReturn(placeId);
         when(projection.getContentType()).thenReturn(contentType);
         return projection;
+    }
+
+    private static Place place(Long id, String name, String district) {
+        Place place = mock(Place.class);
+        when(place.getId()).thenReturn(id);
+        when(place.getName()).thenReturn(name);
+        when(place.getDistrict()).thenReturn(district);
+        return place;
+    }
+
+    private static PlaceTrendSnapshot snapshot(
+            Place place,
+            PlaceTrendStatus status,
+            LocalDate snapshotDate) {
+        PlaceTrendSnapshot snapshot = mock(PlaceTrendSnapshot.class);
+        when(snapshot.getPlace()).thenReturn(place);
+        when(snapshot.getStatus()).thenReturn(status);
+        when(snapshot.getSnapshotDate()).thenReturn(snapshotDate);
+        return snapshot;
+    }
+
+    private static PlaceTrendSnapshot detailSnapshot(PlaceTrendStatus status, LocalDate snapshotDate) {
+        PlaceTrendSnapshot snapshot = mock(PlaceTrendSnapshot.class);
+        when(snapshot.getStatus()).thenReturn(status);
+        when(snapshot.getSnapshotDate()).thenReturn(snapshotDate);
+        return snapshot;
     }
 
     private static class TestPlace extends Place {

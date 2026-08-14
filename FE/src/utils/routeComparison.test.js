@@ -7,11 +7,13 @@ import {
   ROUTE_MODES,
   buildKakaoTaxiHref,
   distanceBetweenMeters,
+  fastestAvailableRouteMode,
   formatRouteDistance,
   formatRouteDuration,
   formatRouteFare,
   normalizeRouteCoordinate,
   requestRoutePosition,
+  routeModeSelectionReducer,
   routeOptionByMode,
 } from './routeComparison.js';
 
@@ -28,10 +30,18 @@ test('MapHome uses the temporary Jongno origin contract', () => {
   assert.match(source, /longitude:\s*126\.9769/);
   assert.match(mapHomeSource, /const location\s*=\s*TEMPORARY_JONGNO_ORIGIN/);
   assert.match(mapHomeSource, /useRouteComparison\(\{\s*origin:\s*location,\s*destination:\s*routeDestination\s*\}\)/);
-  assert.match(mapHomeSource, /userLocation:\s*location\s*\?\s*\[location\.longitude,\s*location\.latitude\]\s*:\s*null/);
+  assert.match(mapHomeSource, /userLocation:\s*routeOriginMarkerCoordinates\(selectedPlace,\s*location\)/);
   assert.doesNotMatch(source, /\buseCurrentLocation\b/);
   assert.doesNotMatch(mapHomeSource, /(?:navigator\.)?geolocation/i);
-  assert.match(mapHomeSource, /광화문 인근을 출발지로 사용 중이에요/);
+  assert.match(mapHomeSource, /originLabel="광화문"/);
+});
+
+test('shows the route origin marker only after a destination is selected', () => {
+  assert.equal(routeComparison.routeOriginMarkerCoordinates(null, origin), null);
+  assert.deepEqual(
+    routeComparison.routeOriginMarkerCoordinates({ id: 7 }, origin),
+    [126.978, 37.5665],
+  );
 });
 
 test('normalizes finite coordinates and rejects invalid bounds', () => {
@@ -154,6 +164,54 @@ test('selects a route by mode and returns null for unavailable modes', () => {
   assert.equal(routeOptionByMode(response, 'TAXI').status, 'AVAILABLE');
   assert.equal(routeOptionByMode(response, 'TRANSIT'), null);
   assert.equal(routeOptionByMode(null, 'WALK'), null);
+});
+
+test('selects the fastest available route and preserves mode order for ties', () => {
+  assert.equal(fastestAvailableRouteMode({
+    routes: [
+      { mode: 'WALK', status: 'AVAILABLE', durationSeconds: 840 },
+      { mode: 'TRANSIT', status: 'AVAILABLE', durationSeconds: 610 },
+      { mode: 'TAXI', status: 'AVAILABLE', durationSeconds: 610 },
+    ],
+  }), 'TRANSIT');
+});
+
+test('ignores unavailable and invalid route durations when selecting the fastest route', () => {
+  assert.equal(fastestAvailableRouteMode({
+    routes: [
+      { mode: 'WALK', status: 'AVAILABLE', durationSeconds: null },
+      { mode: 'TRANSIT', status: 'UNAVAILABLE', durationSeconds: 300 },
+      { mode: 'TAXI', status: 'AVAILABLE', durationSeconds: 720 },
+    ],
+  }), 'TAXI');
+  assert.equal(fastestAvailableRouteMode({ routes: [] }), null);
+});
+
+test('auto-selects the fastest route until the user chooses a mode', () => {
+  const readyRoutes = {
+    routes: [
+      { mode: 'WALK', status: 'AVAILABLE', durationSeconds: 840 },
+      { mode: 'TRANSIT', status: 'AVAILABLE', durationSeconds: 1320 },
+      { mode: 'TAXI', status: 'AVAILABLE', durationSeconds: 610 },
+    ],
+  };
+  const initial = { activeMode: 'WALK', manuallySelected: false };
+  const automatic = routeModeSelectionReducer(initial, { type: 'ROUTES_READY', routeData: readyRoutes });
+  const manual = routeModeSelectionReducer(automatic, { type: 'MODE_SELECTED', mode: 'TRANSIT' });
+  const preserved = routeModeSelectionReducer(manual, { type: 'ROUTES_READY', routeData: readyRoutes });
+
+  assert.deepEqual(automatic, { activeMode: 'TAXI', manuallySelected: false });
+  assert.deepEqual(manual, { activeMode: 'TRANSIT', manuallySelected: true });
+  assert.equal(preserved, manual);
+});
+
+test('resets manual route selection for a different place without marking fallback as manual', () => {
+  const manual = { activeMode: 'TRANSIT', manuallySelected: true };
+  const reset = routeModeSelectionReducer(manual, { type: 'PLACE_CHANGED' });
+  const resolved = routeModeSelectionReducer(reset, { type: 'MODE_RESOLVED', mode: 'TAXI' });
+
+  assert.deepEqual(reset, { activeMode: 'WALK', manuallySelected: false });
+  assert.deepEqual(resolved, { activeMode: 'TAXI', manuallySelected: false });
 });
 
 test('builds the mobile Kakao taxi launch URL from destination only', () => {

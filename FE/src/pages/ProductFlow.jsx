@@ -1,9 +1,10 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from 'react';
 import { motion, useDragControls, useReducedMotion } from 'motion/react';
-import { CalendarDays, ChevronLeft, ChevronRight, CircleDollarSign, CircleHelp, Clapperboard, Clock3, ExternalLink, Heart, Image as ImageIcon, LocateFixed, MapPin, MoreHorizontal, RefreshCw, Search, SearchX, SendHorizontal, ShoppingBasket, UserRound, X } from 'lucide-react';
+import { CalendarDays, ChevronLeft, ChevronRight, CircleDollarSign, CircleHelp, Clapperboard, Clock3, Coffee, ExternalLink, Flame, Heart, Image as ImageIcon, MapPin, MoreHorizontal, RefreshCw, Search, SearchX, SendHorizontal, ShoppingBasket, Store, UserRound, Utensils, X } from 'lucide-react';
 import AppHeader from '../components/AppHeader';
 import BottomNav from '../components/BottomNav';
 import PlaceReviewPreview from '../components/PlaceReviewPreview';
+import PlaceTrendSection, { getPlaceTrendCardProps, getPlaceTrendSearchText, getVisiblePlaceTrends, PlaceTrendReason } from '../components/PlaceTrendSection.js';
 import SelectedPlaceRoutePanel, { selectedPlaceDetailTarget } from '../components/SelectedPlaceRoutePanel.jsx';
 import VWorldMap from '../components/VWorldMap';
 import { PLACE_REVIEW_ITEMS, PLACE_REVIEW_SUMMARY } from '../components/placeReviewPreviewModel.js';
@@ -22,6 +23,7 @@ import {
   fetchMediaFilmingLocations,
   fetchPlace,
   fetchPlaceFilmingLocations,
+  fetchPlaceTrends,
   fetchPlaces,
   getAccessToken,
   login,
@@ -60,10 +62,23 @@ import { getSearchCoordinates, mapKakaoPlaceToMapCard, mapKakaoPlaceToSearchRow 
 import {
   buildKakaoTaxiHref,
   normalizeRouteCoordinate,
+  routeOriginMarkerCoordinates,
+  routeModeSelectionReducer,
   routeOptionByMode,
   shouldLocateForDestinationSelection,
 } from '../utils/routeComparison.js';
 import { useRouteComparison } from '../hooks/useRouteComparison.js';
+import { initialMapHomeInteraction, mapHomeInteractionReducer } from '../utils/mapHomeInteraction.js';
+import {
+  MAP_HOME_FILTERS,
+  areAllMapFiltersSelected,
+  eventToMapMarker,
+  mapEventsForFilter,
+  mapFilterApiParams,
+  resolveCongestionPreference,
+  tagMapItemsForFilter,
+  toggleMapFilterSelection,
+} from '../utils/mapHomeFilters.js';
 
 const routeGroups = {
   auth: ['splash', 'intro', 'login', 'signup', 'onboarding', 'onboarding-schedule', 'onboarding-permissions'],
@@ -119,17 +134,10 @@ function SearchIcon() {
   return <Search aria-hidden="true" size={20} strokeWidth={2} />;
 }
 
-const locationRows = [
-  { name: '도토리가든', meta: '안국 · 정원 사진이 요즘 인기', image: images.cafe, badge: '요즘 핫한 장소' },
-  { name: '창덕궁 후원', meta: '종로 · 도깨비 촬영지', image: images.popup, badge: '도깨비 촬영지' },
-  { name: '운현궁', meta: '안국 · 관람 약 20분', image: images.onsite, badge: '지금 여유' },
-];
-
-const CURATED_TRENDING_PLACES = [
-  { id: 'curated-dotori', name: '도토리가든', meta: '큐레이션 준비 중 · 요즘 핫한 장소', image: images.cafe, badge: '큐레이션 예정' },
-  { id: 'curated-bagel', name: '런던베이글뮤지엄', meta: '큐레이션 준비 중 · 안국 인기 장소', image: images.mapPlace, badge: '큐레이션 예정' },
-  { id: 'curated-unhyeongung', name: '운현궁', meta: '큐레이션 준비 중 · 종로 산책 코스', image: images.onsite, badge: '큐레이션 예정' },
-];
+const PLACE_TREND_MOCK_FIXTURE = {
+  status: 'TRENDING',
+  updatedAt: '2026-08-13',
+};
 
 function readHash() {
   const [candidate, hashId] = window.location.hash.replace(/^#\/?/, '').split('/');
@@ -142,7 +150,7 @@ function placeToCardProps(place) {
     id: place.id,
     name: place.name,
     meta: [place.categoryLabel, place.roadAddress].filter(Boolean).join(' · '),
-    image: place.thumbnailUrl || images.cafe,
+    image: place.imageUrl || images.cafe,
     badge: place.categoryLabel,
     latitude: place.latitude,
     longitude: place.longitude,
@@ -174,8 +182,8 @@ function filmingPlaceToCardProps(place) {
   const contextLabel = [contentLabel, place.categoryLabel].filter(Boolean).join(' · ');
   return {
     ...placeToCardProps(place),
-    image: place.thumbnailUrl || images.popup,
-    hasThumbnail: Boolean(place.thumbnailUrl),
+    image: place.imageUrl || images.popup,
+    hasThumbnail: Boolean(place.imageUrl),
     badge: contextLabel,
     labels: { content: contentLabel, category: place.categoryLabel },
     meta: place.roadAddress || place.district,
@@ -484,7 +492,7 @@ function useHorizontalPagedList({ loadPage, mapItem, size = EXPLORE_PAGE_SIZE })
   return { items, hasMore, isLoading, error, loadMore };
 }
 
-function HorizontalInfiniteCards({ items, hasMore, isLoading, onLoadMore, onCardClick, emptyLabel }) {
+function HorizontalInfiniteCards({ items, hasMore, isLoading, onLoadMore, onCardClick, emptyLabel, error = false, onRetry, errorLabel = '목록을 불러오지 못했어요.' }) {
   const scrollerRef = useRef(null);
   const requestedAtEndRef = useRef(false);
   const didResetInitialScrollRef = useRef(false);
@@ -543,8 +551,9 @@ function HorizontalInfiniteCards({ items, hasMore, isLoading, onLoadMore, onCard
       {items.map((item, index) => (
         <PlaceCard place={item} index={index} key={item.id ?? `${item.name}-${index}`} onClick={() => onCardClick(item)} />
       ))}
-      {!items.length && !isLoading && <p className="explore-inline-state">{emptyLabel}</p>}
-      {hasMore && <span className="horizontal-load-sentinel" aria-hidden="true" />}
+      {!items.length && !isLoading && !error && <p className="explore-inline-state">{emptyLabel}</p>}
+      {error && <div className="collection-inline-error explore-inline-error" role="alert"><span>{errorLabel}</span>{typeof onRetry === 'function' && <button type="button" onClick={onRetry}>다시 시도</button>}</div>}
+      {hasMore && !error && <span className="horizontal-load-sentinel" aria-hidden="true" />}
       {isLoading && <span className="horizontal-loading-card" aria-label="목록 불러오는 중" />}
     </div>
   );
@@ -1040,20 +1049,15 @@ function AuthScreen({ screen, go, onLoginSuccess }) {
   return <section className="phone standard-screen onboarding-screen onboarding-v3"><main className="page-scroll onboarding-scroll"><div className="onboarding-progress"><strong>{step} / 3</strong><span><i style={{ transform: `scaleX(${step / 3})` }} /></span></div>{screen === 'onboarding' && <><div className="onboarding-copy"><h1>어떤 장소를 좋아하세요?</h1><p>관심 있는 테마를 고르면 첫 코스를 더 잘 추천할 수 있어요.</p></div><div className="onboarding-topic-list">{[['촬영지', '영화와 드라마 속 장면'], ['요즘 뜨는 곳', '저장과 사진 반응이 빠른 장소'], ['팝업·전시', '이번 주에만 만날 수 있는 공간'], ['골목·산책', '천천히 걷기 좋은 서울의 길'], ['카페·디저트', '메뉴와 공간이 함께 좋은 곳']].map(([name, copy]) => { const selected = themes.includes(name); return <button type="button" className={selected ? 'selected' : ''} key={name} onClick={() => setThemes((current) => selected ? current.filter((item) => item !== name) : [...current, name])}><i /><span><strong>{name}</strong><small>{copy}</small></span></button>; })}</div></>}{screen === 'onboarding-schedule' && <><div className="onboarding-copy"><h1>오늘 여행은 어떤 느낌이 좋아요?</h1><p>일정 밀도와 사용할 수 있는 시간을 알려주세요.</p></div><section className="onboarding-group"><h2>일정 밀도</h2><div className="onboarding-density-grid">{[['여유롭게', '장소마다 충분히 머물고 싶어요'], ['촘촘하게', '더 많은 장소를 방문하고 싶어요']].map(([name, copy]) => <button type="button" className={pace === name ? 'selected' : ''} key={name} onClick={() => setPace(name)}><strong>{name}</strong><small>{copy}</small></button>)}</div></section><section className="onboarding-group"><h2>여행 시간</h2><div className="onboarding-duration-grid">{[['3시간', '가볍게 반나절 걷기'], ['5시간', '점심부터 저녁 전까지'], ['하루 종일', '여유 있는 서울 여행']].map(([name, copy]) => <button type="button" className={tripTime === name ? 'selected' : ''} key={name} onClick={() => setTripTime(name)}><strong>{name}</strong><small>{copy}</small></button>)}</div></section></>}{screen === 'onboarding-permissions' && <><div className="onboarding-copy"><h1>필요한 순간에 알려드릴게요</h1><p>권한은 해당 기능을 사용할 때만 요청해요.</p></div><div className="onboarding-permission-list">{[['위치', '길 안내와 도착 감지에 사용'], ['알림', '혼잡 변화와 주변 장소 안내'], ['카메라', '촬영 장면 구도 맞추기'], ['사진', '방문 인증 사진 저장']].map(([name, copy]) => { const selected = permissions.includes(name); return <button type="button" className={selected ? 'selected' : ''} key={name} onClick={() => setPermissions((current) => selected ? current.filter((item) => item !== name) : [...current, name])}><i>{selected ? '✓' : ''}</i><span><strong>{name}</strong><small>{copy}</small></span></button>; })}</div><button type="button" className="onboarding-later" onClick={goNext}>나중에 설정<span>MY에서 언제든 변경 가능</span></button></>}</main><div className="sticky-actions"><ActionButton onClick={goNext}>{screen === 'onboarding-permissions' ? '때마침 시작' : '다음'}</ActionButton></div></section>;
 }
 
-const ALL_MAP_FILTER = { type: 'all', code: 'ALL', label: '전체' };
-const FIXED_MAP_FILTERS = [
-  { type: 'category', code: 'RESTAURANT', label: '음식점', tone: 'restaurant' },
-  { type: 'category', code: 'CAFE_DESSERT', codes: ['CAFE', 'DESSERT'], label: '카페/디저트', tone: 'cafe-dessert' },
-  { type: 'category', code: 'ATTRACTION', label: '관광지', tone: 'attraction' },
-  { type: 'category', code: 'CULTURE', label: '문화시설', tone: 'culture' },
-  { type: 'category', code: 'EXHIBITION', label: '전시', tone: 'exhibition' },
-  { type: 'category', code: 'SHOPPING', label: '쇼핑', tone: 'shopping' },
-  { type: 'category', code: 'POPUP', label: '팝업스토어', tone: 'popup' },
-  { type: 'category', code: 'PARK', label: '공원', tone: 'park' },
-  { type: 'category', code: 'WALK', label: '산책로', tone: 'walk' },
-  { type: 'category', code: 'PHOTO_SPOT', label: '포토스팟', tone: 'photo-spot' },
-  { type: 'tag', code: 'FILMING_LOCATION', label: '촬영지', tone: 'filming' },
-];
+const MAP_FILTER_ICONS = {
+  ALL: MapPin,
+  FILMING: Clapperboard,
+  HOT: Flame,
+  POPUP: Store,
+  EVENT: CalendarDays,
+  RESTAURANT: Utensils,
+  CAFE_DESSERT: Coffee,
+};
 
 const FILMING_COLLECTION_FILTERS = [
   { label: '전체', contentType: null },
@@ -1072,34 +1076,35 @@ const CONGESTION_LEVELS = [
 ];
 
 function readCongestionLayerPreference() {
-  if (typeof window === 'undefined') return true;
-  return window.localStorage.getItem(CONGESTION_LAYER_STORAGE_KEY) !== 'off';
-}
-
-function normalizeMapCode(value) {
-  return typeof value === 'string' ? value.trim().toUpperCase() : '';
-}
-
-function normalizeMapTags(tags) {
-  if (Array.isArray(tags)) {
-    return tags.map((tag) => normalizeMapCode(typeof tag === 'string' ? tag : tag?.code)).filter(Boolean);
-  }
-  return normalizeMapCode(tags) ? [normalizeMapCode(tags)] : [];
+  if (typeof window === 'undefined') return false;
+  return resolveCongestionPreference(window.localStorage.getItem(CONGESTION_LAYER_STORAGE_KEY));
 }
 
 function MapHome({ go, basketState, onBasketAdded, onBasketRefresh, onAuthRequired }) {
   const [selectedPlace, setSelectedPlace] = useState(readKakaoMapTarget);
-  const [activeRouteMode, setActiveRouteMode] = useState('WALK');
+  const [routeModeSelection, dispatchRouteModeSelection] = useReducer(routeModeSelectionReducer, {
+    activeMode: 'WALK',
+    manuallySelected: false,
+  });
+  const activeRouteMode = routeModeSelection.activeMode;
   const { data: jongnoCongestion } = useJongnoCongestion();
-  const [filter, setFilter] = useState('전체');
-  const [activeMapFilter, setActiveMapFilter] = useState(ALL_MAP_FILTER);
-  const [isMapFilterOpen, setIsMapFilterOpen] = useState(false);
+  const [activeMapFilterKeys, setActiveMapFilterKeys] = useState([]);
   const [isCongestionLayerVisible, setIsCongestionLayerVisible] = useState(readCongestionLayerPreference);
   const [selectedCongestionArea, setSelectedCongestionArea] = useState(null);
-  const [categorySourcePlaces, setCategorySourcePlaces] = useState([]);
-  const [isNearbySheetCollapsed, setIsNearbySheetCollapsed] = useState(false);
+  const [hotPlaces, setHotPlaces] = useState([]);
+  const [hotStatus, setHotStatus] = useState('loading');
+  const [activeEvents, setActiveEvents] = useState([]);
+  const [eventStatus, setEventStatus] = useState('loading');
+  const [loadedMapFilterKey, setLoadedMapFilterKey] = useState(null);
+  const [visibleMapItemCount, setVisibleMapItemCount] = useState(0);
+  const [mapHomeInteraction, dispatchMapHomeInteraction] = useReducer(
+    mapHomeInteractionReducer,
+    { ...initialMapHomeInteraction, isMapFocused: Boolean(selectedPlace) },
+  );
+  const { isMapFocused, isSheetCollapsed: isNearbySheetCollapsed } = mapHomeInteraction;
   const [nearbyPlace, setNearbyPlace] = useState(null);
   const nearbySheetDragControls = useDragControls();
+  const didDragNearbySheetRef = useRef(false);
   const routeDestination = normalizeRouteCoordinate(selectedPlace
     ? { latitude: selectedPlace.latitude, longitude: selectedPlace.longitude }
     : null);
@@ -1122,21 +1127,67 @@ function MapHome({ go, basketState, onBasketAdded, onBasketRefresh, onAuthRequir
     ? routeStatus
     : locationStatus === 'ready' ? 'loading' : 'idle';
   const selectedRoute = routeOptionByMode(effectiveRouteData, activeRouteMode);
+  const activeMapFilters = MAP_HOME_FILTERS.filter(
+    (filter) => filter.key !== 'ALL' && activeMapFilterKeys.includes(filter.key),
+  );
+  const activeMapFilterKey = activeMapFilterKeys.join(',');
 
   useEffect(() => {
     routeSelectionKeyRef.current = routeSelectionKey;
   }, [routeSelectionKey]);
 
   useEffect(() => {
+    if (effectiveRouteStatus !== 'ready') return;
+    dispatchRouteModeSelection({ type: 'ROUTES_READY', routeData: effectiveRouteData });
+  }, [effectiveRouteData, effectiveRouteStatus, routeSelectionKey]);
+
+  useEffect(() => {
+    if (shouldLocateForDestinationSelection(locationStatus, routeDestination)) locate();
+  }, [routeSelectionKey]);
+
+  useEffect(() => {
     let cancelled = false;
-    fetchPlaces({ district: '종로구', size: 1000 })
+    fetchPlaces({ district: '종로구', size: 1 })
       .then((page) => {
         const first = page.content?.[0];
-        if (!cancelled) setCategorySourcePlaces(page.content ?? []);
         if (!cancelled && first) setNearbyPlace(placeToCardProps(first));
       })
       .catch((error) => console.error('주변 장소를 불러오지 못했어요', error));
     return () => { cancelled = true; };
+  }, []);
+
+  useEffect(() => {
+    const controller = new AbortController();
+    setHotStatus('loading');
+    fetchPlaceTrends({ limit: 20, signal: controller.signal })
+      .then(async (trends) => {
+        const details = await Promise.allSettled(
+          (trends ?? []).map((trend) => fetchPlace(trend.placeId, { signal: controller.signal })),
+        );
+        if (controller.signal.aborted) return;
+        setHotPlaces(details.flatMap((result) => result.status === 'fulfilled' ? [result.value] : []));
+        setHotStatus('ready');
+      })
+      .catch((error) => {
+        if (error?.name === 'AbortError') return;
+        setHotPlaces([]);
+        setHotStatus('error');
+      });
+
+    setEventStatus('loading');
+    fetchEvents({ status: 'ONGOING', size: 200, signal: controller.signal })
+      .then((page) => {
+        if (controller.signal.aborted) return;
+        setActiveEvents(page.content ?? []);
+        setEventStatus('ready');
+      })
+      .catch((error) => {
+        if (error?.name === 'AbortError') return;
+        setActiveEvents([]);
+        setEventStatus('error');
+      });
+
+    return () => controller.abort();
   }, []);
 
   useEffect(() => {
@@ -1149,34 +1200,6 @@ function MapHome({ go, basketState, onBasketAdded, onBasketRefresh, onAuthRequir
     setSelectedCongestionArea((area) => mergeCongestionArea(area, jongnoCongestion));
   }, [jongnoCongestion]);
 
-  const sourceCategoryByPlaceId = useMemo(() => {
-    const categories = new Map();
-    categorySourcePlaces.forEach((place) => {
-      if (!place.id || !place.categoryCode) return;
-      categories.set(place.id, {
-        code: normalizeMapCode(place.categoryCode),
-        label: place.categoryLabel || place.categoryCode,
-      });
-    });
-    return categories;
-  }, [categorySourcePlaces]);
-
-  const getMapPlaceCategory = (place) => {
-    if (place.categoryCode) {
-      return {
-        code: normalizeMapCode(place.categoryCode),
-        label: place.categoryLabel || place.categoryCode,
-      };
-    }
-    return sourceCategoryByPlaceId.get(place.id) || null;
-  };
-
-  const visibleMapFilters = isMapFilterOpen
-    ? FIXED_MAP_FILTERS
-    : activeMapFilter.type === 'all'
-      ? []
-      : [activeMapFilter];
-
   const nearbyByFilter = {
     전체: { title: '지금 가기 좋은 곳', place: nearbyPlace || { name: '주변 장소를 불러오는 중', meta: '', image: images.mapPlace, badge: '종로구' }, next: 'place' },
     촬영지: { title: '장면 속 가까운 곳', place: { name: '창덕궁 후원', meta: '도깨비 촬영지', image: images.popup, badge: '촬영지' }, next: 'filming-content' },
@@ -1187,136 +1210,185 @@ function MapHome({ go, basketState, onBasketAdded, onBasketRefresh, onAuthRequir
         image: images.mapPlace,
       }
     : selectedPlace
-      ? placeToCardProps({ ...selectedPlace, thumbnailUrl: selectedPlace.thumbnailUrl || images.mapPlace })
+      ? placeToCardProps({ ...selectedPlace, imageUrl: selectedPlace.imageUrl || images.mapPlace })
       : null;
-  const selectedPlaceDetail = selectedPlaceDetailTarget(selectedPlace);
-  const nearby = selectedPlace
-    ? {
-        title: '선택한 장소',
-        place: selectedPlaceCard,
-        next: null,
-      }
-    : nearbyByFilter[filter] || nearbyByFilter.전체;
-  const filterMapPlace = (place) => {
-    if (activeMapFilter.type === 'category') {
-      const categoryCode = getMapPlaceCategory(place)?.code;
-      const targetCodes = activeMapFilter.codes || [activeMapFilter.code];
-      return targetCodes.map(normalizeMapCode).includes(categoryCode);
-    }
-    if (activeMapFilter.type === 'tag') {
-      return normalizeMapTags(place.tags).includes(normalizeMapCode(activeMapFilter.code));
-    }
-    return true;
-  };
-  const mapApiFilterParams = () => {
-    if (activeMapFilter.type === 'category') {
-      return { category: activeMapFilter.codes?.join(',') || activeMapFilter.code };
-    }
-    if (activeMapFilter.type === 'tag') {
-      return { tag: activeMapFilter.code };
-    }
-    return {};
-  };
+  const selectedPlaceDetail = selectedPlace?.externalSource === 'EVENT'
+    ? { screen: 'event-detail', id: selectedPlace.eventId }
+    : selectedPlaceDetailTarget(selectedPlace);
+  const nearby = nearbyByFilter[activeMapFilters[0]?.label] || nearbyByFilter.전체;
   const selectMapFilter = (option) => {
-    setActiveMapFilter(option);
-    setIsMapFilterOpen(false);
-    setFilter(option.type === 'tag' && option.code === 'FILMING_LOCATION' ? '촬영지' : '전체');
-  };
-  const toggleAllFilters = () => {
-    setActiveMapFilter(ALL_MAP_FILTER);
-    setFilter('전체');
-    setIsMapFilterOpen((current) => !current);
+    setActiveMapFilterKeys((current) => toggleMapFilterSelection(current, option.key));
+    setSelectedPlace(null);
+    setLoadedMapFilterKey(null);
   };
   const settleNearbySheet = (_, info) => {
-    const swipedDown = info.offset.y > 54 || info.velocity.y > 420;
-    const swipedUp = info.offset.y < -54 || info.velocity.y < -420;
-    if (swipedDown) setIsNearbySheetCollapsed(true);
-    if (swipedUp) setIsNearbySheetCollapsed(false);
-  };
-  const clearSelectedPlace = () => {
-    setSelectedPlace(null);
-    setActiveRouteMode('WALK');
-    setIsNearbySheetCollapsed(false);
-    clearLocation();
+    dispatchMapHomeInteraction({
+      type: 'SHEET_DRAG_ENDED',
+      offsetY: info.offset.y,
+      velocityY: info.velocity.y,
+    });
   };
   const selectPlace = (place) => {
     setSelectedPlace(place);
-    setActiveRouteMode('WALK');
-    setIsNearbySheetCollapsed(false);
-    if (shouldLocateForDestinationSelection(locationStatus, {
-      latitude: place?.latitude,
-      longitude: place?.longitude,
-    })) locate();
+    dispatchRouteModeSelection({ type: 'PLACE_CHANGED' });
+    dispatchMapHomeInteraction({ type: 'PLACE_SELECTED' });
   };
+  const collapsedSheetOffset = selectedPlace ? 300 : 178;
+  const isInsideMapBounds = (item, bounds) => {
+    const latitude = Number(item?.latitude);
+    const longitude = Number(item?.longitude);
+    return Number.isFinite(latitude)
+      && Number.isFinite(longitude)
+      && latitude >= bounds.minLat
+      && latitude <= bounds.maxLat
+      && longitude >= bounds.minLng
+      && longitude <= bounds.maxLng;
+  };
+  const activeFilterHasError = activeMapFilterKeys.some((filterKey) => (
+    (filterKey === 'HOT' && hotStatus === 'error')
+      || ((filterKey === 'POPUP' || filterKey === 'EVENT') && eventStatus === 'error')
+  ));
+  const activeFilterIsLoading = activeMapFilterKeys.some((filterKey) => (
+    (filterKey === 'HOT' && hotStatus === 'loading')
+      || ((filterKey === 'POPUP' || filterKey === 'EVENT') && eventStatus === 'loading')
+  ));
+  const activeFilterEmpty = activeMapFilterKeys.length > 0
+    && !activeFilterHasError
+    && !activeFilterIsLoading
+    && loadedMapFilterKey === activeMapFilterKey
+    && visibleMapItemCount === 0;
+  const activeFilterLabel = activeMapFilters.map((filter) => filter.label).join(', ');
 
   return (
-    <section className="phone map-home-screen">
+    <section className="phone map-home-screen" data-map-focused={isMapFocused || undefined}>
       <MapStage
         mapProps={{
           center: selectedPlace ? [selectedPlace.longitude, selectedPlace.latitude] : undefined,
           zoom: selectedPlace ? 17 : 15,
           loadPlacesInBounds: async (bounds) => {
-            const placesInBounds = await fetchMapPlaces({ ...bounds, ...mapApiFilterParams() });
-            return selectedPlace?.externalSource === 'KAKAO'
-              ? [...placesInBounds, selectedPlace]
-              : placesInBounds;
+            const groups = await Promise.all(activeMapFilters.map(async (filter) => {
+              const placesInBounds = filter.key === 'HOT'
+                ? hotPlaces.filter((place) => isInsideMapBounds(place, bounds))
+                : await fetchMapPlaces({
+                    ...bounds,
+                    ...mapFilterApiParams(filter),
+                  });
+              const eventMarkers = mapEventsForFilter(activeEvents, filter.key)
+                .filter((event) => isInsideMapBounds(event, bounds))
+                .map(eventToMapMarker);
+              return tagMapItemsForFilter([...placesInBounds, ...eventMarkers], filter.key);
+            }));
+            const visibleItems = [];
+            const visibleItemKeys = new Set();
+            groups.flat().forEach((item) => {
+              const itemKey = `${item.externalSource || 'INTERNAL'}:${item.id}`;
+              if (visibleItemKeys.has(itemKey)) return;
+              visibleItemKeys.add(itemKey);
+              visibleItems.push(item);
+            });
+            if (selectedPlace) {
+              const selectedItemKey = `${selectedPlace.externalSource || 'INTERNAL'}:${selectedPlace.id}`;
+              if (!visibleItemKeys.has(selectedItemKey)) visibleItems.push(selectedPlace);
+            }
+            return visibleItems;
           },
           congestionAreaUrl: '/data/jongno-city-areas.geojson',
           congestionData: jongnoCongestion,
           showCongestionAreas: isCongestionLayerVisible,
           onCongestionAreaClick: (area) => setSelectedCongestionArea(mergeCongestionArea(area, jongnoCongestion)),
-          placeMarkerFilter: filterMapPlace,
-          placeMarkerFilterKey: `${activeMapFilter.type}:${activeMapFilter.codes?.join(',') || activeMapFilter.code}`,
-          placeRequestKey: `${activeMapFilter.type}:${activeMapFilter.codes?.join(',') || activeMapFilter.code}`,
+          placeMarkerFilterKey: activeMapFilterKey,
+          placeRequestKey: `${activeMapFilterKey}:${hotPlaces.length}:${activeEvents.length}:${routeSelectionKey}`,
           routeLegs: selectedRoute?.status === 'AVAILABLE' ? selectedRoute.legs : [],
           routeMode: activeRouteMode,
           routeFitKey: selectedPlace ? `${selectedPlace.externalSource || 'INTERNAL'}:${selectedPlace.id}` : '',
-          userLocation: location ? [location.longitude, location.latitude] : null,
+          routeFitCoordinates: routeDestination
+            ? [[location.longitude, location.latitude], [routeDestination.longitude, routeDestination.latitude]]
+            : [],
+          userLocation: routeOriginMarkerCoordinates(selectedPlace, location),
+          onMapClick: () => dispatchMapHomeInteraction({ type: 'MAP_FOCUSED' }),
+          onPlacesChange: (places) => {
+            setVisibleMapItemCount(places.length);
+            setLoadedMapFilterKey(activeMapFilterKey);
+          },
           onPlaceClick: (place) => {
             selectPlace(place);
           },
         }}
       >
-        <div className="map-top-fade" />
-        <motion.header
-          className="map-home-header"
-          initial={{ opacity: 0, transform: 'perspective(1100px) translateY(-16px) rotateX(-4deg) translateZ(-18px)' }}
-          animate={{ opacity: 1, transform: 'perspective(1100px) translateY(0px) rotateX(0deg) translateZ(0px)' }}
-          transition={{ duration: 0.28, ease: [0.23, 1, 0.32, 1] }}
-        >
-          <p>안국동 · 내 주변</p>
-          <h1>오늘, 어디로 걸어볼까요?</h1>
-          <button className="map-search-trigger" onClick={() => go('search')} type="button"><span><SearchIcon /></span>장소·지역·테마 검색</button>
-          <div className="map-filter-bar">
-            <button
-              className={`map-filter-toggle ${activeMapFilter.type === 'all' ? 'is-active' : ''}`}
-              onClick={toggleAllFilters}
-              type="button"
-              aria-expanded={isMapFilterOpen}
-            >
-              전체
-            </button>
-            {visibleMapFilters.map((item) => (
-              <button
-                className={`map-filter-chip is-${item.tone} ${activeMapFilter.type === item.type && activeMapFilter.code === item.code ? 'is-active' : ''}`}
-                key={`${item.type}:${item.code}`}
-                onClick={() => selectMapFilter(item)}
-                type="button"
-                aria-pressed={activeMapFilter.type === item.type && activeMapFilter.code === item.code}
+        {!isMapFocused && <div className="map-top-fade" />}
+        {!isMapFocused
+          ? <>
+              <motion.header
+                className="map-home-header"
+                initial={{ opacity: 0, y: -12 }}
+                animate={{ opacity: 1, y: 0 }}
+                transition={{ type: 'spring', stiffness: 440, damping: 38 }}
               >
-                {item.label}
-              </button>
-            ))}
-            <button
-              className={`map-filter-chip map-congestion-toggle ${isCongestionLayerVisible ? 'is-active' : ''}`}
-              onClick={() => setIsCongestionLayerVisible((current) => !current)}
+                <p>안국동 · 내 주변</p>
+                <h1>오늘, 어디로 걸어볼까요?</h1>
+              </motion.header>
+              <motion.div
+                className="map-home-controls"
+                aria-label="지도 검색 및 필터"
+                initial={{ opacity: 0, y: -8 }}
+                animate={{ opacity: 1, y: 0 }}
+                transition={{ type: 'spring', stiffness: 440, damping: 38, delay: 0.03 }}
+              >
+                <button className="map-search-trigger" onClick={() => go('search')} type="button"><span><SearchIcon /></span>장소·지역·테마 검색</button>
+                <div className="map-category-heading">
+                  <strong>장소 카테고리</strong>
+                  <span>복수 선택 가능</span>
+                </div>
+                <div className="map-filter-bar" aria-label="장소 카테고리">
+                  {MAP_HOME_FILTERS.map((item) => {
+                    const FilterIcon = MAP_FILTER_ICONS[item.key];
+                    const selected = item.key === 'ALL'
+                      ? areAllMapFiltersSelected(activeMapFilterKeys)
+                      : activeMapFilterKeys.includes(item.key);
+                    return (
+                      <button
+                        className={`map-filter-chip is-${item.tone}${selected ? ' is-active' : ''}`}
+                        key={item.key}
+                        onClick={() => selectMapFilter(item)}
+                        type="button"
+                        aria-pressed={selected}
+                      >
+                        <FilterIcon aria-hidden="true" size={16} strokeWidth={2} />
+                        {item.label}
+                      </button>
+                    );
+                  })}
+                </div>
+              </motion.div>
+            </>
+          : <motion.button
+              className="map-search-restore"
               type="button"
-              aria-pressed={isCongestionLayerVisible}
+              aria-label="검색 및 필터 펼치기"
+              onClick={() => dispatchMapHomeInteraction({ type: 'SEARCH_RESTORED' })}
+              initial={{ opacity: 0, scale: 0.9 }}
+              animate={{ opacity: 1, scale: 1 }}
+              transition={{ type: 'spring', stiffness: 480, damping: 34 }}
             >
-              혼잡도
-            </button>
-          </div>
-        </motion.header>
+              <SearchIcon />
+            </motion.button>}
+        <button
+          className="map-congestion-switch"
+          type="button"
+          role="switch"
+          aria-checked={isCongestionLayerVisible}
+          onClick={() => setIsCongestionLayerVisible((current) => !current)}
+        >
+          <span>실시간 혼잡도</span>
+          <i aria-hidden="true"><b /></i>
+        </button>
+        {(activeFilterHasError || activeFilterEmpty) && (
+          <p className="map-filter-status" role="status">
+            {activeFilterHasError
+              ? `${activeFilterLabel} 중 일부 정보를 불러오지 못했어요`
+              : `현재 표시할 ${activeFilterLabel}이 없어요`}
+          </p>
+        )}
         <MapPlacePulse />
         {isCongestionLayerVisible && (
           <div className="map-congestion-legend" aria-label="혼잡도 범례">
@@ -1328,8 +1400,6 @@ function MapHome({ go, basketState, onBasketAdded, onBasketRefresh, onAuthRequir
             ))}
           </div>
         )}
-        <button className={`map-location-button ${locationStatus === 'ready' ? 'is-located' : ''}`} type="button" aria-label="내 위치" aria-pressed={locationStatus === 'ready'} aria-busy={locationStatus === 'locating' || undefined} onClick={locate}><LocateFixed aria-hidden="true" size={20} strokeWidth={2.2} /></button>
-        {locationStatus === 'ready' && <p className="map-location-status" role="status">광화문 인근을 출발지로 사용 중이에요</p>}
         {isCongestionLayerVisible && selectedCongestionArea && (
           <aside className="map-congestion-detail" aria-live="polite">
             <button type="button" aria-label="혼잡도 상세 닫기" onClick={() => setSelectedCongestionArea(null)}><X aria-hidden="true" size={16} strokeWidth={2.2} /></button>
@@ -1349,25 +1419,29 @@ function MapHome({ go, basketState, onBasketAdded, onBasketRefresh, onAuthRequir
             {selectedCongestionArea.stale && <small>최신 응답이 아니어서 직전 값을 보여주고 있어요.</small>}
           </aside>
         )}
-        <motion.section className={`bottom-sheet map-nearby-sheet motion-depth-sheet${selectedPlace ? ' has-selected-route' : ''}`} data-collapsed={isNearbySheetCollapsed || undefined} initial={{ opacity: 0, y: 42 }} animate={{ opacity: 1, y: isNearbySheetCollapsed ? 176 : 0 }} transition={{ opacity: { duration: 0.28, delay: 0.08 }, y: { type: 'spring', stiffness: 420, damping: 38 } }} drag="y" dragControls={nearbySheetDragControls} dragListener={false} dragConstraints={{ top: 0, bottom: 176 }} dragElastic={0.06} dragMomentum={false} onDragEnd={settleNearbySheet}>
-          <button className="map-sheet-handle-button" type="button" aria-label={isNearbySheetCollapsed ? '주변 장소 패널 펼치기' : '주변 장소 패널 접기'} aria-expanded={!isNearbySheetCollapsed} onPointerDown={(event) => nearbySheetDragControls.start(event)} onClick={() => setIsNearbySheetCollapsed((current) => !current)}><span className="sheet-handle" /></button>
-          {selectedPlace && <button className="selected-route-close" type="button" aria-label="선택한 장소 닫기" onClick={clearSelectedPlace}><X aria-hidden="true" size={18} strokeWidth={2.2} /></button>}
-          <ScreenSection title={nearby.title} action={selectedPlace ? null : '전체보기'} onAction={() => go('explore')}><PlaceRow place={nearby.place} onClick={selectedPlace ? (selectedPlaceDetail ? () => go(selectedPlaceDetail.screen, selectedPlaceDetail.id) : undefined) : () => go(nearby.next, nearby.place.id)} /></ScreenSection>
-          {selectedPlace
-            ? <SelectedPlaceRoutePanel
-                selectedPlace={selectedPlace}
-                location={location}
-                locationStatus={locationStatus}
-                locationErrorCode={locationErrorCode}
-                routeStatus={effectiveRouteStatus}
-                routeData={effectiveRouteData}
-                activeMode={activeRouteMode}
-                onModeChange={setActiveRouteMode}
-                onRetryLocation={locate}
-                onRetryRoute={retryRoute}
-                taxiHref={activeRouteMode === 'TAXI' ? buildKakaoTaxiHref(routeDestination) : null}
-              />
-            : <button type="button" className="map-live-link" onClick={() => go('live-talk')}><span>내 주변 지금톡</span><small>현장 소식 6개&nbsp; ›</small></button>}
+        <motion.section className={`bottom-sheet map-nearby-sheet motion-depth-sheet${selectedPlace ? ' has-selected-route' : ''}`} data-collapsed={isNearbySheetCollapsed || undefined} initial={{ opacity: 0, y: 42 }} animate={{ opacity: 1, y: isNearbySheetCollapsed ? collapsedSheetOffset : 0 }} transition={{ opacity: { duration: 0.28, delay: 0.08 }, y: { type: 'spring', stiffness: 420, damping: 38 } }} drag="y" dragControls={nearbySheetDragControls} dragListener={false} dragConstraints={{ top: 0, bottom: collapsedSheetOffset }} dragElastic={0.06} dragMomentum={false} onDrag={(_, info) => { if (Math.abs(info.offset.y) > 6) didDragNearbySheetRef.current = true; }} onDragEnd={settleNearbySheet}>
+          <button className="map-sheet-handle-button" type="button" aria-label={isNearbySheetCollapsed ? '주변 장소 패널 펼치기' : '주변 장소 패널 접기'} aria-expanded={!isNearbySheetCollapsed} onPointerDown={(event) => { didDragNearbySheetRef.current = false; nearbySheetDragControls.start(event); }} onClick={() => { if (didDragNearbySheetRef.current) { didDragNearbySheetRef.current = false; return; } dispatchMapHomeInteraction({ type: 'SHEET_TOGGLED' }); }}><span className="sheet-handle" /></button>
+          <div className="map-sheet-content" aria-hidden={isNearbySheetCollapsed || undefined} inert={isNearbySheetCollapsed ? true : undefined}>
+            {!selectedPlace && <ScreenSection title={nearby.title} action="전체보기" onAction={() => go('explore')}><PlaceRow place={nearby.place} onClick={() => go(nearby.next, nearby.place.id)} /></ScreenSection>}
+            {selectedPlace
+              ? <SelectedPlaceRoutePanel
+                  selectedPlace={selectedPlace}
+                  location={location}
+                  locationStatus={locationStatus}
+                  locationErrorCode={locationErrorCode}
+                  routeStatus={effectiveRouteStatus}
+                  routeData={effectiveRouteData}
+                  activeMode={activeRouteMode}
+                  originLabel="광화문"
+                  placeCard={<PlaceRow place={selectedPlaceCard} onClick={selectedPlaceDetail ? () => go(selectedPlaceDetail.screen, selectedPlaceDetail.id) : undefined} />}
+                  onModeChange={(mode) => dispatchRouteModeSelection({ type: 'MODE_SELECTED', mode })}
+                  onResolvedModeChange={(mode) => dispatchRouteModeSelection({ type: 'MODE_RESOLVED', mode })}
+                  onRetryLocation={locate}
+                  onRetryRoute={retryRoute}
+                  taxiHref={activeRouteMode === 'TAXI' ? buildKakaoTaxiHref(routeDestination) : null}
+                />
+              : <button type="button" className="map-live-link" onClick={() => go('live-talk')}><span>내 주변 지금톡</span><small>현장 소식 6개&nbsp; ›</small></button>}
+          </div>
         </motion.section>
       </MapStage>
       <BottomNav active="map" onNavigate={(tab) => go(rootRoutes[tab])} />
@@ -1390,6 +1464,40 @@ function ExploreReveal({ children, delay = 0 }) {
 
 function ExploreScreen({ go }) {
   const [query, setQuery] = useState('');
+  const [trendPlaces, setTrendPlaces] = useState([]);
+  const [trendLoading, setTrendLoading] = useState(true);
+  const [trendError, setTrendError] = useState(false);
+  const trendRequestRef = useRef(null);
+  const loadPlaceTrends = useCallback(async () => {
+    trendRequestRef.current?.abort();
+    const requestController = new AbortController();
+    trendRequestRef.current = requestController;
+    setTrendLoading(true);
+    setTrendError(false);
+    try {
+      const result = await fetchPlaceTrends({ limit: 6, signal: requestController.signal });
+      if (requestController.signal.aborted || trendRequestRef.current !== requestController) return;
+      setTrendPlaces(Array.isArray(result) ? result : []);
+    } catch (error) {
+      if (error?.name === 'AbortError' || requestController.signal.aborted) return;
+      if (trendRequestRef.current !== requestController) return;
+      console.error('탐색 트렌드를 불러오지 못했어요', error);
+      setTrendError(true);
+    } finally {
+      if (trendRequestRef.current !== requestController) return;
+      trendRequestRef.current = null;
+      setTrendLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    loadPlaceTrends();
+    return () => {
+      trendRequestRef.current?.abort();
+      trendRequestRef.current = null;
+    };
+  }, [loadPlaceTrends]);
+
   const loadFilmingPlaces = useCallback(
     ({ page, size }) => fetchPlaces({ district: '종로구', tag: 'FILMING_LOCATION', page, size }),
     [],
@@ -1402,8 +1510,14 @@ function ExploreScreen({ go }) {
   const popups = useHorizontalPagedList({ loadPage: loadPopupEvents, mapItem: eventToCardProps });
 
   const normalized = query.trim().toLowerCase();
-  const exploreItems = [...CURATED_TRENDING_PLACES, ...filming.items, ...popups.items];
-  const hasQueryResult = exploreItems.some((item) => `${item.name} ${item.meta}`.toLowerCase().includes(normalized));
+  const trendSearchItems = getVisiblePlaceTrends(trendPlaces)
+    .map((place) => ({ name: place?.name || '', meta: getPlaceTrendSearchText(place) }));
+  const exploreItems = [
+    ...trendSearchItems,
+    ...filming.items,
+    ...popups.items,
+  ];
+  const hasQueryResult = exploreItems.some((item) => `${item?.name || ''} ${item?.meta || ''}`.toLowerCase().includes(normalized));
   const loadError = filming.error && popups.error;
   return (
     <section className="phone standard-screen tab-screen">
@@ -1424,13 +1538,34 @@ function ExploreScreen({ go }) {
         ) : (
           <>
             <ExploreReveal delay={0.06}>
-              <ScreenSection title="요즘 이곳에서는" subtitle="큐레이션 준비 중" action="전체보기" onAction={() => go('trending')}>
-                <div className="horizontal-cards">
-                  {CURATED_TRENDING_PLACES.map((place, index) => (
-                    <PlaceCard place={place} index={index} key={place.id} onClick={() => go('place')} />
-                  ))}
-                </div>
-              </ScreenSection>
+              <PlaceTrendSection
+                error={trendError}
+                isLoading={trendLoading}
+                onPlaceSelect={(place) => go('place', place.placeId)}
+                onRetry={loadPlaceTrends}
+                onViewAll={() => go('trending')}
+                renderCards={({ places, isLoading, error, onRetry, onPlaceSelect }) => {
+                  const cardItems = places.map((place) => getPlaceTrendCardProps(place, images.cafe));
+                  return <HorizontalInfiniteCards
+                    items={cardItems}
+                    hasMore={false}
+                    isLoading={isLoading}
+                    error={error}
+                    onRetry={onRetry}
+                    onLoadMore={() => {}}
+                    onCardClick={(card) => {
+                      const selectedPlace = places.find((place) => (place.placeId ?? place.id) === card.id);
+                      if (selectedPlace) onPlaceSelect?.(selectedPlace);
+                    }}
+                    emptyLabel="아직 주목할 만한 장소가 없어요."
+                    errorLabel="트렌드 정보를 불러오지 못했어요."
+                  />;
+                }}
+                renderSection={({ title, subtitle, action, onAction, children }) => (
+                  <ScreenSection title={title} subtitle={subtitle} action={action} onAction={onAction}>{children}</ScreenSection>
+                )}
+                trends={trendPlaces}
+              />
             </ExploreReveal>
             <ExploreReveal delay={0.12}>
               <ScreenSection title="장면 속으로" subtitle="드라마와 영화 속 서울의 장소" action="전체보기" onAction={() => go('filming-locations')}>
@@ -1568,7 +1703,22 @@ function PlaceDetail({ go, placeId, basketState, onBasketAdded, onBasketRefresh,
   }, [placeId]);
 
   if (status === 'mock') {
-    return <section className="phone standard-screen place-detail-screen"><main className="page-scroll"><div className="detail-hero"><img src={images.detail} alt="도토리가든 외관" /><DetailHeroControls onBack={() => go('explore')} /></div><DetailContentSheet className="detail-content detail-content-v3"><p className="eyebrow">안국 · 카페</p><h1>도토리가든</h1><p className="detail-meta">매일 10:00-21:00</p><div className="chip-row"><Chip active>지금 여유</Chip><Chip>도보 8분</Chip></div><ScreenSection title="지금 가야 하는 이유"><div className="why-card place-why-card"><span>최근 후기 기반 · 오늘 업데이트</span><strong>최근 3일간 소금빵과 정원 사진을<br />저장한 사람이 빠르게 늘고 있어요.</strong><p>오후 2-4시는 사진 후기가 특히 많아요</p></div></ScreenSection><ScreenSection title="지금 현장에서는" action="12분 전"><div className="place-live-grid"><article><span>대기</span><b>약 10분</b></article><article><span>메뉴</span><b>소금빵 재고 있음</b></article></div></ScreenSection><ScreenSection title="방문자 후기"><PlaceReviewPreview onViewAll={() => go('reviews')} summary={PLACE_REVIEW_SUMMARY} reviews={PLACE_REVIEW_ITEMS} /></ScreenSection></DetailContentSheet></main><div className="sticky-actions split place-actions"><PlaceBasketAction placeId={placeId} basketItems={basketState?.items} onAdded={onBasketAdded} onAuthRequired={onAuthRequired} onRefresh={onBasketRefresh} /><ActionButton tone="secondary" onClick={() => go('write-review')}>후기 남기기</ActionButton></div></section>;
+    return (
+      <section className="phone standard-screen place-detail-screen">
+        <main className="page-scroll">
+          <div className="detail-hero"><img src={images.detail} alt="도토리가든 외관" /><DetailHeroControls onBack={() => go('explore')} /></div>
+          <DetailContentSheet className="detail-content detail-content-v3">
+            <p className="eyebrow">안국 · 카페</p>
+            <h1>도토리가든</h1>
+            <p className="detail-meta">매일 10:00-21:00</p>
+            <div className="chip-row"><Chip active>지금 여유</Chip><Chip>도보 8분</Chip></div>
+            <PlaceTrendReason trend={PLACE_TREND_MOCK_FIXTURE} />
+            <ScreenSection title="방문자 후기"><PlaceReviewPreview onViewAll={() => go('reviews')} summary={PLACE_REVIEW_SUMMARY} reviews={PLACE_REVIEW_ITEMS} /></ScreenSection>
+          </DetailContentSheet>
+        </main>
+        <div className="sticky-actions split place-actions"><PlaceBasketAction placeId={placeId} basketItems={basketState?.items} onAdded={onBasketAdded} onAuthRequired={onAuthRequired} onRefresh={onBasketRefresh} /><ActionButton tone="secondary" onClick={() => go('write-review')}>후기 남기기</ActionButton></div>
+      </section>
+    );
   }
 
   if (status === 'loading') {
@@ -1579,10 +1729,27 @@ function PlaceDetail({ go, placeId, basketState, onBasketAdded, onBasketRefresh,
     return <section className="phone standard-screen place-detail-screen"><BackHeader title="장소" onBack={() => go('explore')} /><main className="page-scroll centered-state"><h1>정보를 불러오지 못했어요</h1><p>잠시 후 다시 시도해주세요.</p></main></section>;
   }
 
-  const heroImage = place.images?.[0]?.sourceUrl || images.detail;
+  const heroImage = place.imageUrl || images.detail;
   const hoursLabel = formatOperatingHours(place.operatingHours) || place.operatingHoursRaw || '운영시간 정보 없음';
 
-  return <section className="phone standard-screen place-detail-screen"><main className="page-scroll"><div className="detail-hero"><img src={heroImage} alt={`${place.name} 외관`} /><DetailHeroControls onBack={() => go('explore')} /></div><DetailContentSheet className="detail-content detail-content-v3"><p className="eyebrow place-detail-eyebrow"><span className="place-detail-eyebrow-text">{[place.district, place.categoryLabel].filter(Boolean).join(' · ')}</span><CongestionPointBadge longitude={place.longitude} latitude={place.latitude} /></p><h1>{place.name}</h1><p className="detail-meta">{hoursLabel}</p><div className="chip-row">{place.phone && <Chip active>{place.phone}</Chip>}<Chip>{place.roadAddress || place.lotAddress || '주소 정보 없음'}</Chip></div><FilmingSceneSection filmingLocations={filmingLocations} /><PlaceDescriptionSection description={place.description} /><ScreenSection title="방문자 후기"><PlaceReviewPreview onViewAll={() => go('reviews')} summary={PLACE_REVIEW_SUMMARY} reviews={PLACE_REVIEW_ITEMS} /></ScreenSection></DetailContentSheet></main><div className="sticky-actions split place-actions"><PlaceBasketAction placeId={placeId} basketItems={basketState?.items} onAdded={onBasketAdded} onAuthRequired={onAuthRequired} onRefresh={onBasketRefresh} /><ActionButton tone="secondary" onClick={() => go('write-review')}>후기 남기기</ActionButton></div></section>;
+  return (
+    <section className="phone standard-screen place-detail-screen">
+      <main className="page-scroll">
+        <div className="detail-hero"><img src={heroImage} alt={`${place.name} 외관`} /><DetailHeroControls onBack={() => go('explore')} /></div>
+        <DetailContentSheet className="detail-content detail-content-v3">
+          <p className="eyebrow place-detail-eyebrow"><span className="place-detail-eyebrow-text">{[place.district, place.categoryLabel].filter(Boolean).join(' · ')}</span><CongestionPointBadge longitude={place.longitude} latitude={place.latitude} /></p>
+          <h1>{place.name}</h1>
+          <p className="detail-meta">{hoursLabel}</p>
+          <div className="chip-row">{place.phone && <Chip active>{place.phone}</Chip>}<Chip>{place.roadAddress || place.lotAddress || '주소 정보 없음'}</Chip></div>
+          <PlaceTrendReason trend={place.trend} />
+          <FilmingSceneSection filmingLocations={filmingLocations} />
+          <PlaceDescriptionSection description={place.description} />
+          <ScreenSection title="방문자 후기"><PlaceReviewPreview onViewAll={() => go('reviews')} summary={PLACE_REVIEW_SUMMARY} reviews={PLACE_REVIEW_ITEMS} /></ScreenSection>
+        </DetailContentSheet>
+      </main>
+      <div className="sticky-actions split place-actions"><PlaceBasketAction placeId={placeId} basketItems={basketState?.items} onAdded={onBasketAdded} onAuthRequired={onAuthRequired} onRefresh={onBasketRefresh} /><ActionButton tone="secondary" onClick={() => go('write-review')}>후기 남기기</ActionButton></div>
+    </section>
+  );
 }
 
 function EventDetail({ go, eventId }) {
@@ -1808,14 +1975,8 @@ function SearchResults({ screen, go }) {
 }
 
 function SavedConfirmation({ go }) {
-  return <section className="phone standard-screen saved-detail-screen"><main className="page-scroll"><div className="detail-hero"><img src={images.detail} alt="도토리가든 외관" /><div className="detail-controls"><IconButton label="이전" onClick={() => go('place')}>‹</IconButton><IconButton label="장소 저장 취소" onClick={() => go('my')}>♥</IconButton></div></div><div className="detail-content detail-content-v3"><p className="eyebrow">안국 · 카페</p><h1>도토리가든</h1><p className="detail-meta">매일 10:00-21:00</p><div className="chip-row"><Chip active>지금 여유</Chip><Chip>도보 8분</Chip></div><ScreenSection title="지금 가야 하는 이유"><div className="why-card place-why-card"><span>최근 후기 기반 · 오늘 업데이트</span><strong>최근 3일간 소금빵과 정원 사진을<br />저장한 사람이 빠르게 늘고 있어요.</strong><p>오후 2-4시는 사진 후기가 특히 많아요</p></div></ScreenSection><ScreenSection title="지금 현장에서는" action="12분 전"><div className="place-live-grid"><article><span>대기</span><b>약 10분</b></article><article><span>메뉴</span><b>소금빵 재고 있음</b></article></div></ScreenSection></div></main><section className="save-confirmation-toast" role="status"><span>✓</span><div><strong>저장한 장소에 추가했어요</strong><small>MY에서 언제든 다시 볼 수 있어요.</small></div><button type="button" onClick={() => go('my')}>보기</button></section><div className="sticky-actions split place-actions"><ActionButton onClick={() => go('course-conditions')}>코스에 추가</ActionButton><ActionButton tone="secondary" onClick={() => go('explore')}>탐색 계속</ActionButton></div></section>;
+  return <section className="phone standard-screen saved-detail-screen"><main className="page-scroll"><div className="detail-hero"><img src={images.detail} alt="도토리가든 외관" /><div className="detail-controls"><IconButton label="이전" onClick={() => go('place')}>‹</IconButton><IconButton label="장소 저장 취소" onClick={() => go('my')}>♥</IconButton></div></div><div className="detail-content detail-content-v3"><p className="eyebrow">안국 · 카페</p><h1>도토리가든</h1><p className="detail-meta">매일 10:00-21:00</p><div className="chip-row"><Chip active>지금 여유</Chip><Chip>도보 8분</Chip></div></div></main><section className="save-confirmation-toast" role="status"><span>✓</span><div><strong>저장한 장소에 추가했어요</strong><small>MY에서 언제든 다시 볼 수 있어요.</small></div><button type="button" onClick={() => go('my')}>보기</button></section><div className="sticky-actions split place-actions"><ActionButton onClick={() => go('course-conditions')}>코스에 추가</ActionButton><ActionButton tone="secondary" onClick={() => go('explore')}>탐색 계속</ActionButton></div></section>;
 }
-
-const collectionInfo = {
-  trending: ['요즘 이곳에서는', '최근 메뉴·사진·공간이 주목받는 장소', [locationRows[0], { ...locationRows[0], name: '런던베이글뮤지엄', meta: '안국 · 오전이 가장 여유로워요' }]],
-  'filming-locations': ['장면 속으로', '드라마와 영화 속, 직접 걸어볼 수 있는 장소', [locationRows[1], { ...locationRows[1], name: '덕수궁 돌담길', meta: '도깨비 촬영지 · 도보 산책' }]],
-  popups: ['이번 주 팝업', '지금 서울에서만 만날 수 있는 장소', [{ name: '블루 모먼트 전시 팝업', meta: '성수 · 8월 31일까지', image: images.scene, badge: '이번 주' }, { name: '아무개 서점 여름 마켓', meta: '서촌 · 이번 주말', image: images.cafe, badge: '주말' }]],
-};
 
 function FilmingPlaceMedia({ place }) {
   if (place.hasThumbnail) {
@@ -2419,7 +2580,103 @@ function EventsCollection({ go }) {
   );
 }
 
+const PLACE_TREND_COLLECTION_FILTERS = [
+  { label: '전체', status: null },
+  { label: '많이 언급돼요', status: 'TRENDING' },
+  { label: '관심이 이어져요', status: 'WATCH' },
+];
+const PLACE_TREND_COLLECTION_LIMIT = 20;
+
+function PlaceTrendsCollection({ go }) {
+  const requestControllerRef = useRef(null);
+  const [trends, setTrends] = useState([]);
+  const [status, setStatus] = useState('loading');
+  const [activeFilter, setActiveFilter] = useState(PLACE_TREND_COLLECTION_FILTERS[0]);
+  const [retryAttempt, setRetryAttempt] = useState(0);
+
+  useEffect(() => {
+    requestControllerRef.current?.abort();
+    const requestController = new AbortController();
+    requestControllerRef.current = requestController;
+    setStatus('loading');
+    setTrends([]);
+
+    fetchPlaceTrends({ limit: PLACE_TREND_COLLECTION_LIMIT, signal: requestController.signal })
+      .then((result) => {
+        if (requestController.signal.aborted || requestControllerRef.current !== requestController) return;
+        setTrends(Array.isArray(result) ? result : []);
+        setStatus('ready');
+      })
+      .catch((error) => {
+        if (error?.name === 'AbortError' || requestController.signal.aborted) return;
+        if (requestControllerRef.current !== requestController) return;
+        console.error('트렌드 장소 목록을 불러오지 못했어요', error);
+        setStatus('error');
+      });
+
+    return () => {
+      requestController.abort();
+      if (requestControllerRef.current === requestController) requestControllerRef.current = null;
+    };
+  }, [retryAttempt]);
+
+  const visibleTrends = getVisiblePlaceTrends(trends);
+  const displayedTrends = activeFilter.status
+    ? visibleTrends.filter((place) => place.trend?.status === activeFilter.status)
+    : visibleTrends;
+  const retry = () => setRetryAttempt((current) => current + 1);
+
+  return (
+    <section className="phone standard-screen list-screen collection-screen-v3 trend-collection-screen">
+      <BackHeader title="요즘 이곳에서는" onBack={() => go('explore')} />
+      <main className="page-scroll trend-collection-scroll" aria-busy={status === 'loading'}>
+        <header className="collection-heading trend-collection-heading">
+          <h1>요즘 이곳에서는</h1>
+          <small>공개 상태가 확인된 장소를 모아봤어요.</small>
+        </header>
+        <div className="collection-filters trend-filter-bar" role="group" aria-label="트렌드 상태 필터">
+          {PLACE_TREND_COLLECTION_FILTERS.map((item) => (
+            <Chip key={item.label} active={activeFilter.label === item.label} current={activeFilter.label === item.label} onClick={() => setActiveFilter(item)}>{item.label}</Chip>
+          ))}
+        </div>
+        {status === 'error' ? (
+          <section className="collection-state" role="alert">
+            <h2>트렌드 장소를 불러오지 못했어요</h2>
+            <p>잠시 후 다시 시도해주세요.</p>
+            <ActionButton onClick={retry}>다시 불러오기</ActionButton>
+          </section>
+        ) : (
+          <div className="collection-list trend-place-list">
+            {displayedTrends.map((trendPlace) => {
+              const place = getPlaceTrendCardProps(trendPlace, images.cafe);
+              return <PlaceRow key={place.id} place={place} onClick={() => go('place', place.id)} />;
+            })}
+            {status === 'loading' && (
+              <section className="collection-state compact" role="status" aria-live="polite">
+                <span className="event-state-icon"><Search aria-hidden="true" size={22} /></span>
+                <h2>트렌드 장소를 불러오는 중이에요</h2>
+                <p>잠시만 기다려주세요.</p>
+              </section>
+            )}
+            {status === 'ready' && !displayedTrends.length && (
+              <section className="collection-state compact">
+                <span className="event-state-icon"><SearchX aria-hidden="true" size={22} /></span>
+                <h2>해당 상태의 장소가 아직 없어요</h2>
+                <p>{activeFilter.status ? '다른 트렌드 상태를 선택해보세요.' : '공개된 트렌드 장소가 아직 없어요.'}</p>
+                {activeFilter.status && <ActionButton tone="secondary" onClick={() => setActiveFilter(PLACE_TREND_COLLECTION_FILTERS[0])}>전체 트렌드 보기</ActionButton>}
+              </section>
+            )}
+          </div>
+        )}
+      </main>
+    </section>
+  );
+}
+
 function CollectionScreen({ screen, go }) {
+  if (screen === 'trending') {
+    return <PlaceTrendsCollection go={go} />;
+  }
   if (screen === 'filming-locations') {
     return <FilmingLocationsCollection go={go} />;
   }
@@ -2427,15 +2684,6 @@ function CollectionScreen({ screen, go }) {
     return <EventsCollection go={go} />;
   }
 
-  return <StaticCollectionScreen screen={screen} go={go} />;
-}
-
-function StaticCollectionScreen({ screen, go }) {
-  const [title, subtitle, places] = collectionInfo[screen];
-  const [filter, setFilter] = useState('전체');
-  const filters = screen === 'popups' ? ['전체', '이번 주', '무료'] : screen === 'filming-locations' ? ['전체', '드라마', '영화'] : ['전체', '안국', '지금 여유'];
-  const displayedPlaces = filter === '전체' ? places.concat(places) : places.concat(places).filter((_, index) => index % 2 === 0);
-  return <section className="phone standard-screen list-screen collection-screen-v3"><BackHeader title={title} onBack={() => go('explore')} /><main className="page-scroll"><header className="collection-heading"><p>{screen === 'popups' ? '서울의 이번 주' : screen === 'filming-locations' ? '서울의 장면들' : '최근 저장과 후기'}</p><h1>{title}</h1><small>{subtitle}</small></header><div className="collection-filters">{filters.map((item) => <Chip key={item} active={filter === item} onClick={() => setFilter(item)}>{item}</Chip>)}</div><div className="collection-list">{displayedPlaces.map((place, index) => <PlaceRow key={`${place.name}-${index}`} place={place} onClick={() => go(screen === 'filming-locations' ? 'filming-content' : 'place')} />)}</div></main></section>;
 }
 
 function LiveTalk({ go }) {
@@ -2757,7 +3005,7 @@ function FilmingWorkDetail({ go, workId }) {
             name: place.name || filmingLocation.placeName,
             category: [place.categoryLabel, place.district].filter(Boolean).join(' · ') || '장소 정보 확인 중',
             scene: filmingLocation.sceneDescription || '장면 설명을 준비하고 있어요.',
-            image: place.images?.[0]?.sourceUrl || null,
+            image: place.imageUrl || null,
             latitude: place.latitude,
             longitude: place.longitude,
             categoryCode: place.categoryCode,

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -134,7 +135,78 @@ def _upsert_place_source(conn: psycopg.Connection, place_id: int, dto: PlaceDTO)
         )
 
 
-def load_place(conn: psycopg.Connection, dto: PlaceDTO, stats: LoadStats) -> int | None:
+_TRAILING_ADDRESS_PARENTHETICAL = re.compile(r"[（(][^（）()]*[）)]$")
+
+
+def _normalize_road_address(value: str | None) -> str:
+    normalized = re.sub(r"\s+", "", str(value or "").strip())
+    while True:
+        without_suffix = _TRAILING_ADDRESS_PARENTHETICAL.sub("", normalized)
+        if without_suffix == normalized:
+            return normalized
+        normalized = without_suffix
+
+
+def _find_single_blog_trend_address_match(
+    conn: psycopg.Connection,
+    dto: PlaceDTO,
+) -> int | None:
+    incoming_address = _normalize_road_address(dto.road_address)
+    if not incoming_address:
+        return None
+
+    with conn.cursor() as cur:
+        cur.execute(
+            """
+            SELECT id, road_address
+            FROM place
+            WHERE normalized_name = %s AND district = %s
+            """,
+            (dto.normalized_name, dto.district),
+        )
+        candidates = cur.fetchall()
+
+    if len(candidates) != 1:
+        return None
+    place_id, existing_address = candidates[0]
+    if not _normalize_road_address(existing_address):
+        return None
+    if _normalize_road_address(existing_address) != incoming_address:
+        return None
+    return place_id
+
+
+def _is_blog_trend_naver_map_dto(dto: PlaceDTO) -> bool:
+    return (
+        dto.source == "NAVER_MAP"
+        and bool(dto.source_id.strip())
+        and dto.district == "종로구"
+        and "BLOG_TREND" in dto.tags
+    )
+
+
+def _allows_blog_trend_naver_map_without_coordinates(
+    dto: PlaceDTO,
+    requested: bool,
+) -> bool:
+    return requested and _is_blog_trend_naver_map_dto(dto)
+
+
+def _allows_blog_trend_naver_map_address_match(
+    dto: PlaceDTO,
+    requested: bool,
+) -> bool:
+    return requested and _is_blog_trend_naver_map_dto(dto)
+
+
+def load_place(
+    conn: psycopg.Connection,
+    dto: PlaceDTO,
+    stats: LoadStats,
+    *,
+    allow_blog_trend_naver_map_without_coordinates: bool = False,
+    allow_blog_trend_naver_map_address_match: bool = False,
+) -> int | None:
     """DTO 1건을 idempotent하게 적재한다. 같은 (source, source_id) 재실행 시 update만 한다.
 
     반환값: 실제로 place row가 확정된 경우(update/auto_match/insert) 그 place_id, 그렇지 않으면
@@ -157,6 +229,16 @@ def load_place(conn: psycopg.Connection, dto: PlaceDTO, stats: LoadStats) -> int
         return match.place_id
 
     if match.status == MatchStatus.REVIEW_REQUIRED:
+        if _allows_blog_trend_naver_map_address_match(
+            dto,
+            allow_blog_trend_naver_map_address_match,
+        ):
+            address_match_place_id = _find_single_blog_trend_address_match(conn, dto)
+            if address_match_place_id is not None:
+                _update_place(conn, address_match_place_id, dto)
+                _upsert_place_source(conn, address_match_place_id, dto)
+                stats.auto_matched += 1
+                return address_match_place_id
         stats.review_required += 1
         stats.review_records.append(
             {
@@ -175,7 +257,12 @@ def load_place(conn: psycopg.Connection, dto: PlaceDTO, stats: LoadStats) -> int
 
     # NO_MATCH: 좌표 없는 소스는 신규 place를 만들 수 없다(좌표 임의 생성 금지) — 조용히 버리지
     # 않고 review 큐에 남겨서, 나중에 좌표 있는 소스가 같은 장소를 만들면 재매칭 대상이 되게 한다.
-    if not dto.has_coordinates:
+    # 단, 반복 블로그 트렌드 수집은 네이버 지도에서 종로구 주소가 확인된 장소의
+    # source-id를 보존해야 하므로, 호출부가 명시적으로 요청한 정확한 경우만 예외로 둔다.
+    if not dto.has_coordinates and not _allows_blog_trend_naver_map_without_coordinates(
+        dto,
+        allow_blog_trend_naver_map_without_coordinates,
+    ):
         stats.skipped_no_coordinates += 1
         stats.review_records.append(
             {

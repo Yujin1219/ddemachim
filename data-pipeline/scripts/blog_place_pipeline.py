@@ -863,6 +863,37 @@ def _normalise_map_place(raw_place: Any) -> dict[str, Any] | None:
     return result
 
 
+def _module_v2_map_places(attrs: Mapping[str, str], script_text: str) -> list[dict[str, Any]]:
+    places: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    raw_values = [attrs.get("data-module", ""), attrs.get("data-module-v2", "")]
+    if script_text.strip():
+        raw_values.append(script_text)
+    for raw in raw_values:
+        for value in _json_values(raw):
+            for payload in _iter_v2_map_payloads(value):
+                data = payload.get("data")
+                data_values = list(_json_values(data)) if isinstance(data, str) else [data]
+                for data_value in data_values:
+                    if not isinstance(data_value, Mapping):
+                        continue
+                    raw_places = data_value.get("places")
+                    if not isinstance(raw_places, list):
+                        continue
+                    for raw_place in raw_places:
+                        place = _normalise_map_place(raw_place)
+                        if place is None:
+                            continue
+                        fingerprint = json.dumps(
+                            place, ensure_ascii=False, sort_keys=True, default=str
+                        )
+                        if fingerprint in seen:
+                            continue
+                        seen.add(fingerprint)
+                        places.append(place)
+    return places
+
+
 def extract_v2_map_places(html_text: Any) -> list[dict[str, Any]]:
     """HTMLParser로 __se_module_data의 JSON을 읽어 모든 v2_map 장소를 반환한다."""
 
@@ -878,32 +909,12 @@ def extract_v2_map_places(html_text: Any) -> list[dict[str, Any]]:
     places: list[dict[str, Any]] = []
     seen: set[str] = set()
     for attrs, script_text in parser.modules:
-        raw_values = [attrs.get("data-module", ""), attrs.get("data-module-v2", "")]
-        if script_text.strip():
-            raw_values.append(script_text)
-        for raw in raw_values:
-            for value in _json_values(raw):
-                for payload in _iter_v2_map_payloads(value):
-                    data = payload.get("data")
-                    if isinstance(data, str):
-                        data_values = list(_json_values(data))
-                    else:
-                        data_values = [data]
-                    for data_value in data_values:
-                        if not isinstance(data_value, Mapping):
-                            continue
-                        raw_places = data_value.get("places")
-                        if not isinstance(raw_places, list):
-                            continue
-                        for raw_place in raw_places:
-                            place = _normalise_map_place(raw_place)
-                            if place is None:
-                                continue
-                            fingerprint = json.dumps(place, ensure_ascii=False, sort_keys=True, default=str)
-                            if fingerprint in seen:
-                                continue
-                            seen.add(fingerprint)
-                            places.append(place)
+        for place in _module_v2_map_places(attrs, script_text):
+            fingerprint = json.dumps(place, ensure_ascii=False, sort_keys=True, default=str)
+            if fingerprint in seen:
+                continue
+            seen.add(fingerprint)
+            places.append(place)
     return places
 
 

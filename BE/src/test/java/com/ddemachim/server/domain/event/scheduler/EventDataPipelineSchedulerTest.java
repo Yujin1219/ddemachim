@@ -43,6 +43,8 @@ class EventDataPipelineSchedulerTest {
         properties.setTourApiEvents(new Job(Path.of("scripts", "tour.py"), "0 0 6 ? * MON"));
         properties.setSeoulCultureEvents(
                 new Job(Path.of("scripts", "culture.py"), "0 10 6 ? * MON"));
+        properties.setRepeatedBlogTrend(
+                new Job(Path.of("scripts", "repeated-trend.py"), "0 30 4 * * *"));
         scheduler = new EventDataPipelineScheduler(processRunner, properties);
     }
 
@@ -65,11 +67,32 @@ class EventDataPipelineSchedulerTest {
     }
 
     @Test
+    void runRepeatedBlogTrendDelegatesTheConfiguredProcessCommand() {
+        when(processRunner.run(any()))
+                .thenReturn(PipelineProcessResult.succeeded(Duration.ZERO, 0));
+
+        scheduler.runRepeatedBlogTrend();
+
+        ArgumentCaptor<PipelineProcessCommand> commandCaptor =
+                ArgumentCaptor.forClass(PipelineProcessCommand.class);
+        verify(processRunner).run(commandCaptor.capture());
+        PipelineProcessCommand command = commandCaptor.getValue();
+        assertThat(command.jobName()).isEqualTo("repeated-blog-trend");
+        assertThat(command.interpreter()).isEqualTo("python-test");
+        assertThat(command.script()).isEqualTo(Path.of("scripts", "repeated-trend.py"));
+        assertThat(command.workingDirectory()).isEqualTo(Path.of("pipeline"));
+        assertThat(command.timeout()).isEqualTo(Duration.ofSeconds(5));
+        assertThat(command.commandLine())
+                .containsExactly("python-test", "scripts/repeated-trend.py");
+    }
+
+    @Test
     void disabledSchedulerDoesNotStartEitherPipeline() {
         properties.setEnabled(false);
 
         scheduler.runTourApiEvents();
         scheduler.runSeoulCultureEvents();
+        scheduler.runRepeatedBlogTrend();
 
         verifyNoInteractions(processRunner);
     }

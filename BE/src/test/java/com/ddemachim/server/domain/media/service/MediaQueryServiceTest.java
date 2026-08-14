@@ -19,7 +19,6 @@ import com.ddemachim.server.domain.media.repository.MediaContentRepository;
 import com.ddemachim.server.domain.media.exception.InvalidMediaContentTypeException;
 import com.ddemachim.server.domain.media.repository.MediaCreditRepository;
 import com.ddemachim.server.domain.place.entity.Place;
-import com.ddemachim.server.domain.place.repository.PlaceImageRepository;
 import java.math.BigDecimal;
 import java.util.List;
 import org.junit.jupiter.api.Test;
@@ -28,6 +27,7 @@ import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.data.domain.Page;
+import org.springframework.data.domain.PageImpl;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.test.util.ReflectionTestUtils;
 
@@ -42,9 +42,6 @@ class MediaQueryServiceTest {
 
     @Mock
     private FilmingLocationRepository filmingLocationRepository;
-
-    @Mock
-    private PlaceImageRepository placeImageRepository;
 
     @InjectMocks
     private MediaQueryService mediaQueryService;
@@ -107,6 +104,30 @@ class MediaQueryServiceTest {
 
         assertThat(result).isEmpty();
         verify(mediaContentRepository).findFilmingWorks("AUTO_MATCH", "DRAMA", pageable);
+    }
+
+    @Test
+    void getFilmingWorks_usesPlaceImageUrlForRepresentativePlace() {
+        PageRequest pageable = PageRequest.of(0, 12);
+        MediaContent mediaContent = mediaContent(10L, "테스트 작품");
+        Place place = place(970L, "테스트 장소");
+        ReflectionTestUtils.setField(place, "imageUrl", "https://example.com/place.jpg");
+        FilmingLocation filmingLocation = filmingLocation(
+                1L,
+                place,
+                mediaContent,
+                "주인공이 골목 입구에서 다시 만나는 장면",
+                "AUTO_MATCH");
+
+        when(mediaContentRepository.findFilmingWorks("AUTO_MATCH", "DRAMA", pageable))
+                .thenReturn(new PageImpl<>(List.of(mediaContent), pageable, 1));
+        when(filmingLocationRepository.findPublicRowsForWorks(List.of(10L), "AUTO_MATCH", "DRAMA"))
+                .thenReturn(List.of(filmingLocation));
+
+        Page<FilmingWorkSummaryResponse> result = mediaQueryService.getFilmingWorks("drama", pageable);
+
+        assertThat(result.getContent().getFirst().representativePlaces().getFirst().imageUrl())
+                .isEqualTo("https://example.com/place.jpg");
     }
 
     @Test
