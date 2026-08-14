@@ -20,6 +20,8 @@ import java.util.List;
 import java.util.Locale;
 import java.util.concurrent.TimeoutException;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.http.MediaType;
 import org.springframework.http.client.JdkClientHttpRequestFactory;
 import org.springframework.stereotype.Component;
@@ -32,6 +34,7 @@ import tools.jackson.databind.ObjectMapper;
 @Component
 public class OdsayTransitRouteClient implements TransitRouteProviderClient {
 
+    private static final Logger log = LoggerFactory.getLogger(OdsayTransitRouteClient.class);
     private static final String SEARCH_PATH = "/v1/api/searchPubTransPathT";
     private static final int WALK_TRAFFIC_TYPE = 3;
     private static final int SUBWAY_TRAFFIC_TYPE = 1;
@@ -93,6 +96,7 @@ public class OdsayTransitRouteClient implements TransitRouteProviderClient {
                 throw noRoute();
             }
             if (!paths.isArray()) {
+                logFailure("INVALID_RESULT");
                 throw unavailable();
             }
 
@@ -104,6 +108,7 @@ public class OdsayTransitRouteClient implements TransitRouteProviderClient {
         } catch (RouteProviderException exception) {
             throw exception;
         } catch (RuntimeException exception) {
+            logFailure("INVALID_RESULT");
             throw unavailable();
         }
     }
@@ -152,24 +157,30 @@ public class OdsayTransitRouteClient implements TransitRouteProviderClient {
                     .retrieve()
                     .body(String.class);
             if (responseBody == null || responseBody.isBlank()) {
+                logFailure("INVALID_JSON");
                 throw unavailable();
             }
             try {
                 return objectMapper.readTree(responseBody);
             } catch (JacksonException | IllegalArgumentException exception) {
+                logFailure("INVALID_JSON");
                 throw unavailable();
             }
         } catch (RouteProviderException exception) {
             throw exception;
         } catch (RestClientException exception) {
             if (containsTimeout(exception)) {
+                logFailure("TIMEOUT");
                 throw timeout();
             }
+            logFailure("HTTP_ERROR");
             throw unavailable();
         } catch (RuntimeException exception) {
             if (containsTimeout(exception)) {
+                logFailure("TIMEOUT");
                 throw timeout();
             }
+            logFailure("HTTP_ERROR");
             throw unavailable();
         }
     }
@@ -195,6 +206,7 @@ public class OdsayTransitRouteClient implements TransitRouteProviderClient {
             }
         }
         if (fastest == null && invalidCandidateFound) {
+            logFailure("INVALID_RESULT");
             throw unavailable();
         }
         return fastest;
@@ -301,17 +313,25 @@ public class OdsayTransitRouteClient implements TransitRouteProviderClient {
         if (error.isMissingNode() || error.isNull()) {
             return null;
         }
-        if (!error.isObject()) {
+        JsonNode errorDetail = error.isArray() && !error.isEmpty() ? error.get(0) : error;
+        if (errorDetail == null || !errorDetail.isObject()) {
+            logFailure("INVALID_RESULT");
             return unavailable();
         }
-        Integer code = integer(error, "code");
+        Integer code = integer(errorDetail, "code");
         if (code == null) {
+            logFailure("INVALID_RESULT");
             throw unavailable();
         }
-        return switch (code) {
-            case 3, 4, 5, 6, -98, -99 -> noRoute();
-            default -> unavailable();
-        };
+        if (code == 3 || code == 4 || code == 5 || code == 6 || code == -98 || code == -99) {
+            return noRoute();
+        }
+        logFailure("ODSAY_ERROR_" + code);
+        return unavailable();
+    }
+
+    private static void logFailure(String category) {
+        log.warn("provider=odsay operation=transit category={}", category);
     }
 
     private static Integer integer(JsonNode node, String field) {

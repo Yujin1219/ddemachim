@@ -19,13 +19,17 @@ import com.ddemachim.server.global.properties.OdsayProperties;
 import java.net.SocketTimeoutException;
 import java.util.List;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.extension.ExtendWith;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.ValueSource;
+import org.springframework.boot.test.system.CapturedOutput;
+import org.springframework.boot.test.system.OutputCaptureExtension;
 import org.springframework.http.MediaType;
 import org.springframework.test.web.client.MockRestServiceServer;
 import org.springframework.web.client.RestClient;
 import tools.jackson.databind.ObjectMapper;
 
+@ExtendWith(OutputCaptureExtension.class)
 class OdsayTransitRouteClientTest {
 
     private static final Coordinate ORIGIN = new Coordinate(37.5665, 126.9780);
@@ -188,8 +192,32 @@ class OdsayTransitRouteClientTest {
     }
 
     @Test
-    void malformedNumericField_isReportedAsProviderUnavailable() {
-        TestClient testClient = testClient("test-key");
+    void arrayAuthenticationError_logsOnlySafeCategory(CapturedOutput output) {
+        TestClient testClient = testClient("sensitive-test-key");
+        testClient.server().expect(requestTo(containsString("/v1/api/searchPubTransPathT")))
+                .andRespond(withSuccess("""
+                        {"error":[{"code":"500","message":"[ApiKeyAuthFailed] secret-provider-message"}]}
+                        """, MediaType.APPLICATION_JSON));
+
+        assertThatThrownBy(() -> testClient.client().findTransit(ORIGIN, DESTINATION))
+                .isInstanceOf(RouteProviderException.class)
+                .extracting("reason")
+                .isEqualTo(RouteUnavailableReason.PROVIDER_UNAVAILABLE);
+
+        assertThat(output.getAll())
+                .contains("provider=odsay operation=transit category=ODSAY_ERROR_500")
+                .doesNotContain(
+                        "sensitive-test-key",
+                        "37.5665",
+                        "126.978",
+                        "secret-provider-message",
+                        "/v1/api/searchPubTransPathT");
+        testClient.server().verify();
+    }
+
+    @Test
+    void malformedNumericField_isReportedAsProviderUnavailable(CapturedOutput output) {
+        TestClient testClient = testClient("sensitive-test-key");
         testClient.server().expect(requestTo(containsString("/v1/api/searchPubTransPathT")))
                 .andRespond(withSuccess("""
                         {"result":{"path":[{
@@ -202,6 +230,32 @@ class OdsayTransitRouteClientTest {
                 .isInstanceOf(RouteProviderException.class)
                 .extracting("reason")
                 .isEqualTo(RouteUnavailableReason.PROVIDER_UNAVAILABLE);
+
+        assertThat(output.getAll())
+                .contains("provider=odsay operation=transit category=INVALID_RESULT")
+                .doesNotContain("sensitive-test-key", "not-a-number", "37.5665", "126.978");
+        testClient.server().verify();
+    }
+
+    @Test
+    void malformedJson_logsOnlyInvalidJsonCategory(CapturedOutput output) {
+        TestClient testClient = testClient("sensitive-test-key");
+        testClient.server().expect(requestTo(containsString("/v1/api/searchPubTransPathT")))
+                .andRespond(withSuccess("secret-provider-response{", MediaType.APPLICATION_JSON));
+
+        assertThatThrownBy(() -> testClient.client().findTransit(ORIGIN, DESTINATION))
+                .isInstanceOf(RouteProviderException.class)
+                .extracting("reason")
+                .isEqualTo(RouteUnavailableReason.PROVIDER_UNAVAILABLE);
+
+        assertThat(output.getAll())
+                .contains("provider=odsay operation=transit category=INVALID_JSON")
+                .doesNotContain(
+                        "sensitive-test-key",
+                        "secret-provider-response",
+                        "37.5665",
+                        "126.978",
+                        "/v1/api/searchPubTransPathT");
         testClient.server().verify();
     }
 
@@ -224,8 +278,8 @@ class OdsayTransitRouteClientTest {
     }
 
     @Test
-    void upstreamHttpError_isReportedAsProviderUnavailable() {
-        TestClient testClient = testClient("test-key");
+    void upstreamHttpError_isReportedAsProviderUnavailable(CapturedOutput output) {
+        TestClient testClient = testClient("sensitive-test-key");
         testClient.server().expect(requestTo(containsString("/v1/api/searchPubTransPathT")))
                 .andRespond(withServerError());
 
@@ -233,12 +287,16 @@ class OdsayTransitRouteClientTest {
                 .isInstanceOf(RouteProviderException.class)
                 .extracting("reason")
                 .isEqualTo(RouteUnavailableReason.PROVIDER_UNAVAILABLE);
+
+        assertThat(output.getAll())
+                .contains("provider=odsay operation=transit category=HTTP_ERROR")
+                .doesNotContain("sensitive-test-key", "37.5665", "126.978");
         testClient.server().verify();
     }
 
     @Test
-    void timeout_isReportedAsTypedProviderExceptionWithoutUpstreamDetails() {
-        TestClient testClient = testClient("test-key");
+    void timeout_isReportedAsTypedProviderExceptionWithoutUpstreamDetails(CapturedOutput output) {
+        TestClient testClient = testClient("sensitive-test-key");
         testClient.server().expect(requestTo(containsString("/v1/api/searchPubTransPathT")))
                 .andRespond(withException(new SocketTimeoutException("sensitive timeout detail")));
 
@@ -248,6 +306,14 @@ class OdsayTransitRouteClientTest {
                     assertThat(exception.getCause()).isNull();
                     assertThat(exception.getMessage()).doesNotContain("sensitive timeout detail");
                 });
+
+        assertThat(output.getAll())
+                .contains("provider=odsay operation=transit category=TIMEOUT")
+                .doesNotContain(
+                        "sensitive-test-key",
+                        "sensitive timeout detail",
+                        "37.5665",
+                        "126.978");
         testClient.server().verify();
     }
 
