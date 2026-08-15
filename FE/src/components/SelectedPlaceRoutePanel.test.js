@@ -3,7 +3,11 @@ import test from 'node:test';
 import React, { createElement } from 'react';
 import { act, create } from 'react-test-renderer';
 
-import SelectedPlaceRoutePanel from './SelectedPlaceRoutePanel.js';
+import SelectedPlaceRoutePanel, {
+  resolveAvailableRouteMode,
+  selectedPlaceDetailTarget,
+  visibleRouteModes,
+} from './SelectedPlaceRoutePanel.js';
 
 const previousActEnvironment = globalThis.IS_REACT_ACT_ENVIRONMENT;
 globalThis.IS_REACT_ACT_ENVIRONMENT = true;
@@ -72,6 +76,7 @@ async function renderPanel(props = {}) {
       routeStatus: 'ready',
       routeData: { routes: [route('WALK'), route('TRANSIT'), route('TAXI')] },
       activeMode: 'WALK',
+      placeCard: createElement('article', { className: 'test-place-card' }, '서울공예박물관 장소 카드'),
       onModeChange: () => {},
       onRetryLocation: () => {},
       onRetryRoute: () => {},
@@ -82,14 +87,117 @@ async function renderPanel(props = {}) {
   return renderer;
 }
 
-test('renders current location and three route mode buttons in fixed order', async () => {
+test('renders the selected-place card and origin context above route comparison rows', async () => {
   const renderer = await renderPanel();
   const buttons = modeButtons(renderer);
+  const copy = textContent(renderer.toJSON());
 
-  assert.equal(textContent(renderer.toJSON()).includes('현재 위치에서'), true);
-  assert.deepEqual(buttons.map((button) => textContent(button)), ['도보', '대중교통', '택시']);
+  assert.equal(copy.includes('서울공예박물관 장소 카드'), true);
+  assert.equal(copy.includes('광화문 출발'), true);
+  assert.equal(copy.includes('도착서울공예박물관'), false);
+  assert.equal(copy.includes('현재 위치에서'), false);
+  assert.deepEqual(buttons.map((button) => textContent(button)), [
+    '도보14분960m',
+    '대중교통22분환승 1회',
+    '택시10분예상 8,700원가장 빠름',
+  ]);
   assert.deepEqual(buttons.map((button) => button.props['aria-pressed']), [true, false, false]);
   assert.equal(renderer.root.findAll((node) => node.props['aria-live'] === 'polite').length > 0, true);
+});
+
+test('reports manual mode clicks without a duplicate detail action', async () => {
+  const modeChanges = [];
+  const renderer = await renderPanel({
+    onModeChange: (mode) => modeChanges.push(mode),
+  });
+
+  await act(async () => modeButtons(renderer)[1].props.onClick());
+
+  assert.equal(renderer.root.findAll((node) => node.type === 'button' && textContent(node) === '상세').length, 0);
+  assert.deepEqual(modeChanges, ['TRANSIT']);
+});
+
+test('keeps one detail line reserved for both walk and transit modes', async () => {
+  const walk = await renderPanel({ activeMode: 'WALK' });
+  const transit = await renderPanel({ activeMode: 'TRANSIT' });
+  const detailLines = (renderer) => renderer.root.findAll(
+    (node) => String(node.props.className || '').includes('route-detail-meta'),
+  );
+
+  assert.equal(detailLines(walk).length, 1);
+  assert.equal(detailLines(transit).length, 1);
+  assert.equal(detailLines(walk)[0].props['aria-hidden'], true);
+  assert.equal(textContent(detailLines(transit)[0]), '환승 1회 · 도보 360m');
+});
+
+test('filters unavailable transit while keeping available walk and taxi modes', () => {
+  assert.deepEqual(visibleRouteModes('ready', {
+    routes: [
+      { mode: 'WALK', status: 'AVAILABLE' },
+      { mode: 'TRANSIT', status: 'UNAVAILABLE', unavailableReason: 'TIMEOUT' },
+      { mode: 'TAXI', status: 'AVAILABLE' },
+    ],
+  }), ['WALK', 'TAXI']);
+});
+
+test('resolves a disappeared active mode to the first visible mode', () => {
+  assert.equal(resolveAvailableRouteMode('TRANSIT', ['WALK', 'TAXI']), 'WALK');
+});
+
+test('resolves a disappeared transit mode to the first available route by priority', () => {
+  assert.equal(resolveAvailableRouteMode('TRANSIT', ['WALK', 'TAXI'], {
+    routes: [
+      route('WALK', { status: 'UNAVAILABLE', unavailableReason: 'NO_ROUTE' }),
+      route('TRANSIT', { status: 'UNAVAILABLE', unavailableReason: 'TIMEOUT' }),
+      route('TAXI'),
+    ],
+  }), 'TAXI');
+});
+
+test('keeps all route mode tabs visible while routes are loading', () => {
+  assert.deepEqual(visibleRouteModes('loading', null), ['WALK', 'TRANSIT', 'TAXI']);
+});
+
+test('hides only transit for every transit unavailability reason', () => {
+  for (const unavailableReason of ['NO_ROUTE', 'TIMEOUT', 'PROVIDER_UNAVAILABLE', 'NOT_CONFIGURED']) {
+    assert.deepEqual(
+      visibleRouteModes('ready', {
+        routes: [
+          { mode: 'WALK', status: 'UNAVAILABLE', unavailableReason: 'NO_ROUTE' },
+          { mode: 'TRANSIT', status: 'UNAVAILABLE', unavailableReason },
+          { mode: 'TAXI', status: 'UNAVAILABLE', unavailableReason: 'TIMEOUT' },
+        ],
+      }),
+      ['WALK', 'TAXI'],
+      unavailableReason,
+    );
+  }
+});
+
+test('shows calculation status on every mode tab while routes are loading', async () => {
+  const renderer = await renderPanel({ routeStatus: 'loading', routeData: null });
+
+  assert.deepEqual(
+    modeButtons(renderer).map((button) => textContent(button)),
+    ['도보계산 중', '대중교통계산 중', '택시계산 중'],
+  );
+});
+
+test('shows per-mode availability in a partial route response', async () => {
+  const renderer = await renderPanel({
+    routeData: {
+      routes: [
+        route('WALK'),
+        route('TRANSIT', { status: 'UNAVAILABLE', unavailableReason: 'NO_ROUTE' }),
+        route('TAXI', { status: 'UNAVAILABLE', unavailableReason: 'NOT_CONFIGURED' }),
+      ],
+    },
+  });
+
+  assert.deepEqual(
+    modeButtons(renderer).map((button) => textContent(button)),
+    ['도보14분960m가장 빠름', '택시이용 불가'],
+  );
 });
 
 test('shows location and route state copy with a retry action', async () => {
@@ -97,7 +205,10 @@ test('shows location and route state copy with a retry action', async () => {
   assert.equal(textContent(locating.toJSON()).includes('현재 위치 확인 중…'), true);
 
   const denied = await renderPanel({ locationStatus: 'error', locationErrorCode: 'DENIED', routeStatus: 'idle' });
-  assert.equal(textContent(denied.toJSON()).includes('현재 위치를 확인하지 못했어요'), true);
+  assert.equal(
+    textContent(denied.toJSON()).includes('위치 권한이 꺼져 있어요. 브라우저 설정에서 허용한 뒤 다시 시도해주세요.'),
+    true,
+  );
   assert.equal(denied.root.findAll((node) => node.type === 'button' && textContent(node) === '다시 시도').length, 1);
 
   const loading = await renderPanel({ locationStatus: 'ready', routeStatus: 'loading' });
@@ -107,7 +218,20 @@ test('shows location and route state copy with a retry action', async () => {
   assert.equal(textContent(nearby.toJSON()).includes('이미 목적지 근처예요'), true);
 });
 
-test('keeps available tabs usable when transit is unavailable', async () => {
+test('uses the typed location failure copy for unsupported, timeout, and unavailable errors', async () => {
+  const cases = [
+    ['UNSUPPORTED', '이 브라우저에서는 현재 위치를 사용할 수 없어요.'],
+    ['TIMEOUT', '현재 위치 확인이 지연되고 있어요. 다시 시도해주세요.'],
+    ['UNAVAILABLE', '현재 위치를 확인하지 못했어요. 다시 시도해주세요.'],
+  ];
+
+  for (const [locationErrorCode, expectedCopy] of cases) {
+    const renderer = await renderPanel({ locationStatus: 'error', locationErrorCode, routeStatus: 'idle' });
+    assert.equal(textContent(renderer.toJSON()).includes(expectedCopy), true, locationErrorCode);
+  }
+});
+
+test('hides stale transit detail when the active transit route disappears', async () => {
   const renderer = await renderPanel({
     activeMode: 'TRANSIT',
     routeData: {
@@ -119,8 +243,117 @@ test('keeps available tabs usable when transit is unavailable', async () => {
     },
   });
 
-  assert.equal(textContent(renderer.toJSON()).includes('대중교통 경로 없음'), true);
-  assert.deepEqual(modeButtons(renderer).map((button) => button.props['aria-pressed']), [false, true, false]);
+  assert.equal(textContent(renderer.toJSON()).includes('대중교통 경로를 찾지 못했어요.'), false);
+  assert.equal(textContent(renderer.toJSON()).includes('도보14분'), true);
+  assert.deepEqual(modeButtons(renderer).map((button) => button.props['aria-pressed']), [true, false]);
+});
+
+test('notifies the controlled parent when the active mode is no longer visible', async () => {
+  const modeChanges = [];
+  await renderPanel({
+    activeMode: 'TRANSIT',
+    onResolvedModeChange: (mode) => modeChanges.push(mode),
+    routeData: {
+      routes: [
+        route('WALK'),
+        route('TRANSIT', { status: 'UNAVAILABLE', unavailableReason: 'NO_ROUTE' }),
+        route('TAXI'),
+      ],
+    },
+  });
+
+  assert.deepEqual(modeChanges, ['WALK']);
+});
+
+test('renders the first available route when transit disappears and walk is unavailable', async () => {
+  const modeChanges = [];
+  const renderer = await renderPanel({
+    activeMode: 'TRANSIT',
+    onResolvedModeChange: (mode) => modeChanges.push(mode),
+    routeData: {
+      routes: [
+        route('WALK', { status: 'UNAVAILABLE', unavailableReason: 'NO_ROUTE' }),
+        route('TRANSIT', { status: 'UNAVAILABLE', unavailableReason: 'TIMEOUT' }),
+        route('TAXI'),
+      ],
+    },
+  });
+
+  assert.deepEqual(modeButtons(renderer).map((button) => button.props['aria-pressed']), [false, true]);
+  assert.equal(textContent(renderer.toJSON()).includes('예상 8,700원'), true);
+  assert.deepEqual(modeChanges, ['TAXI']);
+});
+
+test('shows a retry for temporary provider failure without hiding successful modes', async () => {
+  let retryCount = 0;
+  const renderer = await renderPanel({
+    activeMode: 'TAXI',
+    onRetryRoute: () => { retryCount += 1; },
+    routeData: {
+      routes: [
+        route('WALK'),
+        route('TRANSIT', { status: 'UNAVAILABLE', unavailableReason: 'TIMEOUT' }),
+        route('TAXI', { status: 'UNAVAILABLE', unavailableReason: 'PROVIDER_UNAVAILABLE' }),
+      ],
+    },
+  });
+  const copy = textContent(renderer.toJSON());
+  const retry = renderer.root.find(
+    (node) => node.type === 'button' && textContent(node) === '다시 시도',
+  );
+
+  assert.equal(copy.includes('택시 정보를 잠시 불러오지 못했어요.'), true);
+  assert.equal(textContent(modeButtons(renderer)[0]), '도보14분960m가장 빠름');
+  assert.equal(textContent(modeButtons(renderer)[1]), '택시일시 오류');
+  await act(async () => retry.props.onClick());
+  assert.equal(retryCount, 1);
+});
+
+test('shows a retry for an explicitly selected walk temporary provider failure', async () => {
+  let retryCount = 0;
+  const renderer = await renderPanel({
+    activeMode: 'WALK',
+    onRetryRoute: () => { retryCount += 1; },
+    routeData: {
+      routes: [
+        route('WALK', { status: 'UNAVAILABLE', unavailableReason: 'PROVIDER_UNAVAILABLE' }),
+        route('TRANSIT', { status: 'UNAVAILABLE', unavailableReason: 'TIMEOUT' }),
+        route('TAXI'),
+      ],
+    },
+  });
+  const copy = textContent(renderer.toJSON());
+  const retry = renderer.root.find(
+    (node) => node.type === 'button' && textContent(node) === '다시 시도',
+  );
+
+  assert.equal(copy.includes('도보 정보를 잠시 불러오지 못했어요.'), true);
+  assert.deepEqual(modeButtons(renderer).map((button) => textContent(button)), ['도보일시 오류', '택시10분예상 8,700원가장 빠름']);
+  await act(async () => retry.props.onClick());
+  assert.equal(retryCount, 1);
+});
+
+test('keeps internal selected-place detail navigation separate from Kakao cards', () => {
+  assert.deepEqual(selectedPlaceDetailTarget({ id: 'place-1', externalSource: 'INTERNAL' }), {
+    screen: 'place',
+    id: 'place-1',
+  });
+  assert.equal(selectedPlaceDetailTarget({ id: 'kakao:place-1', externalSource: 'KAKAO' }), null);
+});
+
+test('explains when an active route mode is not configured', async () => {
+  const renderer = await renderPanel({
+    activeMode: 'TAXI',
+    routeData: {
+      routes: [
+        route('WALK'),
+        route('TRANSIT'),
+        route('TAXI', { status: 'UNAVAILABLE', unavailableReason: 'NOT_CONFIGURED' }),
+      ],
+    },
+  });
+
+  assert.equal(textContent(renderer.toJSON()).includes('택시는 지금 이용할 수 없어요.'), true);
 });
 
 test('renders taxi fare, note, and Kakao T anchor only for active taxi mode', async () => {
@@ -136,4 +369,47 @@ test('renders taxi fare, note, and Kakao T anchor only for active taxi mode', as
 
   const walk = await renderPanel({ activeMode: 'WALK' });
   assert.equal(walk.root.findAll((node) => node.type === 'a' && textContent(node) === '카카오 T로 호출').length, 0);
+});
+
+test('does not repeat route summary metrics below the selected comparison row', async () => {
+  const renderer = await renderPanel({ activeMode: 'TAXI' });
+  const copy = textContent(renderer.toJSON());
+
+  assert.equal(copy.match(/10분/g)?.length, 1);
+  assert.equal(copy.match(/예상 8,700원/g)?.length, 1);
+});
+
+test('does not fabricate transit transfer or walking metrics from null-like values', async () => {
+  const renderer = await renderPanel({
+    activeMode: 'TRANSIT',
+    routeData: {
+      routes: [
+        route('WALK'),
+        route('TRANSIT', {
+          transferCount: null,
+          walkDistanceMeters: '',
+        }),
+        route('TAXI'),
+      ],
+    },
+  });
+  const copy = textContent(renderer.toJSON());
+
+  assert.equal(copy.includes('환승 0회'), false);
+  assert.equal(copy.includes('도보 0m'), false);
+});
+
+test('shows an invalid-destination message without disabling other panel controls', async () => {
+  const renderer = await renderPanel({
+    selectedPlace: { ...selectedPlace, latitude: null, longitude: '' },
+    location: null,
+    locationStatus: 'idle',
+    routeStatus: 'idle',
+    routeData: null,
+  });
+  const buttons = modeButtons(renderer);
+
+  assert.equal(textContent(renderer.toJSON()).includes('이 장소는 경로를 계산할 수 없어요'), true);
+  assert.equal(buttons.length, 3);
+  assert.deepEqual(buttons.map((button) => button.props.disabled), [undefined, undefined, undefined]);
 });

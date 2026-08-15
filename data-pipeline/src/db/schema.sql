@@ -27,6 +27,9 @@ CREATE TABLE IF NOT EXISTS place (
     phone               varchar(50),
     website             text,
     description         text,
+    image_url           text,
+    image_source        varchar(30),
+    image_attribution   text,
     -- 아래 4개는 구조화 파싱이 어려운 원문을 그대로 보존하는 용도(예: 서울시 관광명소의
     -- 운영시간/휴무일 자유서식 텍스트). 요일별 구조화 값은 place_operating_hours에 별도로 둔다.
     operating_hours_raw text,
@@ -69,17 +72,6 @@ CREATE TABLE IF NOT EXISTS place_operating_hours (
 
 CREATE INDEX IF NOT EXISTS idx_place_operating_hours_place_id ON place_operating_hours (place_id);
 
--- 장소 이미지
-CREATE TABLE IF NOT EXISTS place_image (
-    id              bigserial PRIMARY KEY,
-    place_id        bigint NOT NULL REFERENCES place(id) ON DELETE CASCADE,
-    source          varchar(30) NOT NULL,
-    source_url      text NOT NULL,
-    attribution     text
-);
-
-CREATE INDEX IF NOT EXISTS idx_place_image_place_id ON place_image (place_id);
-
 -- 로그인 회원
 CREATE TABLE IF NOT EXISTS member (
     member_id       bigserial PRIMARY KEY,
@@ -89,17 +81,56 @@ CREATE TABLE IF NOT EXISTS member (
     role            varchar(20) NOT NULL
 );
 
+-- 로그인 회원이 외부 검색 제공자에서 직접 담은 장소
+CREATE TABLE IF NOT EXISTS user_place (
+    id                  bigserial PRIMARY KEY,
+    member_id           bigint NOT NULL REFERENCES member(member_id) ON DELETE CASCADE,
+    provider            varchar(20) NOT NULL,
+    provider_place_id   varchar(100) NOT NULL,
+    name                varchar(200) NOT NULL,
+    category_name       varchar(300),
+    category_group_code varchar(20),
+    road_address        text,
+    lot_address         text,
+    longitude           double precision NOT NULL,
+    latitude            double precision NOT NULL,
+    phone               varchar(50),
+    place_url           text NOT NULL,
+    created_at          timestamptz NOT NULL DEFAULT now(),
+    CONSTRAINT chk_user_place_longitude
+        CHECK (longitude BETWEEN -180.0 AND 180.0),
+    CONSTRAINT chk_user_place_latitude
+        CHECK (latitude BETWEEN -90.0 AND 90.0),
+    CONSTRAINT uq_user_place_member_provider_place
+        UNIQUE (member_id, provider, provider_place_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_user_place_member_id
+    ON user_place (member_id);
+
 -- 로그인 회원별 코스 장바구니의 장소 항목
 CREATE TABLE IF NOT EXISTS course_basket_item (
     id              bigserial PRIMARY KEY,
     member_id       bigint NOT NULL REFERENCES member(member_id) ON DELETE CASCADE,
-    place_id        bigint NOT NULL REFERENCES place(id) ON DELETE CASCADE,
+    place_id        bigint REFERENCES place(id) ON DELETE CASCADE,
+    user_place_id   bigint REFERENCES user_place(id) ON DELETE CASCADE,
     created_at      timestamptz NOT NULL DEFAULT now(),
-    UNIQUE (member_id, place_id)
+    CONSTRAINT chk_course_basket_item_exactly_one_place
+        CHECK (
+            (place_id IS NOT NULL AND user_place_id IS NULL)
+            OR (place_id IS NULL AND user_place_id IS NOT NULL)
+        ),
+    CONSTRAINT uq_course_basket_item_member_place
+        UNIQUE (member_id, place_id),
+    CONSTRAINT uq_course_basket_item_member_user_place
+        UNIQUE (member_id, user_place_id)
 );
 
 CREATE INDEX IF NOT EXISTS idx_course_basket_item_member_id
     ON course_basket_item (member_id);
+
+CREATE INDEX IF NOT EXISTS idx_course_basket_item_user_place_id
+    ON course_basket_item (user_place_id);
 
 -- 전시/축제/행사/팝업 (기간이 있는 이벤트)
 CREATE TABLE IF NOT EXISTS event (

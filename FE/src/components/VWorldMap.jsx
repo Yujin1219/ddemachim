@@ -14,16 +14,19 @@ import { fromLonLat, transformExtent } from 'ol/proj.js'
 import { Fill, Stroke, Style } from 'ol/style.js'
 import 'ol/ol.css'
 import '../vworld-map.css'
-import { routeLegFeatureSpecs } from '../utils/routeGeometry.js'
+import { indexCongestionAreasByCode } from '../utils/congestionAreaIndex.js'
+import { resolveMapClusterTone, resolveMapMarkerTone } from '../utils/mapHomeFilters.js'
+import { routeFitPointCoordinates, routeLegFeatureSpecs } from '../utils/routeGeometry.js'
+import { resolveRouteFitDuration } from '../utils/routeComparison.js'
 
 const DEFAULT_CENTER = [126.978, 37.5665]
 const CLUSTER_ZOOM_MAX = 14.5
 const CLUSTER_PIXEL_RADIUS = 44
 const CONGESTION_AREA_COLORS = {
-  여유: { fill: 'rgba(22, 163, 74, 0.18)', stroke: 'rgba(22, 163, 74, 0.58)' },
-  보통: { fill: 'rgba(8, 145, 178, 0.17)', stroke: 'rgba(8, 145, 178, 0.58)' },
-  '약간 붐빔': { fill: 'rgba(234, 88, 12, 0.19)', stroke: 'rgba(234, 88, 12, 0.62)' },
-  붐빔: { fill: 'rgba(220, 38, 38, 0.21)', stroke: 'rgba(220, 38, 38, 0.66)' },
+  여유: { fill: 'rgba(34, 197, 94, 0.48)', stroke: 'rgba(21, 128, 61, 0.96)' },
+  보통: { fill: 'rgba(59, 130, 246, 0.44)', stroke: 'rgba(29, 78, 216, 0.96)' },
+  '약간 붐빔': { fill: 'rgba(249, 115, 22, 0.48)', stroke: 'rgba(194, 65, 12, 0.96)' },
+  붐빔: { fill: 'rgba(239, 68, 68, 0.52)', stroke: 'rgba(185, 28, 28, 0.98)' },
   정보없음: { fill: 'rgba(51, 65, 85, 0.10)', stroke: 'rgba(51, 65, 85, 0.34)' },
 }
 
@@ -43,32 +46,6 @@ function normalizeCenter(center) {
     : DEFAULT_CENTER
 }
 
-function hasPlaceTag(place, tagCode) {
-  const normalize = (value) => (typeof value === 'string' ? value.trim().toUpperCase() : '')
-  const tags = Array.isArray(place.tags)
-    ? place.tags.map((tag) => normalize(typeof tag === 'string' ? tag : tag?.code))
-    : [normalize(place.tags)]
-  return tags.includes(normalize(tagCode))
-}
-
-function placeMarkerTone(place) {
-  if (place.externalSource === 'KAKAO') return 'search'
-  if (hasPlaceTag(place, 'FILMING_LOCATION')) return 'filming'
-
-  const categoryCode = typeof place.categoryCode === 'string' ? place.categoryCode.trim().toUpperCase() : ''
-  if (categoryCode === 'RESTAURANT') return 'restaurant'
-  if (categoryCode === 'CAFE' || categoryCode === 'DESSERT') return 'cafe-dessert'
-  if (categoryCode === 'ATTRACTION') return 'attraction'
-  if (categoryCode === 'CULTURE') return 'culture'
-  if (categoryCode === 'EXHIBITION') return 'exhibition'
-  if (categoryCode === 'SHOPPING') return 'shopping'
-  if (categoryCode === 'POPUP') return 'popup'
-  if (categoryCode === 'PARK') return 'park'
-  if (categoryCode === 'WALK') return 'walk'
-  if (categoryCode === 'PHOTO_SPOT') return 'photo-spot'
-  return 'default'
-}
-
 function markerSizeClass(map) {
   const zoomLevel = map.getView().getZoom() ?? 15
   if (zoomLevel >= 17) return 'is-zoom-near'
@@ -83,7 +60,7 @@ function congestionAreaStyle(feature) {
     fill: new Fill({ color: colors.fill }),
     stroke: new Stroke({
       color: colors.stroke,
-      width: level === '정보없음' ? 1 : 1.4,
+      width: level === '정보없음' ? 1 : 2,
     }),
   })
 }
@@ -135,12 +112,14 @@ export default function VWorldMap({
   congestionAreaKey = '',
   congestionData = null,
   showCongestionAreas = true,
+  onMapClick = null,
   onPlaceClick = null,
   onCongestionAreaClick = null,
   onPlacesChange = null,
   routeLegs = [],
   routeMode = 'WALK',
   routeFitKey = '',
+  routeFitCoordinates = [],
 }) {
   const targetRef = useRef(null)
   const mapRef = useRef(null)
@@ -158,6 +137,7 @@ export default function VWorldMap({
   const loadPlacesRef = useRef(loadPlacesInBounds)
   const placeMarkerFilterRef = useRef(placeMarkerFilter)
   const placeMarkerLabelRef = useRef(placeMarkerLabel)
+  const onMapClickRef = useRef(onMapClick)
   const onPlaceClickRef = useRef(onPlaceClick)
   const onCongestionAreaClickRef = useRef(onCongestionAreaClick)
   const onPlacesChangeRef = useRef(onPlacesChange)
@@ -172,11 +152,12 @@ export default function VWorldMap({
     loadPlacesRef.current = loadPlacesInBounds
     placeMarkerFilterRef.current = placeMarkerFilter
     placeMarkerLabelRef.current = placeMarkerLabel
+    onMapClickRef.current = onMapClick
     onPlaceClickRef.current = onPlaceClick
     onCongestionAreaClickRef.current = onCongestionAreaClick
     onPlacesChangeRef.current = onPlacesChange
     congestionDataRef.current = congestionData
-  }, [loadPlacesInBounds, placeMarkerFilter, placeMarkerLabel, onPlaceClick, onCongestionAreaClick, onPlacesChange, congestionData])
+  }, [loadPlacesInBounds, placeMarkerFilter, placeMarkerLabel, onMapClick, onPlaceClick, onCongestionAreaClick, onPlacesChange, congestionData])
 
   function applyCongestionData(data) {
     const layer = congestionAreaLayerRef.current
@@ -185,17 +166,11 @@ export default function VWorldMap({
     const response = resolveCongestionResponse(data)
     const vectorSource = layer.getSource()
     const features = vectorSource.getFeatures()
-    const areasByCode = new Map(
-      (Array.isArray(response?.areas) ? response.areas : [])
-        .map((area) => [normalizeCongestionAreaCode(area?.areaCode), area])
-        .filter(([areaCode]) => areaCode),
-    )
-    let matchedCount = 0
+    const areasByCode = indexCongestionAreasByCode(response?.areas)
 
     features.forEach((feature) => {
       const staticAreaCode = feature.get('areaCode') || ''
       const area = areasByCode.get(normalizeCongestionAreaCode(staticAreaCode))
-      if (area) matchedCount += 1
       feature.setProperties({
         areaCode: area?.areaCode || staticAreaCode,
         areaName: area?.areaName || feature.get('areaName') || '혼잡도 영역',
@@ -211,14 +186,6 @@ export default function VWorldMap({
       feature.changed()
     })
 
-    if (import.meta.env.DEV) {
-      console.info('[jongno-congestion] applied to map', {
-        featureCount: features.length,
-        matchedCount,
-        dataCount: areasByCode.size,
-        stale: response ? Boolean(response.stale) : true,
-      })
-    }
     vectorSource.changed()
     layer.changed()
   }
@@ -239,7 +206,7 @@ export default function VWorldMap({
     if (!coordinate) return
 
     const marker = document.createElement('button')
-    marker.className = `vworld-place-marker is-${placeMarkerTone(place)} ${markerSizeClass(map)}`
+    marker.className = `vworld-place-marker is-${resolveMapMarkerTone(place)} ${markerSizeClass(map)}`
     marker.type = 'button'
     const markerLabel = placeMarkerLabelRef.current?.(place)
     const hasMarkerLabel = markerLabel !== undefined && markerLabel !== null && markerLabel !== ''
@@ -306,7 +273,7 @@ export default function VWorldMap({
 
   function addClusterOverlay(map, cluster) {
     const marker = document.createElement('button')
-    marker.className = `vworld-place-cluster is-${placeMarkerTone(cluster.places[0])} ${markerSizeClass(map)}`
+    marker.className = `vworld-place-cluster is-${resolveMapClusterTone(cluster.places)} ${markerSizeClass(map)}`
     marker.type = 'button'
     marker.setAttribute('aria-label', `${cluster.places.length}개 장소 모아보기`)
     marker.title = `${cluster.places.length}개 장소`
@@ -449,6 +416,7 @@ export default function VWorldMap({
         },
       )
       onCongestionAreaClickRef.current?.(feature ? congestionAreaFromFeature(feature) : null)
+      onMapClickRef.current?.()
     }
     if (interactive) map.on('singleclick', handleCongestionAreaClick)
 
@@ -532,11 +500,11 @@ export default function VWorldMap({
     }
     if (fittedRouteKeyRef.current === routeFitKey) return
 
-    const features = layer.getSource().getFeatures()
-    if (!features.length) return
-    const extents = features
+    const extents = layer.getSource().getFeatures()
       .map((feature) => feature.getGeometry()?.getExtent())
       .filter((extent) => Array.isArray(extent) && extent.length === 4)
+    const fitPoints = routeFitPointCoordinates(routeFitCoordinates, fromLonLat)
+    if (fitPoints.length) extents.push(boundingExtent(fitPoints))
     if (!extents.length) return
     const extent = extents.reduce((combined, current) => [
       Math.min(combined[0], current[0]),
@@ -546,11 +514,11 @@ export default function VWorldMap({
     ], extents[0])
     fittedRouteKeyRef.current = routeFitKey
     map.getView().fit(extent, {
-      padding: [120, 36, 380, 36],
+      padding: [112, 28, 420, 28],
       maxZoom: 17,
-      duration: 220,
+      duration: resolveRouteFitDuration(),
     })
-  }, [routeFitKey, routeLegs])
+  }, [routeFitCoordinates, routeFitKey, routeLegs])
 
   useEffect(() => {
     const layer = congestionAreaLayerRef.current

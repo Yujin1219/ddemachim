@@ -83,7 +83,7 @@ PostgreSQL + PostGIS(`geometry(Point, 4326)`). 스키마는 [`src/db/schema.sql`
 | `place` | 핵심 장소 마스터(식당/카페/관광지 등 상시 존재하는 공간) |
 | `place_source` | place ↔ 원본 소스 매핑, `UNIQUE(source, source_id)`로 동일 소스 재수집 시 idempotent 처리 |
 | `place_category` | 카테고리 마스터(RESTAURANT/CAFE/DESSERT/ATTRACTION/CULTURE/SHOPPING/ETC 등) |
-| `place_image` | 장소 이미지(다건) |
+| `place.image_url`, `place.image_source`, `place.image_attribution` | 장소 대표 이미지(장소당 최대 1장) |
 | `place_operating_hours` | 요일별 구조화된 영업시간(모호한 원문은 구조화 안 하고 `place.operating_hours_raw`에만 보존) |
 | `event` | 기간이 있는 행사/축제/전시(place와 분리) — TourAPI 15번, 서울시 문화행사 정보 |
 | `media_content` | TMDB 작품 메타데이터 |
@@ -112,8 +112,8 @@ PostgreSQL + PostGIS(`geometry(Point, 4326)`). 스키마는 [`src/db/schema.sql`
   - category별: RESTAURANT 5,379 / ETC 1,831 / CAFE 844 / ATTRACTION 171 / DESSERT 102 / CULTURE 53 / SHOPPING 37
   - tag별: FILMING_LOCATION 420
 - **좌표 없는 place: 0건** (좌표 없으면 애초에 place를 안 만들어서)
-- 운영시간 없는 place: 8,277건 / 이미지 없는 place: 7,987건 / 전화번호 없는 place: 2,059건
-- `place_image`: 1,768건, `place_operating_hours`: 980행
+- 운영시간 없는 place: 8,277건 / 대표 이미지(`image_url`) 없는 place: 7,987건 / 전화번호 없는 place: 2,059건
+- 대표 이미지: `place.image_url`에 URL을, `place.image_source`와 `place.image_attribution`에 출처 정보를 함께 저장하며 장소당 최대 1장만 보존한다. `place_operating_hours`: 980행
 - **촬영지-작품 연결(`filming_location`)**: 765건 — AUTO_MATCH 717 / REVIEW_REQUIRED 48(전부 artist, 매칭 대상 아님)
 - **`media_content`**: 318건(tv 311 / movie 7)
 - **`person`**: 2,545명, **`media_credit`**: CAST 4,765 / DIRECTOR 319

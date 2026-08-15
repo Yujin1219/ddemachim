@@ -38,11 +38,7 @@ public interface PlaceRepository extends JpaRepository<Place, Long> {
                     order by
                         case
                             when :tag = 'FILMING_LOCATION'
-                                and exists (
-                                    select 1
-                                    from place_image pi
-                                    where pi.place_id = p.id
-                                )
+                                and p.image_url is not null
                             then 0
                             else 1
                         end,

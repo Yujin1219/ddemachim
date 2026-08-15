@@ -73,4 +73,3 @@
 - [ ] Run the Impeccable detector once over changed UI files.
 - [ ] Start Vite on an available port and inspect the course tab at mobile and desktop viewports.
 - [ ] Confirm `+` opens `course-conditions`, tabs switch content, and public cards scroll horizontally.
-

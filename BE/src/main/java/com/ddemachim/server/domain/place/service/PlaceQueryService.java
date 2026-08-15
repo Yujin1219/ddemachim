@@ -1,19 +1,22 @@
 package com.ddemachim.server.domain.place.service;
 
 import com.ddemachim.server.domain.place.dto.PlaceDetailResponse;
-import com.ddemachim.server.domain.place.dto.PlaceImageResponse;
 import com.ddemachim.server.domain.place.dto.PlaceMapResponse;
 import com.ddemachim.server.domain.place.dto.PlaceOperatingHoursResponse;
 import com.ddemachim.server.domain.place.dto.PlaceSummaryResponse;
+import com.ddemachim.server.domain.place.dto.PlaceTrendResponse;
+import com.ddemachim.server.domain.place.dto.PlaceTrendSummaryResponse;
 import com.ddemachim.server.domain.place.entity.Place;
-import com.ddemachim.server.domain.place.entity.PlaceImage;
+import com.ddemachim.server.domain.place.entity.PlaceTrendSnapshot;
+import com.ddemachim.server.domain.place.enums.PlaceTrendStatus;
 import com.ddemachim.server.domain.place.exception.InvalidFilmingContentTypeException;
 import com.ddemachim.server.domain.place.exception.InvalidPlaceBoundsException;
+import com.ddemachim.server.domain.place.exception.InvalidPlaceTrendLimitException;
 import com.ddemachim.server.domain.place.exception.PlaceNotFoundException;
-import com.ddemachim.server.domain.place.repository.PlaceImageRepository;
 import com.ddemachim.server.domain.place.repository.PlaceFilmingContentTypeProjection;
 import com.ddemachim.server.domain.place.repository.PlaceOperatingHoursRepository;
 import com.ddemachim.server.domain.place.repository.PlaceRepository;
+import com.ddemachim.server.domain.place.repository.PlaceTrendSnapshotRepository;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Locale;
@@ -33,12 +36,17 @@ public class PlaceQueryService {
     private static final int DEFAULT_MAP_LIMIT = 300;
     private static final int MIN_MAP_LIMIT = 1;
     private static final int MAX_MAP_LIMIT = 500;
+    private static final int DEFAULT_TREND_LIMIT = 6;
+    private static final int MIN_TREND_LIMIT = 1;
+    private static final int MAX_TREND_LIMIT = 20;
     private static final Set<String> FILMING_CONTENT_TYPES = Set.of("DRAMA", "VARIETY", "MOVIE");
     private static final List<String> FILMING_CONTENT_TYPE_ORDER = List.of("DRAMA", "VARIETY", "MOVIE");
+    private static final Set<PlaceTrendStatus> VISIBLE_TREND_STATUSES = Set.of(
+            PlaceTrendStatus.TRENDING, PlaceTrendStatus.WATCH);
 
     private final PlaceRepository placeRepository;
-    private final PlaceImageRepository placeImageRepository;
     private final PlaceOperatingHoursRepository placeOperatingHoursRepository;
+    private final PlaceTrendSnapshotRepository placeTrendSnapshotRepository;
 
     public Page<PlaceSummaryResponse> search(
             String category,
@@ -54,14 +62,12 @@ public class PlaceQueryService {
                 safeCategory, district, safeTag, safeFilmingContentType, keyword, pageable);
 
         List<Long> placeIds = places.getContent().stream().map(Place::getId).toList();
-        Map<Long, String> thumbnailByPlaceId = firstImageUrlByPlaceId(placeIds);
         Map<Long, List<String>> filmingContentTypesByPlaceId = filmingContentTypesByPlaceId(placeIds);
 
         return places.map(
                 place -> PlaceSummaryResponse.of(
                         place,
-                        filmingContentTypesByPlaceId.getOrDefault(place.getId(), List.of()),
-                        thumbnailByPlaceId.get(place.getId())));
+                        filmingContentTypesByPlaceId.getOrDefault(place.getId(), List.of())));
     }
 
     public PlaceDetailResponse getDetail(Long id) {
@@ -72,10 +78,21 @@ public class PlaceQueryService {
                         .map(PlaceOperatingHoursResponse::from)
                         .toList();
 
-        List<PlaceImageResponse> images =
-                placeImageRepository.findByPlaceId(id).stream().map(PlaceImageResponse::from).toList();
+        PlaceTrendResponse trend = findVisibleTrend(id);
+        return PlaceDetailResponse.of(place, operatingHours, trend);
+    }
 
-        return PlaceDetailResponse.of(place, operatingHours, images);
+    public List<PlaceTrendSummaryResponse> getTrends(Integer limit) {
+        int safeLimit = normalizeTrendLimit(limit);
+        List<PlaceTrendSnapshot> snapshots = placeTrendSnapshotRepository.findLatestVisibleSnapshots(
+                org.springframework.data.domain.PageRequest.of(0, safeLimit));
+
+        return snapshots.stream()
+                .filter(snapshot -> isVisibleTrendStatus(snapshot.getStatus()))
+                .map(snapshot -> PlaceTrendSummaryResponse.of(
+                        snapshot.getPlace(),
+                        PlaceTrendResponse.from(snapshot)))
+                .toList();
     }
 
     public List<PlaceMapResponse> getPlacesInBounds(
@@ -88,18 +105,6 @@ public class PlaceQueryService {
         return placeRepository.findInBounds(safeCategory, safeTag, minLat, maxLat, minLng, maxLng, safeLimit).stream()
                 .map(PlaceMapResponse::from)
                 .toList();
-    }
-
-    private Map<Long, String> firstImageUrlByPlaceId(List<Long> placeIds) {
-        if (placeIds.isEmpty()) {
-            return Map.of();
-        }
-
-        Map<Long, String> result = new HashMap<>();
-        for (PlaceImage image : placeImageRepository.findByPlaceIdInOrderByPlaceIdAscIdAsc(placeIds)) {
-            result.putIfAbsent(image.getPlace().getId(), image.getSourceUrl());
-        }
-        return result;
     }
 
     private Map<Long, List<String>> filmingContentTypesByPlaceId(List<Long> placeIds) {
@@ -116,6 +121,17 @@ public class PlaceQueryService {
         result.values().forEach(types -> types.sort(
                 java.util.Comparator.comparingInt(FILMING_CONTENT_TYPE_ORDER::indexOf)));
         return result;
+    }
+
+    private PlaceTrendResponse findVisibleTrend(Long placeId) {
+        return placeTrendSnapshotRepository.findFirstByPlaceIdOrderBySnapshotDateDesc(placeId)
+                .filter(snapshot -> isVisibleTrendStatus(snapshot.getStatus()))
+                .map(PlaceTrendResponse::from)
+                .orElse(null);
+    }
+
+    private boolean isVisibleTrendStatus(PlaceTrendStatus status) {
+        return VISIBLE_TREND_STATUSES.contains(status);
     }
 
     private void validateBounds(Double minLat, Double maxLat, Double minLng, Double maxLng) {
@@ -143,6 +159,14 @@ public class PlaceQueryService {
             return DEFAULT_MAP_LIMIT;
         }
         return Math.max(MIN_MAP_LIMIT, Math.min(MAX_MAP_LIMIT, limit));
+    }
+
+    private int normalizeTrendLimit(Integer limit) {
+        int safeLimit = limit == null ? DEFAULT_TREND_LIMIT : limit;
+        if (safeLimit < MIN_TREND_LIMIT || safeLimit > MAX_TREND_LIMIT) {
+            throw new InvalidPlaceTrendLimitException();
+        }
+        return safeLimit;
     }
 
     private String normalizeFilter(String value) {

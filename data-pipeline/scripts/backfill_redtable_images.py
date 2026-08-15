@@ -28,7 +28,7 @@ def main() -> int:
         jongno_records = [r for r in records if "종로구" in (r.get("AREA_NM") or "")]
         logger.info(f"종로구 이미지 레코드: {len(jongno_records)} / 전체 {len(records)}")
 
-        inserted = 0
+        updated = 0
         no_place = 0
         with conn.cursor() as cur:
             for record in jongno_records:
@@ -47,19 +47,20 @@ def main() -> int:
                 place_id = row[0]
                 cur.execute(
                     """
-                    INSERT INTO place_image (place_id, source, source_url, attribution)
-                    SELECT %s, 'REDTABLE', %s, '서울 음식관광 OpenAPI(RedTable)'
-                    WHERE NOT EXISTS (
-                        SELECT 1 FROM place_image WHERE place_id=%s AND source_url=%s
-                    )
+                    UPDATE place
+                    SET image_url = %s,
+                        image_source = %s,
+                        image_attribution = %s
+                    WHERE id = %s
+                      AND image_url IS NULL
                     """,
-                    (place_id, url, place_id, url),
+                    (url, "REDTABLE", "서울 음식관광 OpenAPI(RedTable)", place_id),
                 )
                 if cur.rowcount:
-                    inserted += 1
+                    updated += 1
         conn.commit()
 
-    logger.info(f"place_image 신규 insert: {inserted}건, place_source 매칭 안 됨(스킵): {no_place}건")
+    logger.info(f"place 대표 이미지 update: {updated}건, place_source 매칭 안 됨(스킵): {no_place}건")
     return 0
 
 

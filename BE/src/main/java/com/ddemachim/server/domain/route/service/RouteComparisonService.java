@@ -33,35 +33,50 @@ public class RouteComparisonService {
     private static final Duration DEFAULT_CACHE_TTL = Duration.ofMinutes(2);
     private static final long DEFAULT_CACHE_MAXIMUM_SIZE = 1_000L;
 
-    private final RouteProviderClient routeProviderClient;
+    private final RoadRouteProviderClient roadRouteProviderClient;
+    private final TransitRouteProviderClient transitRouteProviderClient;
     private final Executor routeComparisonExecutor;
     private final Clock clock;
     private final Cache<RouteCacheKey, RouteComparisonResponse> cache;
 
     @Autowired
     public RouteComparisonService(
-            RouteProviderClient routeProviderClient,
+            RoadRouteProviderClient roadRouteProviderClient,
+            TransitRouteProviderClient transitRouteProviderClient,
             @Qualifier("routeComparisonExecutor") Executor routeComparisonExecutor,
             TmapProperties properties) {
-        this(routeProviderClient, routeComparisonExecutor, properties, Clock.systemUTC());
+        this(
+                roadRouteProviderClient,
+                transitRouteProviderClient,
+                routeComparisonExecutor,
+                properties,
+                Clock.systemUTC());
     }
 
     public RouteComparisonService(
-            RouteProviderClient routeProviderClient,
+            RoadRouteProviderClient roadRouteProviderClient,
+            TransitRouteProviderClient transitRouteProviderClient,
             Executor routeComparisonExecutor,
             Clock clock) {
-        this(routeProviderClient, routeComparisonExecutor, new TmapProperties(), clock);
+        this(
+                roadRouteProviderClient,
+                transitRouteProviderClient,
+                routeComparisonExecutor,
+                new TmapProperties(),
+                clock);
     }
 
     /**
      * Constructor with a clock is intentionally available to deterministic service tests.
      */
     public RouteComparisonService(
-            RouteProviderClient routeProviderClient,
+            RoadRouteProviderClient roadRouteProviderClient,
+            TransitRouteProviderClient transitRouteProviderClient,
             Executor routeComparisonExecutor,
             TmapProperties properties,
             Clock clock) {
-        this.routeProviderClient = routeProviderClient;
+        this.roadRouteProviderClient = roadRouteProviderClient;
+        this.transitRouteProviderClient = transitRouteProviderClient;
         this.routeComparisonExecutor = routeComparisonExecutor;
         this.clock = clock == null ? Clock.systemUTC() : clock;
         this.cache = Caffeine.newBuilder()
@@ -82,13 +97,13 @@ public class RouteComparisonService {
 
         CompletableFuture<RouteOption> walking = dispatch(
                 RouteMode.WALK,
-                () -> routeProviderClient.findWalking(origin, destination));
+                () -> roadRouteProviderClient.findWalking(origin, destination));
         CompletableFuture<RouteOption> transit = dispatch(
                 RouteMode.TRANSIT,
-                () -> routeProviderClient.findTransit(origin, destination));
+                () -> transitRouteProviderClient.findTransit(origin, destination));
         CompletableFuture<RouteOption> taxi = dispatch(
                 RouteMode.TAXI,
-                () -> routeProviderClient.findTaxi(origin, destination));
+                () -> roadRouteProviderClient.findTaxi(origin, destination));
 
         CompletableFuture.allOf(walking, transit, taxi).join();
         List<RouteOption> routes = List.of(
@@ -180,21 +195,23 @@ public class RouteComparisonService {
                 && coordinate.longitude() <= 180.0;
     }
 
-    private static long cacheMaximumSize(TmapProperties properties) {
+    static long cacheMaximumSize(TmapProperties properties) {
         if (properties == null || properties.getCacheMaximumSize() <= 0) {
             return DEFAULT_CACHE_MAXIMUM_SIZE;
         }
-        return properties.getCacheMaximumSize();
+        return Math.min(properties.getCacheMaximumSize(), DEFAULT_CACHE_MAXIMUM_SIZE);
     }
 
-    private static Duration cacheTtl(TmapProperties properties) {
+    static Duration cacheTtl(TmapProperties properties) {
         if (properties == null
                 || properties.getCacheTtl() == null
                 || properties.getCacheTtl().isNegative()
                 || properties.getCacheTtl().isZero()) {
             return DEFAULT_CACHE_TTL;
         }
-        return properties.getCacheTtl();
+        return properties.getCacheTtl().compareTo(DEFAULT_CACHE_TTL) > 0
+                ? DEFAULT_CACHE_TTL
+                : properties.getCacheTtl();
     }
 
     private record RouteCacheKey(

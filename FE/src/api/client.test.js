@@ -77,6 +77,42 @@ test('fetchKakaoPlaces omits missing location parameters', async () => {
   }
 });
 
+test('fetchPlaceTrends requests the default latest-trend limit and preserves abort', async () => {
+  const client = await import('./client.js');
+  assert.equal(typeof client.fetchPlaceTrends, 'function', 'place trend API function must exist');
+
+  const originalFetch = globalThis.fetch;
+  const controller = new AbortController();
+  let request;
+  const result = [{
+    placeId: 152,
+    name: '콘웨이커피 안국점',
+    district: '종로구',
+    categoryLabel: '카페',
+    imageUrl: null,
+    trend: {
+      status: 'TRENDING',
+      updatedAt: '2026-08-13',
+    },
+  }];
+  globalThis.fetch = async (url, options) => {
+    request = { url, options };
+    return successResponse(result);
+  };
+
+  try {
+    const response = await client.fetchPlaceTrends({ signal: controller.signal });
+    const url = new URL(request.url, 'https://ddemachim.test');
+
+    assert.equal(url.pathname, '/api/places/trends');
+    assert.equal(url.searchParams.get('limit'), '6');
+    assert.equal(request.options.signal, controller.signal);
+    assert.deepEqual(response, result);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
 test('addKakaoPlaceToCourseBasket sends the frozen authenticated payload', async () => {
   const client = await import('./client.js');
   assert.equal(typeof client.addKakaoPlaceToCourseBasket, 'function', 'Kakao basket API function must exist');
