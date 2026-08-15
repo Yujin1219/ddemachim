@@ -1,0 +1,112 @@
+{
+  "schemaVersion": 1,
+  "regions": [
+    "안국",
+    "서촌",
+    "익선동",
+    "삼청동",
+    "혜화",
+    "부암동",
+    "서순라길",
+    "창신동",
+    "동묘"
+  ],
+  "canonicalAliases": {
+    "안국": ["안국", "북촌"],
+    "서촌": ["서촌", "경복궁"],
+    "익선동": ["익선동", "종로3가"],
+    "삼청동": ["삼청동"],
+    "혜화": ["혜화", "대학로"],
+    "부암동": ["부암동"],
+    "서순라길": ["서순라길", "종묘"],
+    "창신동": ["창신동"],
+    "동묘": ["동묘", "숭인동"]
+  },
+  "queryGeneration": {
+    "intents": [
+      {
+        "category": "FOOD",
+        "phrase": "카페"
+      },
+      {
+        "category": "FOOD",
+        "phrase": "맛집"
+      }
+    ]
+  },
+  "metadata": {
+    "advertisementSignals": [
+      "협찬",
+      "광고",
+      "체험단",
+      "제공받아",
+      "제공받은",
+      "지원받아",
+      "지원받은",
+      "원고료",
+      "파트너스",
+      "애드포스트",
+      "affiliate"
+    ]
+  },
+  "selection": {
+    "strategy": "query_balanced",
+    "bodyLimit": 500,
+    "quotas": {
+      "relevance": 300,
+      "cross_query": 100,
+      "diversity": 50,
+      "exploration": 50
+    },
+    "authorCap": 0,
+    "regionMinimum": 2,
+    "seed": "repeated-blog-trend-mvp"
+  },
+  "search": {
+    "resultsPerQuery": 500,
+    "pageSize": 100
+  },
+  "evidence": {
+    "recentDays": 7
+  },
+  "classification": {
+    "minimumEvidence": {
+      "uniquePosts": 2,
+      "uniqueAuthors": 2,
+      "uniqueIntentCategories": 1,
+      "collectionDays": 1
+    },
+    "watch": {
+      "k": 2,
+      "signals": {
+        "uniqueAuthors": 2,
+        "uniqueIntentCategories": 2,
+        "collectionDays": 2,
+        "trendRising": true
+      }
+    },
+    "trending": {
+      "signals": {
+        "uniquePosts": 8,
+        "uniqueAuthors": 3,
+        "uniqueIntentCategories": 2,
+        "collectionDays": 2,
+        "recentObservedPosts": 3,
+        "trendRising": true
+      },
+      "maxAdSuspectedRatio": 0.5
+    }
+  },
+  "trend": {
+    "minimumRatio": 2.0,
+    "minimumRecentNonzeroObservations": 3,
+    "minimumBaselineNonzeroObservations": 7,
+    "recentDays": 7,
+    "baselineDays": 28,
+    "timeUnit": "date"
+  },
+  "paths": {
+    "outputDir": "results/repeated_blog_trend",
+    "observationFile": "observations.jsonl"
+  }
+}

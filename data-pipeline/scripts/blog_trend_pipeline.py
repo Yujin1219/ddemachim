@@ -9,10 +9,9 @@ import argparse
 import json
 import os
 import sys
-from collections import defaultdict
 from datetime import date, timedelta
 from pathlib import Path
-from typing import Any, Iterable, Mapping, Sequence
+from typing import Any, Mapping, Sequence
 
 from blog_place_pipeline import (
     _relevance_details,
@@ -22,7 +21,6 @@ from blog_place_pipeline import (
     score_representative_places,
     select_posts,
 )
-from blog_topic_extraction import extract_topics_for_place
 from blog_trend_metrics import aggregate_verified_place_mentions, place_record_key
 from blog_trend_report import build_final_report, write_final_report
 from blog_trend_snapshot import JsonlSnapshotStore, snapshot_schema_document
@@ -255,16 +253,6 @@ def _matched_place_rows(validation_records: Sequence[Mapping[str, Any]]) -> list
     return [rows[key] for key in sorted(rows)]
 
 
-def _topics_index(topics: Sequence[Mapping[str, Any]]) -> dict[str, list[dict[str, Any]]]:
-    output: dict[str, list[dict[str, Any]]] = defaultdict(list)
-    for topic in topics:
-        if isinstance(topic, Mapping):
-            place_id = str(topic.get("kakao_place_id", "") or "")
-            if place_id:
-                output[place_id].append(dict(topic))
-    return dict(output)
-
-
 def _run_kakao_stage(
     payload: Mapping[str, Any],
     *,
@@ -320,7 +308,6 @@ def _run_kakao_stage(
 
 def _run_trend_stage(
     place_rows: Sequence[Mapping[str, Any]],
-    topics: Sequence[Mapping[str, Any]],
     *,
     as_of: date,
     output_dir: Path,
@@ -328,14 +315,7 @@ def _run_trend_stage(
     dry_run: bool,
     fetch_trend: bool,
 ) -> tuple[dict[str, Any], dict[str, Mapping[str, Any]]]:
-    topic_map: dict[str, list[str]] = defaultdict(list)
-    for topic in topics:
-        if isinstance(topic, Mapping):
-            place_id = str(topic.get("kakao_place_id", "") or "")
-            term = str(topic.get("topic_candidate", "") or "")
-            if place_id and term:
-                topic_map[place_id].append(term)
-    groups = build_keyword_groups(place_rows, topic_map)
+    groups = build_keyword_groups(place_rows)
     batches = batch_keyword_groups(groups)
     if dry_run or not fetch_trend:
         result = {
@@ -439,22 +419,8 @@ def run_pipeline(
     _write_json(output_dir / f"metrics_{effective_run_id}.json", {"schema_version": SCHEMA_VERSION, "metrics": metrics})
 
     place_rows = _matched_place_rows(validation_records)
-    topics: list[dict[str, Any]] = []
-    for place in place_rows:
-        topics.extend(
-            extract_topics_for_place(
-                posts,
-                str(place["kakao_place_id"]),
-                place_name=str(place.get("name", "")),
-                aliases=place.get("aliases", []),
-                regions=place.get("regions", []),
-                validation_records=validation_records,
-            )
-        )
-    _write_json(output_dir / f"topics_{effective_run_id}.json", {"schema_version": SCHEMA_VERSION, "topics": topics})
     trend_result, trend_by_place = _run_trend_stage(
         place_rows,
-        topics,
         as_of=as_of,
         output_dir=output_dir,
         run_id=effective_run_id,
@@ -509,7 +475,6 @@ def run_pipeline(
         as_of=as_of,
         validation_status_by_place=validation_status,
         trend_by_place=trend_by_place,
-        topics_by_place=_topics_index(topics),
         source_artifacts=[str(input_path)],
     )
     report_paths = write_final_report(output_dir, final_report, run_id=effective_run_id)
@@ -521,7 +486,6 @@ def run_pipeline(
         "selection": {**selection_meta, "post_count": len(selected_posts)},
         "kakao": kakao_result,
         "metrics": metrics,
-        "topics": topics,
         "trend": trend_result,
         "snapshot": snapshot_result.__dict__ if snapshot_result else {"status": "dry_run"},
         "report": {key: str(path) for key, path in report_paths.items()},
@@ -534,14 +498,14 @@ def _latest_default_input() -> Path:
 
 
 def main(argv: Sequence[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(description="Run the seven-stage blog trend data pipeline")
+    parser = argparse.ArgumentParser(description="Run the six-stage blog trend data pipeline")
     parser.add_argument("--input", type=Path, default=None, help="blog_place extracted JSON artifact")
     parser.add_argument("--output-dir", type=Path, default=DEFAULT_OUTPUT_DIR)
     parser.add_argument("--as-of", type=date.fromisoformat, default=date.today())
     parser.add_argument("--run-id", default=None)
     parser.add_argument(
         "--stage",
-        choices=("all", "validate", "select", "aggregate", "snapshot", "trend", "topics", "report"),
+        choices=("all", "validate", "select", "aggregate", "snapshot", "trend", "report"),
         default="all",
     )
     parser.add_argument("--dry-run", action="store_true", help="no credentials, network, or snapshot append")
@@ -564,11 +528,10 @@ def main(argv: Sequence[str] | None = None) -> int:
             trend = result["trend"]
             print(
                 "blog trend pipeline completed: selection={} validation={} metrics={} "
-                "topics={} kakao_status={} trend_status={}".format(
+                "kakao_status={} trend_status={}".format(
                     result["selection"].get("post_count", 0),
                     kakao.get("representative_count", 0),
                     len(result["metrics"]),
-                    len(result["topics"]),
                     kakao.get("status"),
                     trend.get("status"),
                 )

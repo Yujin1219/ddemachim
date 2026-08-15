@@ -14,7 +14,6 @@ if str(SCRIPTS_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPTS_DIR))
 
 from blog_place_pipeline import select_posts  # noqa: E402
-from blog_topic_extraction import extract_topics_for_place  # noqa: E402
 from blog_trend_metrics import aggregate_verified_place_mentions  # noqa: E402
 from blog_trend_report import build_final_report  # noqa: E402
 from blog_trend_snapshot import JsonlSnapshotStore  # noqa: E402
@@ -468,6 +467,32 @@ class BlogTrendPipelineTest(unittest.TestCase):
         self.assertEqual(summary["state"], "rising")
         self.assertTrue(summary["relative_ratio_only"])
 
+    def test_naver_trend_summary_counts_nonzero_window_observations(self) -> None:
+        result = {
+            "title": "place:k1",
+            "data": [
+                {"period": "2026-07-10", "ratio": 0},
+                {"period": "2026-07-11", "ratio": 4},
+                {"period": "2026-07-12", "ratio": 8},
+                {"period": "2026-08-10", "ratio": 0},
+                {"period": "2026-08-11", "ratio": 12},
+                {"period": "2026-08-12", "ratio": 0},
+            ],
+        }
+
+        summary = summarize_trend_ratio(
+            result,
+            recent_start=date(2026, 8, 10),
+            recent_end=date(2026, 8, 12),
+            baseline_start=date(2026, 7, 10),
+            baseline_end=date(2026, 8, 9),
+        )
+
+        self.assertEqual(summary["baseline_observations"], 3)
+        self.assertEqual(summary["recent_observations"], 3)
+        self.assertEqual(summary.get("baseline_nonzero_observations"), 2)
+        self.assertEqual(summary.get("recent_nonzero_observations"), 1)
+
     def test_naver_api_hub_credentials_use_hub_endpoint_and_headers(self) -> None:
         environ = {
             "NAVER_API_HUB_CLIENT_ID": "hub-client",
@@ -557,26 +582,31 @@ class BlogTrendPipelineTest(unittest.TestCase):
             self.assertTrue((output_dir / "final-report_trend-error.json").exists())
             self.assertTrue((output_dir / "final-report_trend-error.txt").exists())
 
-    def test_topics_require_three_unique_bloggers_and_exclude_place_region(self) -> None:
-        validation = [{
-            "source_key": "map:map-1",
-            "status": "matched",
-            "matched_place_id": "kakao-1",
-            "representative_place": _representative(),
-            "matched_place": {"id": "kakao-1"},
-        }]
-        posts = [self._post(index, TODAY - timedelta(days=index), blogger) for index, blogger in enumerate(("a", "b", "c"), 1)]
-        topics = extract_topics_for_place(
-            posts,
-            "kakao-1",
-            place_name="온카페",
-            regions=("안국", "종로구"),
-            validation_records=validation,
+    def test_final_report_has_no_body_topic_evidence(self) -> None:
+        metric = {
+            "kakao_place_id": "kakao-1",
+            "recent_unique_links": 3,
+            "recent_unique_bloggers": 3,
+            "growth_ratio": 2.0,
+            "absolute_delta": 2.0,
+            "prior_zero_new": False,
+        }
+        report = build_final_report([metric], as_of=TODAY)
+        self.assertNotIn("topic_evidence", report["decisions"][0])
+
+    def test_search_trend_groups_are_place_aliases_only(self) -> None:
+        groups = trend_pipeline.build_keyword_groups(
+            [{"kakao_place_id": "place-1", "name": "온카페", "aliases": ["별칭"]}]
         )
-        terms = {topic["topic_candidate"] for topic in topics}
-        self.assertTrue(any("디저트" in term or "시그니처" in term for term in terms))
-        self.assertFalse(any("온카페" in term or "안국" in term for term in terms))
-        self.assertTrue(all(topic["unique_blogger_support"] >= 3 for topic in topics))
+
+        self.assertEqual(len(groups), 1)
+        self.assertEqual(groups[0].kind, "place")
+        self.assertEqual(groups[0].keywords, ("온카페", "별칭"))
+
+    def test_pipeline_source_has_no_body_topic_stage_or_extractor(self) -> None:
+        source = Path(trend_pipeline.__file__).read_text(encoding="utf-8")
+        self.assertNotIn("blog_topic_extraction", source)
+        self.assertNotIn("topics_", source)
 
     def test_final_report_keeps_admin_review_and_missing_trend_is_not_hard_fail(self) -> None:
         metric = {
