@@ -80,6 +80,9 @@ public class Place {
     @Column(columnDefinition = "text")
     private String accessibility;
 
+    @Column(name = "default_dwell_minutes", nullable = false)
+    private Integer defaultDwellMinutes = 60;
+
     @JdbcTypeCode(SqlTypes.ARRAY)
     @Column(columnDefinition = "text[]")
     private String[] tags;
