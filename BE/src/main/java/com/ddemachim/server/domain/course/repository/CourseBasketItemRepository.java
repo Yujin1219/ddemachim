@@ -16,4 +16,7 @@ public interface CourseBasketItemRepository extends JpaRepository<CourseBasketIt
 
     @EntityGraph(attributePaths = {"place", "place.category", "userPlace"})
     List<CourseBasketItem> findAllByMemberIdOrderByCreatedAtDescIdDesc(Long memberId);
+
+    @EntityGraph(attributePaths = {"place", "userPlace"})
+    List<CourseBasketItem> findAllByMemberIdAndIdIn(Long memberId, List<Long> ids);
 }
