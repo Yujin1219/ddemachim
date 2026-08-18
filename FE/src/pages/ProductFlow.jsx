@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { motion, useDragControls, useReducedMotion } from 'motion/react';
-import { CalendarDays, ChevronLeft, ChevronRight, CircleDollarSign, CircleHelp, Clapperboard, Clock3, ExternalLink, Heart, Image as ImageIcon, LocateFixed, MapPin, MoreHorizontal, RefreshCw, Search, SearchX, SendHorizontal, ShoppingBasket, UserRound, X } from 'lucide-react';
+import { CalendarDays, ChevronLeft, ChevronRight, CircleDollarSign, CircleHelp, Clapperboard, Clock3, ExternalLink, Heart, Image as ImageIcon, LocateFixed, MapPin, Minus, MoreHorizontal, Plus, RefreshCw, Search, SearchX, SendHorizontal, ShoppingBasket, UserRound, X } from 'lucide-react';
 import AppHeader from '../components/AppHeader';
 import BottomNav from '../components/BottomNav';
 import PlaceReviewPreview from '../components/PlaceReviewPreview';
@@ -58,6 +58,10 @@ import {
   isCourseTimeRangeValid,
   normalizeCourseStartPlace,
 } from '../components/courseConditionsModel.js';
+import {
+  createCourseStopSettings,
+  updateCourseStopSetting,
+} from '../components/courseStopSettings.js';
 import { CongestionBadge, CongestionPointBadge } from '../components/CongestionInfo';
 import ScrollOnboarding from '../components/ScrollOnboarding';
 import {
@@ -79,7 +83,7 @@ import { useRouteComparison } from '../hooks/useRouteComparison.js';
 const routeGroups = {
   auth: ['splash', 'intro', 'login', 'signup', 'onboarding', 'onboarding-schedule', 'onboarding-permissions'],
   discovery: ['map', 'explore', 'place', 'event-detail', 'search', 'search-empty', 'saved', 'trending', 'filming-locations', 'popups', 'live-talk'],
-  course: ['course-home', 'course-conditions', 'basket', 'basket-natural', 'basket-glass', 'compare', 'route-map'],
+  course: ['course-home', 'course-conditions', 'course-place-times', 'basket', 'basket-natural', 'basket-glass', 'compare', 'route-map'],
   travel: ['progress', 'arrival', 'navigation', 'reroute', 'reroute-applied', 'transit', 'taxi', 'nearby', 'nearby-added', 'nearby-arrival', 'active-course', 'next-stop', 'gps-error', 'taxi-handoff', 'offline', 'closed-place', 'stop-course'],
   filming: ['onsite', 'filming-work', 'filming-content', 'camera', 'scene-list', 'scene-detail', 'camera-permission', 'shot-result', 'photo-saved', 'image-missing', 'filming-restricted', 'report'],
   record: ['complete', 'record', 'saved-courses', 'record-detail', 'write-review', 'reviews', 'review-detail'],
@@ -2575,7 +2579,7 @@ function CourseConditions({ go }) {
       </main>
 
       <div className="sticky-actions">
-        <ActionButton disabled={!canContinue} onClick={() => go('basket')}>다음</ActionButton>
+        <ActionButton disabled={!canContinue} onClick={() => go('course-place-times')}>다음</ActionButton>
         {!selectedStart && <p className="course-action-hint">출발 위치를 설정하면 다음으로 갈 수 있어요.</p>}
       </div>
 
@@ -2685,6 +2689,104 @@ function NavigationRouteState({ go, data }) {
 
 function GuidanceMapState({ go, data }) {
   return <section className="phone travel-screen navigation-v3 guidance-map-state"><MapStage variant="navigation"><RouteMotion /><NavigationMapHeader go={go} subtitle={data.subtitle || '블루 모먼트 전시 팝업으로 이동'} count={data.count || '2 / 4'} back={data.back || 'progress'} /><NavigationDirections title={data.instructionTitle} copy={data.instructionCopy} /><section className="guidance-alert-card"><span>{data.kicker}</span><h1>{data.title}</h1><p>{data.copy}</p>{data.place && <article><img src={data.place.image} alt="" /><div><strong>{data.place.name}</strong><small>{data.place.meta}</small></div></article>}{data.detail && <div className="guidance-alert-detail"><strong>{data.detail}</strong><small>{data.source}</small></div>}{data.status && <div className="guidance-alert-detail"><strong>{data.status}</strong><small>{data.source}</small></div>}<ActionButton onClick={() => go(data.next)}>{data.button}</ActionButton></section></MapStage></section>;
+}
+
+function CoursePlaceTimes({ go, basketState, onRetry, onAuthRequired }) {
+  const { items = [], status = 'loading' } = basketState || {};
+  const [settings, setSettings] = useState(() => createCourseStopSettings(items));
+  const isReady = status === 'success';
+  const count = items.length;
+
+  useEffect(() => {
+    setSettings(createCourseStopSettings(items));
+  }, [items]);
+
+  const updateSetting = (basketItemId, patch) => {
+    setSettings((current) => updateCourseStopSetting(current, basketItemId, patch));
+  };
+
+  const canContinue = isReady
+    && count > 0
+    && settings.length === count
+    && settings.every((setting) => !setting.hasArrivalDeadline || Boolean(setting.arrivalDeadline));
+
+  const stateContent = status === 'logged-out'
+    ? <div className="basket-state"><ShoppingBasket aria-hidden="true" size={28} /><h2>로그인이 필요해요</h2><p>로그인하면 담아둔 장소의 체류시간을 설정할 수 있어요.</p><ActionButton onClick={() => onAuthRequired?.({ screen: 'course-place-times' })}>로그인하기</ActionButton></div>
+    : status === 'error'
+      ? <div className="basket-state" role="alert"><RefreshCw aria-hidden="true" size={26} /><h2>장소를 불러오지 못했어요</h2><p>연결 상태를 확인하고 다시 시도해주세요.</p><ActionButton tone="secondary" onClick={onRetry}>다시 시도</ActionButton></div>
+      : status === 'loading'
+        ? <div className="basket-state basket-state-loading" role="status"><BrandLoading /><p>장소별 기본 시간을 불러오고 있어요.</p></div>
+        : count === 0
+          ? <div className="basket-state"><ShoppingBasket aria-hidden="true" size={28} /><h2>설정할 장소가 없어요</h2><p>가고 싶은 장소를 먼저 코스 장바구니에 담아주세요.</p><ActionButton tone="secondary" onClick={() => go('explore')}>장소 둘러보기</ActionButton></div>
+          : null;
+
+  return (
+    <section className="phone standard-screen course-stop-settings-screen">
+      <main className="page-scroll course-stop-settings-scroll">
+        <BackHeader title="코스 만들기" onBack={() => go('course-conditions')} />
+        <span className="progress-pill">2 / 3</span>
+        <div className="course-hero">
+          <p>장소별 시간</p>
+          <h1>각 장소에서 얼마나 머물까요?</h1>
+          <span>기본 체류시간을 바꾸거나 꼭 맞춰야 할 시각을 설정하세요.</span>
+        </div>
+
+        {stateContent}
+
+        {isReady && count > 0 && (
+          <div className="course-stop-settings-list">
+            {items.map((item, index) => {
+              const setting = settings.find((candidate) => candidate.basketItemId === item.id);
+              if (!setting) return null;
+              const hasActualHours = Boolean(item.operatingHoursRaw?.trim());
+              return (
+                <article className="course-stop-setting-card" key={item.id}>
+                  <header>
+                    <span className="course-stop-order">{index + 1}</span>
+                    <div>
+                      <h2>{item.placeName}</h2>
+                      <p>{item.roadAddress || item.lotAddress || '주소 정보 없음'}</p>
+                    </div>
+                  </header>
+
+                  <div className="course-hours-row">
+                    <span className={hasActualHours ? 'is-real' : ''}>{hasActualHours ? '실제 운영시간' : 'DEMO_DEFAULT'}</span>
+                    <strong>{hasActualHours ? item.operatingHoursRaw : '코스 생성 시 기본시간 적용'}</strong>
+                  </div>
+
+                  <div className="course-dwell-setting">
+                    <div><span>체류시간</span><small>기본 {setting.defaultDwellMinutes}분</small></div>
+                    <div className="course-dwell-stepper" role="group" aria-label={`${item.placeName} 체류시간`}>
+                      <button aria-label="체류시간 10분 줄이기" disabled={setting.dwellMinutes <= 10} onClick={() => updateSetting(item.id, { dwellMinutes: setting.dwellMinutes - 10 })} type="button"><Minus aria-hidden="true" size={17} strokeWidth={2} /></button>
+                      <strong>{setting.dwellMinutes}<small>분</small></strong>
+                      <button aria-label="체류시간 10분 늘리기" disabled={setting.dwellMinutes >= 1440} onClick={() => updateSetting(item.id, { dwellMinutes: setting.dwellMinutes + 10 })} type="button"><Plus aria-hidden="true" size={17} strokeWidth={2} /></button>
+                    </div>
+                  </div>
+
+                  <div className="course-fixed-time-setting">
+                    <div><span>예약·고정 방문시간</span><small>꼭 맞춰야 하는 도착 시각이 있나요?</small></div>
+                    <button aria-checked={setting.hasArrivalDeadline} aria-label={`${item.placeName} 예약 또는 고정 방문시간`} className={setting.hasArrivalDeadline ? 'selected' : ''} onClick={() => updateSetting(item.id, { hasArrivalDeadline: !setting.hasArrivalDeadline })} role="switch" type="button"><i /></button>
+                  </div>
+
+                  {setting.hasArrivalDeadline && (
+                    <div className="course-arrival-deadline">
+                      <label htmlFor={`arrival-deadline-${item.id}`}><Clock3 aria-hidden="true" size={18} strokeWidth={2} /><span>도착해야 하는 시각</span></label>
+                      <input aria-invalid={!setting.arrivalDeadline} id={`arrival-deadline-${item.id}`} onChange={(event) => updateSetting(item.id, { arrivalDeadline: event.target.value })} step="600" type="time" value={setting.arrivalDeadline} />
+                      <p>입력한 시각보다 10분 전에 도착하도록 코스를 계산해요.</p>
+                    </div>
+                  )}
+                </article>
+              );
+            })}
+          </div>
+        )}
+      </main>
+      <div className="sticky-actions course-stop-settings-actions">
+        <ActionButton disabled={!canContinue} onClick={() => go('compare')}>코스 경로 비교하기</ActionButton>
+        {isReady && count > 0 && !canContinue && <p className="course-action-hint">켜둔 고정 방문시간을 모두 입력해주세요.</p>}
+      </div>
+    </section>
+  );
 }
 
 function CourseBasket({ screen, go, basketState, onRetry, onAuthRequired }) {
@@ -3280,6 +3382,7 @@ function RenderScreen({ screen, id, go, basketState, onBasketAdded, onBasketRetr
   else if (screen === 'live-talk') renderedScreen = <LiveTalk go={go} />;
   else if (screen === 'course-home') renderedScreen = <CourseHome go={go} onNavigate={(tab) => go(rootRoutes[tab])} />;
   else if (screen === 'course-conditions') renderedScreen = <CourseConditions go={go} />;
+  else if (screen === 'course-place-times') renderedScreen = <CoursePlaceTimes go={go} basketState={basketState} onRetry={onBasketRetry} onAuthRequired={onAuthRequired} />;
   else if (screen === 'basket' || screen === 'basket-natural' || screen === 'basket-glass') renderedScreen = <CourseBasket screen={screen} go={go} basketState={basketState} onRetry={onBasketRetry} onAuthRequired={onAuthRequired} />;
   else if (screen === 'compare' || screen === 'route-map') renderedScreen = <CourseCompare screen={screen} go={go} />;
   else if (routeGroups.travel.includes(screen)) renderedScreen = <TravelScreen screen={screen} go={go} />;
