@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import { routeLegFeatureSpecs } from './routeGeometry.js';
+import { routeFitPointCoordinates, routeLegFeatureSpecs } from './routeGeometry.js';
 
 test('rejects invalid LineString geometry and preserves valid leg order and metadata', () => {
   const projected = (coordinate) => coordinate.map((value) => Number((value * 10).toFixed(6)));
@@ -53,4 +53,18 @@ test('rejects empty string, null, and boolean coordinate components as malformed
       `expected ${String(malformedLongitude)} longitude component to reject the entire leg`,
     );
   }
+});
+
+test('normalizes valid route fit endpoints and applies the projection transform', () => {
+  const transformed = routeFitPointCoordinates([
+    [126.9769, 37.5716],
+    [127.0276, 37.4979],
+    [181, 37.5],
+    null,
+  ], ([longitude, latitude]) => [longitude * 2, latitude * 2]);
+
+  assert.deepEqual(transformed, [
+    [253.9538, 75.1432],
+    [254.0552, 74.9958],
+  ]);
 });
