@@ -31,6 +31,7 @@ import org.hibernate.annotations.CreationTimestamp;
 public class UserPlace {
 
     private static final String KAKAO_PLACE_URL_PREFIX = "https://place.map.kakao.com/";
+    private static final int DEFAULT_DWELL_MINUTES = 60;
 
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)
@@ -74,6 +75,9 @@ public class UserPlace {
     @Column(name = "place_url", nullable = false, columnDefinition = "text")
     private String placeUrl;
 
+    @Column(name = "default_dwell_minutes", nullable = false)
+    private Integer defaultDwellMinutes = DEFAULT_DWELL_MINUTES;
+
     @CreationTimestamp
     @Column(name = "created_at", nullable = false, updatable = false)
     private OffsetDateTime createdAt;
@@ -102,6 +106,7 @@ public class UserPlace {
         userPlace.latitude = latitude;
         userPlace.phone = phone;
         userPlace.placeUrl = KAKAO_PLACE_URL_PREFIX + providerPlaceId;
+        userPlace.defaultDwellMinutes = DEFAULT_DWELL_MINUTES;
         return userPlace;
     }
 }
