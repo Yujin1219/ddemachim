@@ -53,6 +53,8 @@ import {
 import CourseHome from '../components/CourseHome';
 import {
   createCourseConditionDefaults,
+  formatCourseDateLabel,
+  formatCourseTimeLabel,
   isCourseTimeRangeValid,
   normalizeCourseStartPlace,
 } from '../components/courseConditionsModel.js';
@@ -2470,10 +2472,19 @@ function CourseConditions({ go }) {
   const [locationQuery, setLocationQuery] = useState('');
   const [locationResults, setLocationResults] = useState([]);
   const [searchStatus, setSearchStatus] = useState('idle');
+  const [activeSheet, setActiveSheet] = useState(null);
   const searchControllerRef = useRef(null);
   const { status: locationStatus, locate } = useCurrentLocation();
   const isTimeRangeValid = isCourseTimeRangeValid(desiredStartTime, desiredEndTime);
   const canContinue = Boolean(selectedStart && serviceDate && isTimeRangeValid);
+  const selectedStartLabel = selectedStart?.name || '출발 위치를 설정해주세요';
+  const selectedStartMeta = selectedStart?.address || '현재 위치 또는 검색한 장소';
+  const sheetTitle = {
+    location: '출발 위치',
+    date: '여행 날짜',
+    startTime: '출발 시각',
+    endTime: '종료 희망 시각',
+  }[activeSheet];
 
   useEffect(() => () => searchControllerRef.current?.abort(), []);
 
@@ -2521,108 +2532,130 @@ function CourseConditions({ go }) {
   };
 
   return (
-    <section className="phone standard-screen course-condition-screen">
+    <section className="phone standard-screen course-condition-screen course-condition-sheet-v2">
       <main className="page-scroll">
         <BackHeader title="코스 만들기" onBack={() => go('map')} />
-        <span className="progress-pill">출발 설정</span>
+        <span className="progress-pill">1 / 3</span>
         <div className="course-hero">
-          <p>코스의 시작</p>
-          <h1>어디서, 언제 출발할까요?</h1>
-          <span>출발점과 사용할 수 있는 시간을 알려주세요.</span>
+          <p>출발 정보</p>
+          <h1>여행의 시작을 정해주세요</h1>
+          <span>출발 위치와 시간을 기준으로 하루 코스를 계산해요.</span>
         </div>
 
-        <ScreenSection title="출발 위치" subtitle="검색하거나 현재 위치를 바로 사용할 수 있어요.">
-          <div className="course-start-mode" role="group" aria-label="출발 위치 설정 방식">
-            <button aria-pressed={startMode === 'current'} className={startMode === 'current' ? 'selected' : ''} onClick={() => changeStartMode('current')} type="button">
-              <LocateFixed aria-hidden="true" size={17} strokeWidth={2} />현재 위치
-            </button>
-            <button aria-pressed={startMode === 'search'} className={startMode === 'search' ? 'selected' : ''} onClick={() => changeStartMode('search')} type="button">
-              <Search aria-hidden="true" size={17} strokeWidth={2} />장소 검색
-            </button>
-          </div>
-
-          {startMode === 'current' ? (
-            <div className={`course-location-card ${selectedStart?.type === 'CURRENT_LOCATION' ? 'is-selected' : ''}`}>
-              <span className="course-location-icon"><LocateFixed aria-hidden="true" size={21} strokeWidth={2} /></span>
-              <div>
-                <strong>{selectedStart?.type === 'CURRENT_LOCATION' ? '현재 위치를 출발점으로 설정했어요' : '내 위치에서 바로 출발'}</strong>
-                <small>{selectedStart?.type === 'CURRENT_LOCATION' ? selectedStart.address : '위치 권한은 버튼을 누를 때만 요청해요.'}</small>
-              </div>
-              <button aria-busy={locationStatus === 'locating' || undefined} disabled={locationStatus === 'locating'} onClick={useCurrentPosition} type="button">
-                {locationStatus === 'locating' ? '확인 중' : selectedStart?.type === 'CURRENT_LOCATION' ? '다시 설정' : '설정'}
-              </button>
-              {locationStatus === 'error' && <p className="course-field-error" role="alert">현재 위치를 확인하지 못했어요. 위치 권한을 확인해주세요.</p>}
-            </div>
-          ) : (
-            <div className="course-location-search">
-              <div className="course-search-input">
-                <Search aria-hidden="true" size={18} strokeWidth={2} />
-                <input
-                  aria-label="출발 장소 검색"
-                  onChange={(event) => setLocationQuery(event.target.value)}
-                  onKeyDown={(event) => { if (event.key === 'Enter') { event.preventDefault(); searchStartPlaces(); } }}
-                  placeholder="역, 건물, 주소를 검색하세요"
-                  type="search"
-                  value={locationQuery}
-                />
-                <button disabled={!locationQuery.trim() || searchStatus === 'loading'} onClick={searchStartPlaces} type="button">
-                  {searchStatus === 'loading' ? '검색 중' : '검색'}
-                </button>
-              </div>
-              {searchStatus === 'error' && <p className="course-field-error" role="alert">장소를 불러오지 못했어요. 다시 검색해주세요.</p>}
-              {searchStatus === 'success' && locationResults.length === 0 && <p className="course-search-empty">검색 결과가 없어요. 다른 검색어를 입력해주세요.</p>}
-              {selectedStart?.type === 'SEARCHED_PLACE' && (
-                <div className="course-selected-place">
-                  <MapPin aria-hidden="true" size={19} strokeWidth={2} />
-                  <span><strong>{selectedStart.name}</strong><small>{selectedStart.address}</small></span>
-                  <button onClick={() => setSelectedStart(null)} type="button">변경</button>
-                </div>
-              )}
-              {locationResults.length > 0 && selectedStart?.type !== 'SEARCHED_PLACE' && (
-                <div className="course-location-results" aria-label="출발 장소 검색 결과">
-                  {locationResults.map((place) => {
-                    const isSelected = selectedStart?.type === 'SEARCHED_PLACE'
-                      && selectedStart.latitude === place.latitude
-                      && selectedStart.longitude === place.longitude;
-                    return (
-                      <button className={isSelected ? 'selected' : ''} key={`${place.name}-${place.latitude}-${place.longitude}`} onClick={() => setSelectedStart(place)} type="button">
-                        <MapPin aria-hidden="true" size={18} strokeWidth={2} />
-                        <span><strong>{place.name}</strong><small>{place.address}</small></span>
-                        <i>{isSelected ? '선택됨' : '선택'}</i>
-                      </button>
-                    );
-                  })}
-                </div>
-              )}
-            </div>
-          )}
+        <ScreenSection title="어디에서 출발할까요?">
+          <button className={`course-summary-row course-summary-location ${selectedStart ? 'is-complete' : ''}`} onClick={() => setActiveSheet('location')} type="button">
+            <span className="course-summary-icon"><MapPin aria-hidden="true" size={20} strokeWidth={2} /></span>
+            <span><small>출발 위치</small><strong>{selectedStartLabel}</strong><em>{selectedStartMeta}</em></span>
+            <ChevronRight aria-hidden="true" size={19} strokeWidth={2} />
+          </button>
         </ScreenSection>
 
-        <ScreenSection title="여행 시간" subtitle="선택한 날짜 안에서 코스를 계산해요.">
-          <div className="course-date-field">
-            <label htmlFor="course-service-date"><CalendarDays aria-hidden="true" size={17} strokeWidth={2} />날짜</label>
-            <input id="course-service-date" min={initialSchedule.serviceDate} onChange={(event) => setServiceDate(event.target.value)} type="date" value={serviceDate} />
-          </div>
-          <div className="course-time-grid">
-            <label htmlFor="course-start-time">
-              <span><Clock3 aria-hidden="true" size={17} strokeWidth={2} />출발 시각</span>
-              <input id="course-start-time" onChange={(event) => setDesiredStartTime(event.target.value)} step="600" type="time" value={desiredStartTime} />
-            </label>
-            <ChevronRight aria-hidden="true" size={18} strokeWidth={2} />
-            <label htmlFor="course-end-time">
-              <span><Clock3 aria-hidden="true" size={17} strokeWidth={2} />종료 희망</span>
-              <input aria-invalid={!isTimeRangeValid} id="course-end-time" onChange={(event) => setDesiredEndTime(event.target.value)} step="600" type="time" value={desiredEndTime} />
-            </label>
+        <ScreenSection title="언제 여행할까요?">
+          <div className="course-schedule-card">
+            <button onClick={() => setActiveSheet('date')} type="button">
+              <span className="course-summary-icon"><CalendarDays aria-hidden="true" size={19} strokeWidth={2} /></span>
+              <span><small>날짜</small><strong>{formatCourseDateLabel(serviceDate)}</strong></span>
+              <ChevronRight aria-hidden="true" size={18} strokeWidth={2} />
+            </button>
+            <div className="course-schedule-times">
+              <button onClick={() => setActiveSheet('startTime')} type="button">
+                <span><small>출발 시각</small><strong>{formatCourseTimeLabel(desiredStartTime)}</strong></span>
+                <ChevronRight aria-hidden="true" size={17} strokeWidth={2} />
+              </button>
+              <button className={!isTimeRangeValid ? 'has-error' : ''} onClick={() => setActiveSheet('endTime')} type="button">
+                <span><small>종료 희망</small><strong>{formatCourseTimeLabel(desiredEndTime)}</strong></span>
+                <ChevronRight aria-hidden="true" size={17} strokeWidth={2} />
+              </button>
+            </div>
           </div>
           {!isTimeRangeValid && <p className="course-field-error" role="alert">종료 희망 시각은 출발 시각보다 늦어야 해요.</p>}
         </ScreenSection>
 
-        <StatusBanner tone="blue" title="다음 화면에서 장소별 시간을 정해요" copy="기본 체류시간을 확인하고 예약이나 도착 제한 시각을 수정할 수 있어요." />
+        <StatusBanner tone="blue" title="다음에는 장소별 시간을 설정해요" copy="기본 체류시간과 예약 또는 도착 제한 시각을 확인할 수 있어요." />
       </main>
+
       <div className="sticky-actions">
-        <ActionButton disabled={!canContinue} onClick={() => go('basket')}>장소별 시간 설정</ActionButton>
-        {!selectedStart && <p className="course-action-hint">출발 위치를 먼저 설정해주세요.</p>}
+        <ActionButton disabled={!canContinue} onClick={() => go('basket')}>다음</ActionButton>
+        {!selectedStart && <p className="course-action-hint">출발 위치를 설정하면 다음으로 갈 수 있어요.</p>}
       </div>
+
+      {activeSheet && (
+        <div className="course-sheet-backdrop" onClick={() => setActiveSheet(null)} role="presentation">
+          <section aria-labelledby="course-sheet-title" aria-modal="true" className="course-option-sheet" onClick={(event) => event.stopPropagation()} role="dialog">
+            <span className="course-sheet-handle" aria-hidden="true" />
+            <header>
+              <div><small>코스 만들기</small><h2 id="course-sheet-title">{sheetTitle}</h2></div>
+              <button aria-label="닫기" onClick={() => setActiveSheet(null)} type="button"><X aria-hidden="true" size={20} strokeWidth={2} /></button>
+            </header>
+
+            {activeSheet === 'location' && (
+              <div className="course-sheet-body">
+                <div className="course-start-mode" role="group" aria-label="출발 위치 설정 방식">
+                  <button aria-pressed={startMode === 'current'} className={startMode === 'current' ? 'selected' : ''} onClick={() => changeStartMode('current')} type="button">
+                    <LocateFixed aria-hidden="true" size={17} strokeWidth={2} />현재 위치
+                  </button>
+                  <button aria-pressed={startMode === 'search'} className={startMode === 'search' ? 'selected' : ''} onClick={() => changeStartMode('search')} type="button">
+                    <Search aria-hidden="true" size={17} strokeWidth={2} />장소 검색
+                  </button>
+                </div>
+
+                {startMode === 'current' ? (
+                  <div className={`course-location-card ${selectedStart?.type === 'CURRENT_LOCATION' ? 'is-selected' : ''}`}>
+                    <span className="course-location-icon"><LocateFixed aria-hidden="true" size={21} strokeWidth={2} /></span>
+                    <div><strong>내 위치에서 바로 출발</strong><small>위치 권한은 지금 한 번만 요청해요.</small></div>
+                    <button aria-busy={locationStatus === 'locating' || undefined} disabled={locationStatus === 'locating'} onClick={useCurrentPosition} type="button">
+                      {locationStatus === 'locating' ? '확인 중' : selectedStart?.type === 'CURRENT_LOCATION' ? '다시 설정' : '설정'}
+                    </button>
+                    {locationStatus === 'error' && <p className="course-field-error" role="alert">현재 위치를 확인하지 못했어요. 위치 권한을 확인해주세요.</p>}
+                  </div>
+                ) : (
+                  <div className="course-location-search">
+                    <div className="course-search-input">
+                      <Search aria-hidden="true" size={18} strokeWidth={2} />
+                      <input aria-label="출발 장소 검색" onChange={(event) => setLocationQuery(event.target.value)} onKeyDown={(event) => { if (event.key === 'Enter') { event.preventDefault(); searchStartPlaces(); } }} placeholder="역, 건물, 주소를 검색하세요" type="search" value={locationQuery} />
+                      <button disabled={!locationQuery.trim() || searchStatus === 'loading'} onClick={searchStartPlaces} type="button">{searchStatus === 'loading' ? '검색 중' : '검색'}</button>
+                    </div>
+                    {searchStatus === 'error' && <p className="course-field-error" role="alert">장소를 불러오지 못했어요. 다시 검색해주세요.</p>}
+                    {searchStatus === 'success' && locationResults.length === 0 && <p className="course-search-empty">검색 결과가 없어요. 다른 검색어를 입력해주세요.</p>}
+                    {selectedStart?.type === 'SEARCHED_PLACE' && <div className="course-selected-place"><MapPin aria-hidden="true" size={19} strokeWidth={2} /><span><strong>{selectedStart.name}</strong><small>{selectedStart.address}</small></span><button onClick={() => setSelectedStart(null)} type="button">변경</button></div>}
+                    {locationResults.length > 0 && selectedStart?.type !== 'SEARCHED_PLACE' && (
+                      <div className="course-location-results" aria-label="출발 장소 검색 결과">
+                        {locationResults.map((place) => <button key={`${place.name}-${place.latitude}-${place.longitude}`} onClick={() => setSelectedStart(place)} type="button"><MapPin aria-hidden="true" size={18} strokeWidth={2} /><span><strong>{place.name}</strong><small>{place.address}</small></span><i>선택</i></button>)}
+                      </div>
+                    )}
+                  </div>
+                )}
+                <ActionButton disabled={!selectedStart} onClick={() => setActiveSheet(null)}>출발 위치 선택</ActionButton>
+              </div>
+            )}
+
+            {activeSheet === 'date' && (
+              <div className="course-sheet-body course-picker-sheet">
+                <label htmlFor="course-service-date"><span>여행할 날짜</span><input id="course-service-date" min={initialSchedule.serviceDate} onChange={(event) => setServiceDate(event.target.value)} type="date" value={serviceDate} /></label>
+                <p>선택한 날짜 안에서 출발부터 종료까지 계산해요.</p>
+                <ActionButton disabled={!serviceDate} onClick={() => setActiveSheet(null)}>날짜 선택</ActionButton>
+              </div>
+            )}
+
+            {(activeSheet === 'startTime' || activeSheet === 'endTime') && (
+              <div className="course-sheet-body course-picker-sheet">
+                <label htmlFor="course-time-picker">
+                  <span>{activeSheet === 'startTime' ? '몇 시에 출발할까요?' : '몇 시까지 여행할까요?'}</span>
+                  <input id="course-time-picker" onChange={(event) => activeSheet === 'startTime' ? setDesiredStartTime(event.target.value) : setDesiredEndTime(event.target.value)} step="600" type="time" value={activeSheet === 'startTime' ? desiredStartTime : desiredEndTime} />
+                </label>
+                <div className="course-time-presets">
+                  {(activeSheet === 'startTime' ? ['09:00', '12:00', '15:00', '18:00'] : ['15:00', '18:00', '20:00', '22:00']).map((time) => {
+                    const selectedTime = activeSheet === 'startTime' ? desiredStartTime : desiredEndTime;
+                    return <button aria-pressed={selectedTime === time} className={selectedTime === time ? 'selected' : ''} key={time} onClick={() => activeSheet === 'startTime' ? setDesiredStartTime(time) : setDesiredEndTime(time)} type="button">{formatCourseTimeLabel(time)}</button>;
+                  })}
+                </div>
+                {!isTimeRangeValid && <p className="course-field-error" role="alert">종료 희망 시각은 출발 시각보다 늦어야 해요.</p>}
+                <ActionButton disabled={!isTimeRangeValid} onClick={() => setActiveSheet(null)}>시간 선택</ActionButton>
+              </div>
+            )}
+          </section>
+        </div>
+      )}
     </section>
   );
 }

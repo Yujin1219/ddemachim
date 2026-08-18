@@ -489,6 +489,45 @@ img { max-width: 100%; display: block; }
 .course-time-grid input[aria-invalid='true'] { color: #b42318; }
 .course-condition-screen .sticky-actions { display: grid; gap: 6px; }
 .course-action-hint { color: var(--color-text-secondary); font-size: 11px; line-height: 16px; text-align: center; }
+.course-condition-sheet-v2 .course-hero { margin-top: 28px; }
+.course-condition-sheet-v2 .course-hero h1 { max-width: 300px; }
+.course-condition-sheet-v2 .content-section { margin-top: 30px; }
+.course-condition-sheet-v2 .content-section > h2 { font-size: 14px; font-weight: 600; line-height: 20px; }
+.course-summary-row { width: 100%; min-height: 82px; display: grid; grid-template-columns: 44px minmax(0, 1fr) 20px; align-items: center; gap: 12px; margin-top: 10px; padding: 13px 14px; border: 1px solid var(--color-border-default); border-radius: 18px; color: var(--color-text-secondary); background: #fff; text-align: left; box-shadow: 0 8px 22px rgba(30, 50, 75, .06); }
+.course-summary-row.is-complete { border-color: rgba(23, 88, 189, .28); background: #f8fbff; }
+.course-summary-icon { width: 44px; height: 44px; display: grid; place-items: center; border-radius: 14px; color: var(--color-text-brand); background: var(--color-bg-primary-soft); }
+.course-summary-row > span:nth-child(2), .course-schedule-card button > span:nth-child(2), .course-schedule-times button > span { min-width: 0; display: grid; gap: 1px; }
+.course-summary-row small, .course-schedule-card small { color: var(--color-text-secondary); font-size: 11px; font-weight: 500; line-height: 17px; }
+.course-summary-row strong, .course-schedule-card strong { overflow: hidden; color: var(--color-text-primary); font-size: 15px; line-height: 22px; text-overflow: ellipsis; white-space: nowrap; }
+.course-summary-row em { overflow: hidden; color: var(--color-text-secondary); font-size: 11px; font-style: normal; line-height: 17px; text-overflow: ellipsis; white-space: nowrap; }
+.course-summary-row > svg, .course-schedule-card button > svg { color: #8c9aac; }
+.course-schedule-card { overflow: hidden; margin-top: 10px; border: 1px solid var(--color-border-default); border-radius: 18px; background: #fff; box-shadow: 0 8px 22px rgba(30, 50, 75, .06); }
+.course-schedule-card > button { width: 100%; min-height: 70px; display: grid; grid-template-columns: 44px minmax(0, 1fr) 20px; align-items: center; gap: 12px; padding: 12px 14px; border: 0; border-bottom: 1px solid var(--color-border-default); color: var(--color-text-secondary); background: transparent; text-align: left; }
+.course-schedule-times { display: grid; grid-template-columns: 1fr 1fr; }
+.course-schedule-times button { min-width: 0; min-height: 68px; display: grid; grid-template-columns: minmax(0, 1fr) 18px; align-items: center; gap: 6px; padding: 12px 14px; border: 0; color: var(--color-text-secondary); background: transparent; text-align: left; }
+.course-schedule-times button + button { border-left: 1px solid var(--color-border-default); }
+.course-schedule-times button.has-error strong { color: #b42318; }
+.course-schedule-times svg { color: #8c9aac; }
+.course-summary-row:active, .course-schedule-card button:active { background: #f4f7fb; }
+.course-sheet-backdrop { position: absolute; z-index: 60; inset: 0; display: flex; align-items: flex-end; background: rgba(16, 24, 39, .38); backdrop-filter: blur(2px); }
+.course-option-sheet { width: 100%; max-height: 82%; overflow-y: auto; padding: 8px 0 calc(20px + env(safe-area-inset-bottom)); border-radius: 26px 26px 0 0; background: #fff; box-shadow: 0 -18px 46px rgba(16, 24, 39, .18); }
+.course-sheet-handle { width: 38px; height: 4px; display: block; margin: 0 auto 10px; border-radius: 999px; background: #d7dee8; }
+.course-option-sheet > header { min-height: 58px; display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 0 20px 10px; border-bottom: 1px solid var(--color-border-default); }
+.course-option-sheet > header div { display: grid; gap: 1px; }
+.course-option-sheet > header small { color: var(--color-text-brand); font-size: 11px; font-weight: 600; line-height: 17px; }
+.course-option-sheet > header h2 { color: var(--color-text-primary); font-size: 21px; line-height: 29px; }
+.course-option-sheet > header button { width: 38px; height: 38px; display: grid; place-items: center; padding: 0; border: 0; border-radius: 12px; color: var(--color-text-secondary); background: #f1f4f8; }
+.course-sheet-body { padding: 6px 20px 0; }
+.course-sheet-body > .ui-button { width: 100%; margin-top: 18px; }
+.course-picker-sheet { padding-top: 20px; }
+.course-picker-sheet > label { display: grid; gap: 10px; }
+.course-picker-sheet > label > span { color: var(--color-text-secondary); font-size: 13px; font-weight: 600; line-height: 20px; }
+.course-picker-sheet input { width: 100%; min-height: 62px; padding: 0 16px; border: 1px solid var(--color-border-default); border-radius: 16px; outline: 0; color: var(--color-text-primary); background: #f8fafc; font-size: 22px; font-weight: 700; color-scheme: light; }
+.course-picker-sheet input:focus { border-color: var(--color-bg-primary); box-shadow: 0 0 0 3px rgba(23, 88, 189, .1); }
+.course-picker-sheet > p { margin-top: 9px; color: var(--color-text-secondary); font-size: 12px; line-height: 18px; }
+.course-time-presets { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-top: 14px; }
+.course-time-presets button { min-height: 44px; padding: 8px 10px; border: 1px solid var(--color-border-default); border-radius: 13px; color: var(--color-text-secondary); background: #fff; font-size: 13px; font-weight: 600; }
+.course-time-presets button.selected { border-color: rgba(23, 88, 189, .4); color: var(--color-text-brand); background: var(--color-bg-primary-soft); }
 
 .progress-header, .complete-header { position: absolute; z-index: 16; top: 20px; right: 20px; left: 20px; min-height: 68px; display: flex; align-items: center; gap: 10px; padding: 8px; border: 1px solid var(--color-border-default); border-radius: 24px; background: rgba(255,255,255,.94); box-shadow: var(--shadow-surface); backdrop-filter: blur(12px); }
 .progress-header .icon-button, .complete-header .icon-button { border: 0; background: transparent; }.progress-header > div, .complete-header > div { display: grid; flex: 1; gap: 1px; }.progress-header strong, .complete-header strong { color: var(--color-text-primary); font-size: 16px; line-height: 24px; }.progress-header span, .complete-header span { color: var(--color-text-secondary); font-size: 12px; line-height: 18px; }.progress-header > b, .complete-header > b { min-width: 54px; height: 30px; display: grid; place-items: center; border-radius: 999px; color: var(--color-text-brand); background: var(--color-bg-primary-soft); font-size: 14px; font-weight: 500; line-height: 20px; }
