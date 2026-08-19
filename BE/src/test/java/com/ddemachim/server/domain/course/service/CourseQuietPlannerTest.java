@@ -50,11 +50,40 @@ class CourseQuietPlannerTest {
                 .containsExactly(CourseCongestionLevel.RELAXED, CourseCongestionLevel.CROWDED);
     }
 
+    @Test
+    void keepsActualEarlyArrivalAfterValidatingDeadlineBuffer() {
+        ResolvedPlace place = new ResolvedPlace(
+                1L, null, null, "장소", "서울 종로구", 37.1, 126.1,
+                1, 1, CourseDwellSource.DEFAULT, LocalTime.of(11, 0), CourseHoursSourceType.REAL,
+                LocalTime.of(9, 0), LocalTime.of(18, 0), false);
+        RouteProviderClient routes = mock(RouteProviderClient.class);
+        when(routes.findTransit(any(), any())).thenReturn(route(60));
+
+        CourseQuietPlanner.QuietPlan plan = new CourseQuietPlanner(
+                routes, (resolvedPlace, arrival) -> CourseCongestionLevel.NORMAL)
+                .plan(request(place), List.of(place));
+
+        assertThat(plan.stops().getFirst().effectiveArrival()).hasToString("2026-08-18T10:01");
+        assertThat(plan.stops().getFirst().departure()).hasToString("2026-08-18T10:02");
+    }
+
+    @Test
+    void schedulesPastTheFormerDesiredEndBoundaryWhenOperatingHoursAllowIt() {
+        ResolvedPlace place = place(1L, 37.1, 126.1);
+        RouteProviderClient routes = mock(RouteProviderClient.class);
+        when(routes.findTransit(any(), any())).thenReturn(route(8 * 60 * 60));
+
+        CourseQuietPlanner.QuietPlan plan = new CourseQuietPlanner(
+                routes, (resolvedPlace, arrival) -> CourseCongestionLevel.NORMAL)
+                .plan(request(place), List.of(place));
+
+        assertThat(plan.scheduledEnd()).hasToString("2026-08-18T18:01");
+    }
+
     private static CoursePreviewRequest request(ResolvedPlace... places) {
         return new CoursePreviewRequest(
                 LocalDate.of(2026, 8, 18),
                 LocalTime.of(10, 0),
-                LocalTime.of(18, 0),
                 new CoursePreviewRequest.Start(CourseStartType.CURRENT_LOCATION, "출발", 37.0, 126.0),
                 List.of(places).stream()
                         .map(place -> new CoursePreviewRequest.Place(place.basketItemId(), 1, null))

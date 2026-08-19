@@ -24,7 +24,6 @@ function validPayload() {
   return {
     serviceDate: '2026-08-18',
     desiredStartTime: '10:00',
-    desiredEndTime: '18:00',
     start: { type: 'CURRENT_LOCATION', name: '현재 위치', latitude: 37.57, longitude: 126.98 },
     places: [{ basketItemId: 11, dwellMinutes: 60, arrivalDeadline: null }],
   };

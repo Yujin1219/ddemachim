@@ -13,6 +13,8 @@ import com.ddemachim.server.domain.course.enums.CourseCongestionLevel;
 import com.ddemachim.server.domain.course.enums.CourseHoursSourceType;
 import com.ddemachim.server.domain.course.enums.CourseRouteStrategy;
 import com.ddemachim.server.domain.course.enums.CourseStartType;
+import com.ddemachim.server.domain.course.exception.CourseErrorStatus;
+import com.ddemachim.server.domain.course.exception.CourseException;
 import com.ddemachim.server.domain.course.service.CourseFastPlanner.FastPlan;
 import com.ddemachim.server.domain.course.service.CourseFastPlanner.PlannedStop;
 import com.ddemachim.server.domain.course.service.CoursePreviewInputResolver.ResolvedPlace;
@@ -78,7 +80,6 @@ class CoursePreviewServiceTest {
         assertThat(response.generatedAt()).isEqualTo(GENERATED_AT);
         assertThat(response.serviceDate()).isEqualTo(LocalDate.of(2026, 8, 18));
         assertThat(response.desiredStartTime()).isEqualTo(LocalTime.of(10, 0));
-        assertThat(response.desiredEndTime()).isEqualTo(LocalTime.of(18, 0));
         assertThat(response.options()).singleElement().satisfies(option -> {
             assertThat(option.strategy()).isEqualTo(CourseRouteStrategy.FAST);
             assertThat(option.stopCount()).isEqualTo(1);
@@ -220,11 +221,65 @@ class CoursePreviewServiceTest {
         assertThat(quiet.stops().getFirst().congestionScore()).isEqualByComparingTo("67");
     }
 
+    @Test
+    void returnsFastOptionWhenQuietPlanIsUnavailable() {
+        CourseQuietPlanner quietPlanner = mock(CourseQuietPlanner.class);
+        CoursePreviewService quietService = new CoursePreviewService(
+                resolver,
+                planner,
+                quietPlanner,
+                Clock.fixed(GENERATED_AT, ZoneOffset.UTC));
+        CoursePreviewRequest request = request(List.of(new CoursePreviewRequest.Place(10L, 30, null)));
+        ResolvedPlace place = place(10L, "경복궁", 60, 30, CourseDwellSource.USER_MODIFIED, null);
+        List<ResolvedPlace> resolved = List.of(place);
+        FastPlan fastPlan = plan(
+                1_920,
+                120,
+                List.of(stop(1, place, LocalTime.of(10, 2), LocalTime.of(10, 32), route(120, 800, List.of()))));
+        when(resolver.resolve(3L, request.serviceDate(), request.places())).thenReturn(resolved);
+        when(planner.plan(request, resolved)).thenReturn(fastPlan);
+        when(quietPlanner.plan(request, resolved)).thenThrow(new CourseException(CourseErrorStatus.FAST_PLAN_UNAVAILABLE));
+
+        CoursePreviewResponse response = quietService.preview(3L, request);
+
+        assertThat(response.options())
+                .extracting(CoursePreviewResponse.Option::strategy)
+                .containsExactly(CourseRouteStrategy.FAST);
+    }
+
+    @Test
+    void returnsFastOptionWhenEasyPlanIsUnavailable() {
+        CourseEasyWalkSelector easyWalkSelector = mock(CourseEasyWalkSelector.class);
+        CoursePreviewService easyService = new CoursePreviewService(
+                resolver,
+                planner,
+                easyWalkSelector,
+                null,
+                Clock.fixed(GENERATED_AT, ZoneOffset.UTC));
+        CoursePreviewRequest request = request(List.of(new CoursePreviewRequest.Place(10L, 30, null)));
+        ResolvedPlace place = place(10L, "경복궁", 60, 30, CourseDwellSource.USER_MODIFIED, null);
+        List<ResolvedPlace> resolved = List.of(place);
+        FastPlan fastPlan = plan(
+                1_920,
+                120,
+                List.of(stop(1, place, LocalTime.of(10, 2), LocalTime.of(10, 32), route(120, 800, List.of()))));
+        when(resolver.resolve(3L, request.serviceDate(), request.places())).thenReturn(resolved);
+        when(planner.plan(request, resolved)).thenReturn(fastPlan);
+        when(easyWalkSelector.hasEligibleSelectedWalk(fastPlan)).thenReturn(true);
+        when(easyWalkSelector.select(fastPlan))
+                .thenThrow(new CourseException(CourseErrorStatus.FAST_PLAN_UNAVAILABLE));
+
+        CoursePreviewResponse response = easyService.preview(3L, request);
+
+        assertThat(response.options())
+                .extracting(CoursePreviewResponse.Option::strategy)
+                .containsExactly(CourseRouteStrategy.FAST);
+    }
+
     private static CoursePreviewRequest request(List<CoursePreviewRequest.Place> places) {
         return new CoursePreviewRequest(
                 LocalDate.of(2026, 8, 18),
                 LocalTime.of(10, 0),
-                LocalTime.of(18, 0),
                 new CoursePreviewRequest.Start(
                         CourseStartType.CURRENT_LOCATION,
                         "현재 위치",

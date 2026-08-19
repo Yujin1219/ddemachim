@@ -1,15 +1,15 @@
 # 코스 미리보기 계산 엔진 설계
 
-- 상태: FAST 미리보기 기준선 구현 완료, EASY/PLEASANT 및 DEM 연동은 후속 범위
+- 상태: FAST/EASY/QUIET 미리보기 구현 완료, PLEASANT 및 DEM 적재 운영화는 후속 범위
 - 작성일: 2026-08-18
 - 적용 범위: `data-pipeline/**`, `BE/**`, `FE/**`
 
 ## 1. 목표
 
-현재 구현된 기준선은 사용자가 코스 장바구니 장소, 출발 위치, 진행 날짜,
-희망 시작·종료 시각, 장소별 체류시간과 도착 마감 시각을 제출하면 서버가
-`FAST` 방문 순서 후보 하나를 계산해 반환한다. 아래 `EASY`, `PLEASANT`, DEM 및
-혼잡도 설계는 후속 구현 목표다.
+사용자가 코스 장바구니 장소, 출발 위치, 진행 날짜, 희망 시작·종료 시각,
+장소별 체류시간과 도착 마감 시각을 제출하면 서버는 반드시 `FAST` 방문 순서와
+일정을 계산한다. `EASY`와 `QUIET`은 계산 가능할 때만 같은 응답에 추가된다.
+`PLEASANT` 및 일부 DEM 고도 데이터 운영화는 후속 범위다.
 
 - `FAST`: 전체 이동시간을 우선 최소화한다.
 - `EASY`: 이동시간에 도보거리, 환승, DEM 기반 누적 오르막과 급경사 구간
@@ -50,7 +50,9 @@
 - `start.type`이 `SEARCHED_PLACE`이면 비어 있지 않은 `name`이 필요하다. 위도는
   -90~90, 경도는 -180~180 범위여야 한다.
 - 응답은 `ApiResponse<CoursePreviewResponse>`로 감싼다.
-- HTTP 200 성공 응답은 현재 `options`에 `strategy: FAST`인 항목 하나만 담는다.
+- HTTP 200 성공 응답의 `options`에는 `strategy: FAST`가 항상 포함된다. `EASY`와
+  `QUIET`은 각각 계산 가능할 때만 포함되므로, 클라이언트는 이 항목들이 없을 수
+  있음을 처리해야 한다.
 - 이 API는 코스, 선택 전략 또는 공급자 응답을 영속화하지 않는다. 선택 코스 저장은
   별도 후속 API 범위다.
 
@@ -79,7 +81,14 @@
 
 ### 3.2 응답 보강
 
-현재 FAST 기준선의 `Option`은 합계와 방문 순서가 정해진 `stops`를 반환한다.
+FAST 기준선의 `Option`은 합계와 방문 순서가 정해진 `stops`를 반환한다. EASY 옵션은
+선택된 대중교통 경로의 도보 구간을 대체할 수 있을 때만 제공하며,
+`elevationComparisons`에 정류장별 원본/선택 오르막·급경사·DEM 커버리지를 반환한다.
+각 stop의
+`selectedMode`와 `selectedRoute`는 서버가 일정과 합계에 반영한 이동수단과 경로이며,
+`alternativeRoute`는 사용자가 전환할 수 있는 대체 경로가 있을 때만 포함된다.
+기존 클라이언트 호환을 위해 `incomingRoute`는 `selectedRoute`와 같은 선택 경로를
+계속 제공한다.
 
 - `totalDurationMinutes`, `totalTravelMinutes`, `travelMinutesFromPrevious`는 초 단위
   공급자 값을 분으로 올림한다.
@@ -94,11 +103,15 @@
 - 경로 거리는 우선 `incomingRoute.distanceMeters`를 사용하고, 값이 없을 때 모든
   leg 거리가 있으면 그 합을 사용한다. 한 구간의 거리를 알 수 없으면 코스 전체
   `totalDistanceMeters`도 `null`이다.
-- 현재 미구현인 `totalAscentMeters`, `averageCongestionScore`, stop의
-  `ascentMeters`, `congestionScore`, `eventId`, `eventEndTime`은 `null`이다.
+- FAST의 `totalAscentMeters`와 stop의 `ascentMeters`는 `null`이다. EASY는 프로파일이
+  완전할 때 이 값을 반환하며, DEM 프로파일을 만들 수 없는 구간이 있으면 `null`일 수
+  있다. QUIET은 `averageCongestionScore`와 stop의 `congestionScore`를 반환한다.
+  `eventId`, `eventEndTime`은 현재 `null`이다.
 
-후속 다중 전략 구현에서는 각 `Option`에 계산 성공 여부와 불가능 사유를 명시하는
-아래 계약을 별도로 도입한다. 현재 응답에는 이 필드가 없다.
+EASY 또는 QUIET이 경로·일정·프로필 조건을 만족하지 못하면 그 옵션만 생략하고 FAST
+응답은 유지한다. 현재 응답에는 전략별 `status`나 `unavailableReasons` 필드가 없으므로,
+클라이언트는 옵션 부재를 계산 불가로 처리해야 한다. 아래 필드는 향후 명시적 상태
+계약을 도입할 때의 후보이다.
 
 - `status`: `AVAILABLE`, `UNAVAILABLE`
 - `unavailableReasons`: 종료 희망 시각 초과, 운영시간 위반, 도착 마감 위반,
@@ -164,16 +177,15 @@ fallback한다. 응답 설명에는 DEM 미지원 구간이 있음을 표시한�
 
 ### 6.1 호출량 제한
 
-현재 FAST 기준선은 매 방문 순서에서 남은 장소까지의 대중교통 경로를 순차 조회하고,
-가용 후보 중 이동시간이 가장 짧은 장소를 선택하는 greedy nearest-neighbor 방식이다.
-따라서 장소 수가 `n`이면 공급자 호출은 최악의 경우 `n(n+1)/2`회이며, 5개 제한에서
-최대 15회다. 호출은 순차적이고 기본 TMAP read timeout이 4초이므로 공급자 지연 시
-최악 응답 시간이 약 60초에 접근할 수 있다.
+FAST는 요청당 출발점→장소 및 장소→장소의 방향성 도보 경로 행렬을 한 번만 조회한
+뒤, 최대 5개 장소의 모든 방문 순열을 일정 제약과 함께 평가한다. 따라서 최대 호출은
+출발점에서의 5개와 장소 사이의 20개, 총 25개다. 가능한 순서 중 총 도보 이동시간이
+가장 짧은 순서(동률이면 요청 순서 우선)를 선택한다. 선택된 긴 도보 구간에 대해서만
+대중교통 경로를 최종 조회해, 제약을 만족하면 그 경로를 반영한다.
 
-이 greedy 방식은 현재 위치에서 선택 가능한 최단 후보를 확정한 뒤 되돌리지 않는다.
-따라서 다른 방문 순서는 전체 제약을 만족하더라도 greedy로 선택한 순서의 후속 장소가
-운영시간, 도착 마감 또는 희망 종료 시각을 만족하지 못하면 `COURSE4222`가 발생할 수
-있다. 아래 후보 생성과 2-opt는 이 한계를 완화할 후속 설계다.
+순열 평가에서 운영시간, 도착 마감, 체류시간 및 희망 종료 시각을 만족하는 순서가
+없으면 `COURSE4222`를 반환한다. 이 오류의 `result`는 요청 순서를 보존해 모든
+장소를 진단하며, 장소를 임의로 삭제한 부분 코스를 반환하지 않는다.
 
 현재 알려진 공급자 숫자 경계 동작은 다음과 같다.
 
@@ -198,7 +210,6 @@ fallback한다. 응답 설명에는 DEM 미지원 구간이 있음을 표시한�
 
 - `FAST`
   - 실제 총 이동시간
-  - 종료 희망 시각 초과에 매우 큰 페널티
   - 되돌아가는 거리 보조 페널티
 - `EASY`
   - 실제 총 이동시간
@@ -210,6 +221,7 @@ fallback한다. 응답 설명에는 DEM 미지원 구간이 있음을 표시한�
   - 실제 총 이동시간
   - 장소 도착 예상 슬롯의 혼잡도 점수
   - 고혼잡 장소에 오래 체류하는 경우의 추가 페널티
+  - 종료 희망 시각 초과에 매우 큰 페널티
 
 가중치는 코드에 흩어진 숫자로 두지 않고 `CoursePreviewProperties`에 둔다.
 초기값은 테스트로 고정하고 운영 설정으로 조정 가능하게 한다.
@@ -230,8 +242,9 @@ fallback한다. 응답 설명에는 DEM 미지원 구간이 있음을 표시한�
 적용한다. 휴무 데이터가 명시된 장소는 해당 후보에서 방문 불가다. 환경별 설정 전환은
 후속 범위다.
 
-사용자가 입력한 도착 마감보다 일찍 도착하는 것은 허용한다. 정확히 10분 전까지
-기다리게 만들지는 않으며, 10분 전은 늦어도 도착해야 하는 상한이다.
+FAST와 EASY는 도착 마감을 `arrivalDeadline - 10분`으로 검증하며, 통과한 정류장은
+그 시각을 `scheduledArrival`로 고정해 이후 일정도 그 기준으로 계산한다. QUIET은 같은
+상한으로 검증하지만 실제로 더 이른 도착 시각을 유지한다.
 
 ## 8. 혼잡도 결합
 
@@ -251,10 +264,11 @@ fallback한다. 응답 설명에는 DEM 미지원 구간이 있음을 표시한�
 - `CoursePreviewInputResolver`: 인증 회원 소유 장바구니 항목, 좌표, 체류시간과
   요청 날짜의 운영시간을 해석한다. 운영시간이 없거나 사용자 장소이면
   `DEMO_DEFAULT` 09:00~22:00을 적용한다.
-- `CourseFastPlanner`: TMAP 대중교통 경로로 FAST greedy 순서를 계산하고 운영시간,
-  도착 마감 10분 버퍼, 체류시간과 희망 종료 시각을 검증한다.
+- `CourseFastPlanner`: 방향성 도보 경로 행렬과 전체 순열을 사용해 FAST 순서를
+  계산하고, 운영시간, 도착 마감 10분 버퍼, 체류시간과 희망 종료 시각을 검증한다.
+  긴 선택 구간은 최종 대중교통 경로를 조회해 대체할 수 있다.
 
-아래 컴포넌트는 EASY/PLEASANT 및 DEM 후속 범위다.
+아래 컴포넌트는 PLEASANT 및 DEM 적재 운영화 후속 범위다.
 
 - `CourseRouteCandidateGenerator`: 좌표 기반 후보 순서 생성
 - `CourseScheduleEvaluator`: 이동·운영시간·마감·체류시간 일정 계산
@@ -289,18 +303,31 @@ PostgreSQL 또는 Redis 없이 결정론적으로 검증한다.
 - 서비스 계층의 잘못된 미리보기 입력: HTTP 400, `COURSE4001`
 - 인증 회원 소유 장바구니 항목 누락: HTTP 404, `COURSE4041`
 - 장소 좌표 누락: HTTP 422, `COURSE4221`
-- FAST 경로 제공 실패 또는 현재 greedy 순서에서 제약을 만족하는 다음 장소가 없음:
-  HTTP 422, `COURSE4222`
+- FAST 경로 제공 실패 또는 모든 방문 순서가 제약을 만족하지 않음: HTTP 422,
+  `COURSE4222`. `result`에는 `requestedStopCount`와 요청 순서의 `diagnostics`가
+  포함되며, 각 진단은 `basketItemId`, `placeName`, 안전한 `reason`, 사용자가
+  적용할 수 있는 `adjustmentProposal`을 제공한다.
 
 모든 오류는 다음 공통 envelope를 사용하고 내부 예외나 공급자 원문은 노출하지 않는다.
-`result`가 `null`이면 JSON에서 생략되며, Bean Validation 실패일 때만 필드별 메시지
-객체가 포함될 수 있다.
+`result`가 `null`이면 JSON에서 생략된다. Bean Validation 실패에는 필드별 메시지
+객체가, `COURSE4222`에는 위의 안전한 진단 객체가 포함될 수 있다.
 
 ```json
 {
   "isSuccess": false,
-  "code": "COMMON400",
-  "message": "잘못된 요청입니다."
+  "code": "COURSE4222",
+  "message": "조건에 맞는 빠른 코스를 생성할 수 없습니다.",
+  "result": {
+    "requestedStopCount": 2,
+    "diagnostics": [
+      {
+        "basketItemId": 10,
+        "placeName": "경복궁",
+        "reason": "ARRIVAL_DEADLINE_EXCEEDED",
+        "adjustmentProposal": "RELAX_ARRIVAL_DEADLINE"
+      }
+    ]
+  }
 }
 ```
 

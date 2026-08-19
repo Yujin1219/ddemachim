@@ -139,19 +139,50 @@ class CourseEasyWalkSelectorTest {
     }
 
     @Test
-    void oneMissingDemProfileUsesDurationFallbackAcrossAllCandidatesAndReturnsNullMetrics() {
+    void mixedProfilesSelectsOnlyAmongProfiledCandidatesEvenWhenUnprofiledIsFaster() {
         TransitWalkSegment walk = walk(1, 0, coordinate(126.0), coordinate(126.001));
         FastPlan fastPlan = fastPlan(new SelectedTransitRoute(transitRoute(), List.of(walk)));
         LineStringGeometry fastGeometry = geometry(126.0);
-        LineStringGeometry unknownGeometry = geometry(126.01);
+        LineStringGeometry profiledGeometry = geometry(126.01);
         RecordingProvider provider = new RecordingProvider((origin, destination, option) -> switch (option) {
             case RECOMMENDED -> walkingRoute(option, 60, 100, fastGeometry);
-            case RECOMMENDED_MAIN_ROAD -> walkingRoute(option, 90, 90, unknownGeometry);
+            case RECOMMENDED_MAIN_ROAD -> walkingRoute(option, 90, 120, profiledGeometry);
             default -> throw new RouteProviderException(RouteUnavailableReason.NO_ROUTE);
         });
         ElevationProfileService profiles = mock(ElevationProfileService.class);
-        when(profiles.profile(fastGeometry)).thenReturn(profile(50.0, 50.0));
-        when(profiles.profile(unknownGeometry))
+        when(profiles.profile(fastGeometry))
+                .thenReturn(ElevationProfileService.ProfileResult.unavailable());
+        when(profiles.profile(profiledGeometry)).thenReturn(profile(8.0, 4.0));
+
+        CourseEasyWalkSelector.WalkSelection selection =
+                new CourseEasyWalkSelector(provider, profiles)
+                        .select(fastPlan)
+                        .transitSelections().getFirst()
+                        .walkSelections().getFirst();
+
+        assertThat(selection.selectedOption())
+                .isEqualTo(PedestrianSearchOption.RECOMMENDED_MAIN_ROAD);
+        assertThat(selection.status())
+                .isEqualTo(CourseEasyWalkSelector.WalkSelectionStatus.PROFILED);
+        assertThat(selection.elevationProfile().ascentMeters()).isEqualTo(8.0);
+        assertThat(selection.elevationProfile().steepUphillDistanceMeters()).isEqualTo(4.0);
+    }
+
+    @Test
+    void allUnavailableProfilesUseDurationFallbackAcrossViableCandidates() {
+        TransitWalkSegment walk = walk(1, 0, coordinate(126.0), coordinate(126.001));
+        FastPlan fastPlan = fastPlan(new SelectedTransitRoute(transitRoute(), List.of(walk)));
+        LineStringGeometry fastGeometry = geometry(126.0);
+        LineStringGeometry slowGeometry = geometry(126.01);
+        RecordingProvider provider = new RecordingProvider((origin, destination, option) -> switch (option) {
+            case RECOMMENDED -> walkingRoute(option, 60, 100, fastGeometry);
+            case RECOMMENDED_MAIN_ROAD -> walkingRoute(option, 90, 90, slowGeometry);
+            default -> throw new RouteProviderException(RouteUnavailableReason.NO_ROUTE);
+        });
+        ElevationProfileService profiles = mock(ElevationProfileService.class);
+        when(profiles.profile(fastGeometry))
+                .thenReturn(ElevationProfileService.ProfileResult.unavailable());
+        when(profiles.profile(slowGeometry))
                 .thenReturn(ElevationProfileService.ProfileResult.unavailable());
 
         CourseEasyWalkSelector.WalkSelection selection =

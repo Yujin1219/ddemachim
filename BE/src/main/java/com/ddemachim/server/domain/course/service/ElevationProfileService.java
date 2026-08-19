@@ -35,26 +35,40 @@ public class ElevationProfileService {
         } catch (DataAccessException exception) {
             return ProfileResult.unavailable();
         }
-        if (elevations.stream().anyMatch(sample -> sample.elevationMeters().isEmpty())) {
+        List<Double> rawElevations = elevations.stream()
+                .map(sample -> sample.elevationMeters().isPresent()
+                        ? sample.elevationMeters().getAsDouble() : null)
+                .toList();
+        long validCount = rawElevations.stream().filter(java.util.Objects::nonNull).count();
+        double coverage = validCount * 100.0 / rawElevations.size();
+        if (validCount < 2 || coverage < 50.0 || !hasAdjacentMeasurements(rawElevations)) {
             return ProfileResult.unavailable();
         }
-        List<Double> rawElevations = elevations.stream()
-                .map(sample -> sample.elevationMeters().orElseThrow())
-                .toList();
-        List<Double> smoothedElevations = medianSmooth(rawElevations);
+        List<Double> measuredElevations = validCount == rawElevations.size()
+                ? medianSmooth(rawElevations)
+                : rawElevations;
         List<ProfilePoint> profile = new ArrayList<>(points.size());
         for (int index = 0; index < points.size(); index++) {
+            if (measuredElevations.get(index) == null) continue;
             SamplePoint point = points.get(index);
             profile.add(new ProfilePoint(
                     point.distanceMeters(),
                     point.coordinate().longitude(),
                     point.coordinate().latitude(),
-                    smoothedElevations.get(index)));
+                    measuredElevations.get(index)));
         }
         return new ProfileResult(
                 List.copyOf(profile),
-                cumulativeAscent(profile),
-                steepUphillDistance(profile));
+                cumulativeAscent(points, measuredElevations),
+                steepUphillDistance(points, measuredElevations),
+                coverage);
+    }
+
+    private static boolean hasAdjacentMeasurements(List<Double> values) {
+        for (int index = 1; index < values.size(); index++) {
+            if (values.get(index - 1) != null && values.get(index) != null) return true;
+        }
+        return false;
     }
 
     private static List<Double> medianSmooth(List<Double> elevations) {
@@ -73,12 +87,18 @@ public class ElevationProfileService {
         return List.copyOf(smoothed);
     }
 
-    private static double cumulativeAscent(List<ProfilePoint> profile) {
+    private static double cumulativeAscent(List<SamplePoint> points, List<Double> elevations) {
         double ascent = 0.0;
         double uphillRun = 0.0;
-        for (int index = 1; index < profile.size(); index++) {
-            double elevationDelta = profile.get(index).elevationMeters()
-                    - profile.get(index - 1).elevationMeters();
+        for (int index = 1; index < elevations.size(); index++) {
+            Double previous = elevations.get(index - 1);
+            Double current = elevations.get(index);
+            if (previous == null || current == null) {
+                if (uphillRun >= 1.0) ascent += uphillRun;
+                uphillRun = 0.0;
+                continue;
+            }
+            double elevationDelta = current - previous;
             if (elevationDelta > 0.0) {
                 uphillRun += elevationDelta;
             } else {
@@ -94,13 +114,14 @@ public class ElevationProfileService {
         return ascent;
     }
 
-    private static double steepUphillDistance(List<ProfilePoint> profile) {
+    private static double steepUphillDistance(List<SamplePoint> points, List<Double> elevations) {
         double steepDistance = 0.0;
-        for (int index = 1; index < profile.size(); index++) {
-            ProfilePoint previous = profile.get(index - 1);
-            ProfilePoint current = profile.get(index);
-            double horizontalDistance = current.distanceMeters() - previous.distanceMeters();
-            double elevationDelta = current.elevationMeters() - previous.elevationMeters();
+        for (int index = 1; index < elevations.size(); index++) {
+            Double previousElevation = elevations.get(index - 1);
+            Double currentElevation = elevations.get(index);
+            if (previousElevation == null || currentElevation == null) continue;
+            double horizontalDistance = points.get(index).distanceMeters() - points.get(index - 1).distanceMeters();
+            double elevationDelta = currentElevation - previousElevation;
             if (horizontalDistance > DISTANCE_EPSILON_METERS
                     && elevationDelta > 0.0
                     && (elevationDelta / horizontalDistance) + 1.0e-12 >= 0.08) {
@@ -189,14 +210,15 @@ public class ElevationProfileService {
     public record ProfileResult(
             List<ProfilePoint> profile,
             Double ascentMeters,
-            Double steepUphillDistanceMeters) {
+            Double steepUphillDistanceMeters,
+            Double coveragePercent) {
 
         public ProfileResult {
             profile = profile == null ? null : List.copyOf(profile);
         }
 
         public static ProfileResult unavailable() {
-            return new ProfileResult(null, null, null);
+            return new ProfileResult(null, null, null, null);
         }
 
         public boolean isAvailable() {

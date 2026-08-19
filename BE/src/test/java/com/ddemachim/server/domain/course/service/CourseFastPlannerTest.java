@@ -60,7 +60,7 @@ class CourseFastPlannerTest {
     }
 
     @Test
-    void plansDynamicNearestNeighborWithExactlyOneCallPerRemainingPlaceAndRetainsWinners() {
+    void cachesTheDirectedWalkingMatrixAndSelectsTheLowestTravelFeasibleOrder() {
         List<CoursePreviewInputResolver.ResolvedPlace> places = List.of(
                 place(1L, 37.1, 126.1),
                 place(2L, 37.2, 126.2),
@@ -105,15 +105,11 @@ class CourseFastPlannerTest {
         assertThat(plan.stops().get(4).incomingRoute()).isSameAs(fifthToFirst);
         assertThat(plan.totalTravelSeconds()).isEqualTo(240);
         assertThat(plan.totalElapsedSeconds()).isEqualTo(540);
-        assertThat(provider.calls()).containsExactly(
-                call(START, places.get(0)), call(START, places.get(1)), call(START, places.get(2)),
-                call(START, places.get(3)), call(START, places.get(4)),
-                call(second, places.get(0)), call(second, places.get(2)), call(second, places.get(3)),
-                call(second, places.get(4)),
-                call(third, places.get(0)), call(third, places.get(3)), call(third, places.get(4)),
-                call(fourth, places.get(0)), call(fourth, places.get(4)),
-                call(fifth, places.get(0)));
-        assertThat(provider.calls()).hasSize(15);
+        assertThat(provider.calls()).hasSize(25);
+        assertThat(provider.calls()).contains(
+                call(START, places.get(0)), call(START, places.get(4)),
+                call(second, places.get(0)), call(third, places.get(4)),
+                call(fourth, places.get(1)), call(fifth, places.get(3)));
         assertThatThrownBy(() -> plan.stops().add(plan.stops().getFirst()))
                 .isInstanceOf(UnsupportedOperationException.class);
     }
@@ -121,7 +117,9 @@ class CourseFastPlannerTest {
     @Test
     void retainsTheRichSelectedTransitWithoutReplacingTheOriginalRouteOptionOrLegs() {
         CoursePreviewInputResolver.ResolvedPlace place = place(1L, 37.1, 126.1);
-        RouteOption originalRoute = route(120);
+        RouteOption originalRoute = new RouteOption(
+                RouteMode.TRANSIT, RouteStatus.AVAILABLE, 120, 1_000, 1_500, 0, 100, null, List.of());
+        RouteOption walkingRoute = route(1_201);
         TransitWalkSegment walkSegment = new TransitWalkSegment(
                 1,
                 0,
@@ -132,13 +130,14 @@ class CourseFastPlannerTest {
                 List.of(START, coordinate(place)));
         SelectedTransitRoute selectedTransit = new SelectedTransitRoute(
                 originalRoute, List.of(walkSegment));
-        RichRecordingProvider provider = new RichRecordingProvider(selectedTransit);
+        RichRecordingProvider provider = new RichRecordingProvider(walkingRoute, selectedTransit);
 
         PlannedStop stop = new CourseFastPlanner(provider)
                 .plan(request(List.of(place)), List.of(place))
                 .stops().getFirst();
 
-        assertThat(provider.calls()).containsExactly(new Call(START, coordinate(place)));
+        assertThat(provider.walkingCalls()).containsExactly(new Call(START, coordinate(place)));
+        assertThat(provider.transitCalls()).containsExactly(new Call(START, coordinate(place)));
         assertThat(stop.incomingRoute()).isSameAs(originalRoute);
         assertThat(stop.incomingRoute().legs()).isSameAs(originalRoute.legs());
         assertThat(stop.selectedTransitRoute()).isSameAs(selectedTransit);
@@ -155,6 +154,34 @@ class CourseFastPlannerTest {
 
         assertThat(plan.stops()).extracting(stop -> stop.resolvedPlace().basketItemId())
                 .containsExactly(1L, 2L);
+    }
+
+    @Test
+    void recoversAFeasibleFullOrderWhenTheNearestFirstChoiceWouldMissALaterDeadline() {
+        CoursePreviewInputResolver.ResolvedPlace nearest = place(
+                1L, 37.1, 126.1, 1, null, LocalTime.of(9, 0), LocalTime.of(18, 0), false);
+        CoursePreviewInputResolver.ResolvedPlace deadline = place(
+                2L, 37.2, 126.2, 1, LocalTime.of(10, 15), LocalTime.of(9, 0), LocalTime.of(18, 0), false);
+        CoursePreviewInputResolver.ResolvedPlace finalPlace = place(
+                3L, 37.3, 126.3, 1, null, LocalTime.of(9, 0), LocalTime.of(18, 0), false);
+        List<CoursePreviewInputResolver.ResolvedPlace> places = List.of(nearest, deadline, finalPlace);
+        Map<Od, RouteOption> routes = new HashMap<>();
+        add(routes, START, nearest, 60);
+        add(routes, START, deadline, 120);
+        add(routes, START, finalPlace, 120);
+        add(routes, coordinate(nearest), deadline, 300);
+        add(routes, coordinate(nearest), finalPlace, 60);
+        add(routes, coordinate(deadline), nearest, 60);
+        add(routes, coordinate(deadline), finalPlace, 60);
+        add(routes, coordinate(finalPlace), nearest, 60);
+        add(routes, coordinate(finalPlace), deadline, 300);
+        RecordingProvider provider = new RecordingProvider((origin, destination) -> routes.get(new Od(origin, destination)));
+
+        FastPlan plan = new CourseFastPlanner(provider).plan(request(places), places);
+
+        assertThat(plan.stops()).extracting(stop -> stop.resolvedPlace().basketItemId())
+                .containsExactly(2L, 1L, 3L);
+        assertThat(provider.calls()).hasSize(9);
     }
 
     @Test
@@ -215,18 +242,14 @@ class CourseFastPlannerTest {
     }
 
     @Test
-    void departureExactlyAtDesiredEndIsFeasibleButOneSecondAfterIsNot() {
+    void schedulesPastTheFormerDesiredEndBoundaryWhenOperatingHoursAllowIt() {
         CoursePreviewInputResolver.ResolvedPlace place = place(
-                1L, 37.1, 126.1, 30, null, LocalTime.of(9, 0), LocalTime.of(18, 0), false);
-        CoursePreviewRequest request = request(LocalTime.of(10, 0), LocalTime.of(10, 40), List.of(place));
-        RecordingProvider equalProvider = new RecordingProvider((origin, destination) -> route(600));
+                1L, 37.1, 126.1, 90, null, LocalTime.of(9, 0), LocalTime.of(18, 0), false);
+        RecordingProvider provider = new RecordingProvider((origin, destination) -> route(600));
 
-        FastPlan plan = new CourseFastPlanner(equalProvider).plan(request, List.of(place));
+        FastPlan plan = new CourseFastPlanner(provider).plan(request(List.of(place)), List.of(place));
 
-        assertThat(plan.scheduledEnd()).isEqualTo(LocalDateTime.of(SERVICE_DATE, LocalTime.of(10, 40)));
-
-        RecordingProvider exceededProvider = new RecordingProvider((origin, destination) -> route(601));
-        assertFastPlanUnavailable(() -> new CourseFastPlanner(exceededProvider).plan(request, List.of(place)));
+        assertThat(plan.scheduledEnd()).isEqualTo(LocalDateTime.of(SERVICE_DATE, LocalTime.of(11, 40)));
     }
 
     @Test
@@ -244,7 +267,7 @@ class CourseFastPlannerTest {
 
         assertThat(plan.stops()).extracting(stop -> stop.resolvedPlace().basketItemId())
                 .containsExactly(2L, 1L);
-        assertThat(provider.calls()).hasSize(3);
+        assertThat(provider.calls()).hasSize(4);
     }
 
     @Test
@@ -261,7 +284,7 @@ class CourseFastPlannerTest {
         });
 
         assertFastPlanUnavailable(() -> new CourseFastPlanner(provider).plan(request(places), places));
-        assertThat(provider.calls()).hasSize(2);
+        assertThat(provider.calls()).hasSize(4);
     }
 
     @Test
@@ -298,15 +321,14 @@ class CourseFastPlannerTest {
     }
 
     private static CoursePreviewRequest request(List<CoursePreviewInputResolver.ResolvedPlace> places) {
-        return request(LocalTime.of(10, 0), LocalTime.of(18, 0), places);
+        return request(LocalTime.of(10, 0), places);
     }
 
     private static CoursePreviewRequest request(
-            LocalTime start, LocalTime end, List<CoursePreviewInputResolver.ResolvedPlace> places) {
+            LocalTime start, List<CoursePreviewInputResolver.ResolvedPlace> places) {
         return new CoursePreviewRequest(
                 SERVICE_DATE,
                 start,
-                end,
                 new CoursePreviewRequest.Start(
                         CourseStartType.CURRENT_LOCATION, "출발", START.latitude(), START.longitude()),
                 places.stream()
@@ -351,7 +373,7 @@ class CourseFastPlannerTest {
 
     private static RouteOption route(int durationSeconds) {
         return new RouteOption(
-                RouteMode.TRANSIT,
+                RouteMode.WALK,
                 RouteStatus.AVAILABLE,
                 durationSeconds,
                 1_000,
@@ -388,22 +410,22 @@ class CourseFastPlannerTest {
 
     private static final class RecordingProvider implements RouteProviderClient {
 
-        private final BiFunction<Coordinate, Coordinate, RouteOption> transit;
+        private final BiFunction<Coordinate, Coordinate, RouteOption> walking;
         private final List<Call> calls = new ArrayList<>();
 
-        private RecordingProvider(BiFunction<Coordinate, Coordinate, RouteOption> transit) {
-            this.transit = transit;
+        private RecordingProvider(BiFunction<Coordinate, Coordinate, RouteOption> walking) {
+            this.walking = walking;
         }
 
         @Override
         public RouteOption findWalking(Coordinate origin, Coordinate destination) {
-            throw new AssertionError("FAST planner must not request walking routes");
+            calls.add(new Call(origin, destination));
+            return walking.apply(origin, destination);
         }
 
         @Override
         public RouteOption findTransit(Coordinate origin, Coordinate destination) {
-            calls.add(new Call(origin, destination));
-            return transit.apply(origin, destination);
+            throw new AssertionError("FAST planner must only look up transit for selected long walking legs");
         }
 
         @Override
@@ -418,16 +440,20 @@ class CourseFastPlannerTest {
 
     private static final class RichRecordingProvider implements RouteProviderClient {
 
+        private final RouteOption walkingRoute;
         private final SelectedTransitRoute selectedTransit;
-        private final List<Call> calls = new ArrayList<>();
+        private final List<Call> walkingCalls = new ArrayList<>();
+        private final List<Call> transitCalls = new ArrayList<>();
 
-        private RichRecordingProvider(SelectedTransitRoute selectedTransit) {
+        private RichRecordingProvider(RouteOption walkingRoute, SelectedTransitRoute selectedTransit) {
+            this.walkingRoute = walkingRoute;
             this.selectedTransit = selectedTransit;
         }
 
         @Override
         public RouteOption findWalking(Coordinate origin, Coordinate destination) {
-            throw new AssertionError("FAST planner must not request walking routes");
+            walkingCalls.add(new Call(origin, destination));
+            return walkingRoute;
         }
 
         @Override
@@ -437,7 +463,7 @@ class CourseFastPlannerTest {
 
         @Override
         public SelectedTransitRoute findSelectedTransit(Coordinate origin, Coordinate destination) {
-            calls.add(new Call(origin, destination));
+            transitCalls.add(new Call(origin, destination));
             return selectedTransit;
         }
 
@@ -446,8 +472,12 @@ class CourseFastPlannerTest {
             throw new AssertionError("FAST planner must not request taxi routes");
         }
 
-        private List<Call> calls() {
-            return List.copyOf(calls);
+        private List<Call> walkingCalls() {
+            return List.copyOf(walkingCalls);
+        }
+
+        private List<Call> transitCalls() {
+            return List.copyOf(transitCalls);
         }
     }
 }

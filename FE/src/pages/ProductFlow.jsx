@@ -57,7 +57,6 @@ import {
   createCourseConditionDefaults,
   formatCourseDateLabel,
   formatCourseTimeLabel,
-  isCourseTimeRangeValid,
   normalizeCourseStartPlace,
 } from '../components/courseConditionsModel.js';
 import {
@@ -653,7 +652,7 @@ function PlaceBasketAction({ placeId, basketItems, onAdded, onAuthRequired, onRe
   );
 }
 
-function KakaoPlaceActions({ place, basketItems, onAdded, onAuthRequired, onRefresh }) {
+function KakaoPlaceActions({ place, basketItems, onAdded, onAuthRequired, onRefresh, hideMapLink = false }) {
   const [status, setStatus] = useState('idle');
   const requestControllerRef = useRef(null);
   const isAdded = status === 'success' || basketHasKakaoPlace(basketItems, place?.providerPlaceId);
@@ -711,7 +710,7 @@ function KakaoPlaceActions({ place, basketItems, onAdded, onAuthRequired, onRefr
 
   return (
     <div className="kakao-place-actions">
-      <div className="kakao-place-action-row">
+      <div className={`kakao-place-action-row${hideMapLink ? ' is-single' : ''}`}>
         <ActionButton
           aria-busy={status === 'loading' || undefined}
           aria-describedby={status === 'error' ? 'kakao-basket-error' : undefined}
@@ -720,10 +719,10 @@ function KakaoPlaceActions({ place, basketItems, onAdded, onAuthRequired, onRefr
         >
           {buttonLabel}
         </ActionButton>
-        <a className="ui-button secondary kakao-map-link" href={placeUrl} target="_blank" rel="noopener noreferrer">
+        {!hideMapLink && <a className="ui-button secondary kakao-map-link" href={placeUrl} target="_blank" rel="noopener noreferrer">
           <span>카카오맵에서 보기</span>
           <ExternalLink aria-hidden="true" size={17} strokeWidth={2} />
-        </a>
+        </a>}
       </div>
       <p className="kakao-place-feedback" id="kakao-basket-error" aria-live="polite">
         {status === 'error' ? '코스에 담지 못했어요. 다시 시도해주세요.' : ''}
@@ -1112,6 +1111,7 @@ function normalizeMapTags(tags) {
 
 function MapHome({ go, basketState, onBasketAdded, onBasketRefresh, onAuthRequired }) {
   const [selectedPlace, setSelectedPlace] = useState(readKakaoMapTarget);
+  const [isRouteRequested, setIsRouteRequested] = useState(false);
   const [routeModeSelection, dispatchRouteModeSelection] = useReducer(routeModeSelectionReducer, {
     activeMode: 'WALK',
     manuallySelected: false,
@@ -1136,9 +1136,10 @@ function MapHome({ go, basketState, onBasketAdded, onBasketRefresh, onAuthRequir
   const [nearbyPlace, setNearbyPlace] = useState(null);
   const nearbySheetDragControls = useDragControls();
   const didDragNearbySheetRef = useRef(false);
-  const routeDestination = normalizeRouteCoordinate(selectedPlace
+  const selectedDestination = normalizeRouteCoordinate(selectedPlace
     ? { latitude: selectedPlace.latitude, longitude: selectedPlace.longitude }
     : null);
+  const routeDestination = isRouteRequested ? selectedDestination : null;
   const {
     location,
     status: locationStatus,
@@ -1150,7 +1151,7 @@ function MapHome({ go, basketState, onBasketAdded, onBasketRefresh, onAuthRequir
     status: routeStatus,
     retry: retryRoute,
   } = useRouteComparison({ origin: location, destination: routeDestination });
-  const routeSelectionKey = selectedPlace
+  const routeSelectionKey = selectedPlace && isRouteRequested
     ? `${selectedPlace.externalSource || 'INTERNAL'}:${selectedPlace.id}`
     : '';
   const routeSelectionKeyRef = useRef(routeSelectionKey);
@@ -1234,6 +1235,7 @@ function MapHome({ go, basketState, onBasketAdded, onBasketRefresh, onAuthRequir
   const selectMapFilter = (option) => {
     setActiveMapFilterKeys((current) => toggleMapFilterSelection(current, option.key));
     setSelectedPlace(null);
+    setIsRouteRequested(false);
     setLoadedMapFilterKey(null);
   };
   const settleNearbySheet = (_, info) => {
@@ -1245,6 +1247,7 @@ function MapHome({ go, basketState, onBasketAdded, onBasketRefresh, onAuthRequir
   };
   const selectPlace = (place) => {
     setSelectedPlace(place);
+    setIsRouteRequested(false);
     dispatchRouteModeSelection({ type: 'PLACE_CHANGED' });
     dispatchMapHomeInteraction({ type: 'PLACE_SELECTED' });
   };
@@ -1454,12 +1457,25 @@ function MapHome({ go, basketState, onBasketAdded, onBasketRefresh, onAuthRequir
             </dl>
           </aside>
         )}
-        <motion.section className={`bottom-sheet map-nearby-sheet motion-depth-sheet${selectedPlace ? ' has-selected-route' : ''}`} data-collapsed={isNearbySheetCollapsed || undefined} initial={{ opacity: 0, y: 42 }} animate={{ opacity: 1, y: isNearbySheetCollapsed ? collapsedSheetOffset : 0 }} transition={{ opacity: { duration: 0.28, delay: 0.08 }, y: { type: 'spring', stiffness: 420, damping: 38 } }} drag="y" dragControls={nearbySheetDragControls} dragListener={false} dragConstraints={{ top: 0, bottom: collapsedSheetOffset }} dragElastic={0.06} dragMomentum={false} onDrag={(_, info) => { if (Math.abs(info.offset.y) > 6) didDragNearbySheetRef.current = true; }} onDragEnd={settleNearbySheet}>
+        <motion.section className={`bottom-sheet map-nearby-sheet motion-depth-sheet${isRouteRequested ? ' has-selected-route' : ''}`} data-collapsed={isNearbySheetCollapsed || undefined} initial={{ opacity: 0, y: 42 }} animate={{ opacity: 1, y: isNearbySheetCollapsed ? collapsedSheetOffset : 0 }} transition={{ opacity: { duration: 0.28, delay: 0.08 }, y: { type: 'spring', stiffness: 420, damping: 38 } }} drag="y" dragControls={nearbySheetDragControls} dragListener={false} dragConstraints={{ top: 0, bottom: collapsedSheetOffset }} dragElastic={0.06} dragMomentum={false} onDrag={(_, info) => { if (Math.abs(info.offset.y) > 6) didDragNearbySheetRef.current = true; }} onDragEnd={settleNearbySheet}>
           <button className="map-sheet-handle-button" type="button" aria-label={isNearbySheetCollapsed ? '주변 장소 패널 펼치기' : '주변 장소 패널 접기'} aria-expanded={!isNearbySheetCollapsed} onPointerDown={(event) => { didDragNearbySheetRef.current = false; nearbySheetDragControls.start(event); }} onClick={() => { if (didDragNearbySheetRef.current) { didDragNearbySheetRef.current = false; return; } dispatchMapHomeInteraction({ type: 'SHEET_TOGGLED' }); }}><span className="sheet-handle" /></button>
           <div className="map-sheet-content" aria-hidden={isNearbySheetCollapsed || undefined} inert={isNearbySheetCollapsed ? true : undefined}>
             {!selectedPlace && <ScreenSection title={nearby.title} action="전체보기" onAction={() => go('explore')}><PlaceRow place={nearby.place} onClick={() => go(nearby.next, nearby.place.id)} /></ScreenSection>}
-            {selectedPlace
-              ? <SelectedPlaceRoutePanel
+            {selectedPlace && <PlaceRow place={selectedPlaceCard} onClick={selectedPlaceDetail ? () => go(selectedPlaceDetail.screen, selectedPlaceDetail.id) : undefined} />}
+            {selectedPlace && !isRouteRequested && <section className="map-place-choice" aria-label="선택한 장소 작업">
+              <h2>이 장소에서 무엇을 할까요?</h2>
+              <div className="map-place-choice-actions">
+                {selectedPlace.externalSource === 'KAKAO'
+                  ? <KakaoPlaceActions place={selectedPlace} basketItems={basketState?.items} onAdded={onBasketAdded} onAuthRequired={onAuthRequired} onRefresh={onBasketRefresh} hideMapLink />
+                  : selectedPlace.externalSource === 'EVENT'
+                    ? <ActionButton onClick={() => go('event-detail', selectedPlace.eventId ?? selectedPlace.id)}>행사 상세 보기</ActionButton>
+                    : <PlaceBasketAction placeId={selectedPlace.id} basketItems={basketState?.items} onAdded={onBasketAdded} onAuthRequired={onAuthRequired} onRefresh={onBasketRefresh} />}
+                <ActionButton tone="secondary" onClick={() => setIsRouteRequested(true)}>현재 위치에서 길찾기</ActionButton>
+              </div>
+            </section>}
+            {selectedPlace && isRouteRequested && <>
+                <button className="map-route-back" type="button" onClick={() => setIsRouteRequested(false)}>‹ 장소 선택으로 돌아가기</button>
+                <SelectedPlaceRoutePanel
                   selectedPlace={selectedPlace}
                   location={location}
                   locationStatus={locationStatus}
@@ -1468,14 +1484,13 @@ function MapHome({ go, basketState, onBasketAdded, onBasketRefresh, onAuthRequir
                   routeData={effectiveRouteData}
                   activeMode={activeRouteMode}
                   originLabel="현재 위치"
-                  placeCard={<PlaceRow place={selectedPlaceCard} onClick={selectedPlaceDetail ? () => go(selectedPlaceDetail.screen, selectedPlaceDetail.id) : undefined} />}
                   onModeChange={(mode) => dispatchRouteModeSelection({ type: 'MODE_SELECTED', mode })}
                   onResolvedModeChange={(mode) => dispatchRouteModeSelection({ type: 'MODE_RESOLVED', mode })}
                   onRetryLocation={locate}
                   onRetryRoute={retryRoute}
                   taxiHref={activeRouteMode === 'TAXI' ? buildKakaoTaxiHref(routeDestination) : null}
-                />
-              : <button type="button" className="map-live-link" onClick={() => go('live-talk')}><span>내 주변 지금톡</span><small>현장 소식 6개&nbsp; ›</small></button>}
+                /></>}
+            {!selectedPlace && <button type="button" className="map-live-link" onClick={() => go('live-talk')}><span>내 주변 지금톡</span><small>현장 소식 6개&nbsp; ›</small></button>}
           </div>
         </motion.section>
       </MapStage>
@@ -2559,7 +2574,6 @@ function CourseConditions({ go, draft, onContinue }) {
   const initialSchedule = useMemo(() => draft || createCourseConditionDefaults(), [draft]);
   const [serviceDate, setServiceDate] = useState(initialSchedule.serviceDate);
   const [desiredStartTime, setDesiredStartTime] = useState(initialSchedule.desiredStartTime);
-  const [desiredEndTime, setDesiredEndTime] = useState(initialSchedule.desiredEndTime);
   const [startMode, setStartMode] = useState(draft?.start?.type === 'SEARCHED_PLACE' ? 'search' : 'current');
   const [selectedStart, setSelectedStart] = useState(draft?.start || null);
   const [locationQuery, setLocationQuery] = useState('');
@@ -2568,15 +2582,13 @@ function CourseConditions({ go, draft, onContinue }) {
   const [activeSheet, setActiveSheet] = useState(null);
   const searchControllerRef = useRef(null);
   const { status: locationStatus, locate } = useCurrentLocation();
-  const isTimeRangeValid = isCourseTimeRangeValid(desiredStartTime, desiredEndTime);
-  const canContinue = Boolean(selectedStart && serviceDate && isTimeRangeValid);
+  const canContinue = Boolean(selectedStart && serviceDate && desiredStartTime);
   const selectedStartLabel = selectedStart?.name || '출발 위치를 설정해주세요';
   const selectedStartMeta = selectedStart?.address || '현재 위치 또는 검색한 장소';
   const sheetTitle = {
     location: '출발 위치',
     date: '여행 날짜',
     startTime: '출발 시각',
-    endTime: '종료 희망 시각',
   }[activeSheet];
 
   useEffect(() => () => searchControllerRef.current?.abort(), []);
@@ -2626,7 +2638,7 @@ function CourseConditions({ go, draft, onContinue }) {
 
   const continueToStopSettings = () => {
     if (!canContinue) return;
-    onContinue?.({ serviceDate, desiredStartTime, desiredEndTime, start: selectedStart });
+    onContinue?.({ serviceDate, desiredStartTime, start: selectedStart });
   };
 
   return (
@@ -2660,13 +2672,8 @@ function CourseConditions({ go, draft, onContinue }) {
                 <span><small>출발 시각</small><strong>{formatCourseTimeLabel(desiredStartTime)}</strong></span>
                 <ChevronRight aria-hidden="true" size={17} strokeWidth={2} />
               </button>
-              <button className={!isTimeRangeValid ? 'has-error' : ''} onClick={() => setActiveSheet('endTime')} type="button">
-                <span><small>종료 희망</small><strong>{formatCourseTimeLabel(desiredEndTime)}</strong></span>
-                <ChevronRight aria-hidden="true" size={17} strokeWidth={2} />
-              </button>
             </div>
           </div>
-          {!isTimeRangeValid && <p className="course-field-error" role="alert">종료 희망 시각은 출발 시각보다 늦어야 해요.</p>}
         </ScreenSection>
 
         <StatusBanner tone="blue" title="다음에는 장소별 시간을 설정해요" copy="기본 체류시간과 예약 또는 도착 제한 시각을 확인할 수 있어요." />
@@ -2730,25 +2737,23 @@ function CourseConditions({ go, draft, onContinue }) {
             {activeSheet === 'date' && (
               <div className="course-sheet-body course-picker-sheet">
                 <label htmlFor="course-service-date"><span>여행할 날짜</span><input id="course-service-date" min={initialSchedule.serviceDate} onChange={(event) => setServiceDate(event.target.value)} type="date" value={serviceDate} /></label>
-                <p>선택한 날짜 안에서 출발부터 종료까지 계산해요.</p>
+                <p>선택한 날짜와 출발 시각을 기준으로 일정을 계산해요.</p>
                 <ActionButton disabled={!serviceDate} onClick={() => setActiveSheet(null)}>날짜 선택</ActionButton>
               </div>
             )}
 
-            {(activeSheet === 'startTime' || activeSheet === 'endTime') && (
+            {activeSheet === 'startTime' && (
               <div className="course-sheet-body course-picker-sheet">
                 <label htmlFor="course-time-picker">
-                  <span>{activeSheet === 'startTime' ? '몇 시에 출발할까요?' : '몇 시까지 여행할까요?'}</span>
-                  <input id="course-time-picker" onChange={(event) => activeSheet === 'startTime' ? setDesiredStartTime(event.target.value) : setDesiredEndTime(event.target.value)} step="600" type="time" value={activeSheet === 'startTime' ? desiredStartTime : desiredEndTime} />
+                  <span>몇 시에 출발할까요?</span>
+                  <input id="course-time-picker" onChange={(event) => setDesiredStartTime(event.target.value)} step="600" type="time" value={desiredStartTime} />
                 </label>
                 <div className="course-time-presets">
-                  {(activeSheet === 'startTime' ? ['09:00', '12:00', '15:00', '18:00'] : ['15:00', '18:00', '20:00', '22:00']).map((time) => {
-                    const selectedTime = activeSheet === 'startTime' ? desiredStartTime : desiredEndTime;
-                    return <button aria-pressed={selectedTime === time} className={selectedTime === time ? 'selected' : ''} key={time} onClick={() => activeSheet === 'startTime' ? setDesiredStartTime(time) : setDesiredEndTime(time)} type="button">{formatCourseTimeLabel(time)}</button>;
+                  {['09:00', '12:00', '15:00', '18:00'].map((time) => {
+                    return <button aria-pressed={desiredStartTime === time} className={desiredStartTime === time ? 'selected' : ''} key={time} onClick={() => setDesiredStartTime(time)} type="button">{formatCourseTimeLabel(time)}</button>;
                   })}
                 </div>
-                {!isTimeRangeValid && <p className="course-field-error" role="alert">종료 희망 시각은 출발 시각보다 늦어야 해요.</p>}
-                <ActionButton disabled={!isTimeRangeValid} onClick={() => setActiveSheet(null)}>시간 선택</ActionButton>
+                <ActionButton disabled={!desiredStartTime} onClick={() => setActiveSheet(null)}>시간 선택</ActionButton>
               </div>
             )}
           </section>

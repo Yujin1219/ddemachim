@@ -12,9 +12,12 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 
 import com.ddemachim.server.domain.course.dto.CoursePreviewRequest;
 import com.ddemachim.server.domain.course.dto.CoursePreviewResponse;
+import com.ddemachim.server.domain.course.dto.CourseFastPlanFailure;
 import com.ddemachim.server.domain.course.enums.CourseDwellSource;
 import com.ddemachim.server.domain.course.enums.CourseHoursSourceType;
 import com.ddemachim.server.domain.course.enums.CourseRouteStrategy;
+import com.ddemachim.server.domain.course.exception.CourseErrorStatus;
+import com.ddemachim.server.domain.course.exception.CourseException;
 import com.ddemachim.server.domain.course.service.CoursePreviewService;
 import com.ddemachim.server.domain.route.dto.RouteComparisonResponse.LineStringGeometry;
 import com.ddemachim.server.domain.route.dto.RouteComparisonResponse.RouteLeg;
@@ -65,7 +68,7 @@ class CoursePreviewControllerTest {
     }
 
     @Test
-    void createsANonPersistingFastPreviewAndPreservesNestedRouteDetails() throws Exception {
+    void acceptsLegacyDesiredEndTimeButOmitsItFromThePreviewResponse() throws Exception {
         when(coursePreviewService.preview(eq(3L), any(CoursePreviewRequest.class)))
                 .thenReturn(response());
 
@@ -75,6 +78,7 @@ class CoursePreviewControllerTest {
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.isSuccess").value(true))
                 .andExpect(jsonPath("$.code").value("COMMON200"))
+                .andExpect(jsonPath("$.result.desiredEndTime").doesNotExist())
                 .andExpect(jsonPath("$.result.options[0].strategy").value("FAST"))
                 .andExpect(jsonPath("$.result.options[0].scheduledStart").value("10:00:00"))
                 .andExpect(jsonPath("$.result.options[0].scheduledEnd").value("11:00:59"))
@@ -163,12 +167,36 @@ class CoursePreviewControllerTest {
         verifyNoInteractions(coursePreviewService);
     }
 
+    @Test
+    void keepsCourse4222DiagnosticsInTheExistingFailureEnvelope() throws Exception {
+        when(coursePreviewService.preview(eq(3L), any(CoursePreviewRequest.class)))
+                .thenThrow(new CourseException(
+                        CourseErrorStatus.FAST_PLAN_UNAVAILABLE,
+                        new CourseFastPlanFailure(1, List.of(new CourseFastPlanFailure.StopDiagnostic(
+                                10L,
+                                "경복궁",
+                                CourseFastPlanFailure.DiagnosticReason.ARRIVAL_DEADLINE_EXCEEDED,
+                                CourseFastPlanFailure.AdjustmentProposal.RELAX_ARRIVAL_DEADLINE)))));
+
+        mockMvc.perform(post("/api/courses/preview")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(validRequestJson()))
+                .andExpect(status().is(422))
+                .andExpect(jsonPath("$.isSuccess").value(false))
+                .andExpect(jsonPath("$.code").value("COURSE4222"))
+                .andExpect(jsonPath("$.result.requestedStopCount").value(1))
+                .andExpect(jsonPath("$.result.diagnostics[0].basketItemId").value(10))
+                .andExpect(jsonPath("$.result.diagnostics[0].reason").value("ARRIVAL_DEADLINE_EXCEEDED"))
+                .andExpect(jsonPath("$.result.diagnostics[0].adjustmentProposal")
+                        .value("RELAX_ARRIVAL_DEADLINE"));
+    }
+
     private static String validRequestJson() {
         return """
                 {
                   "serviceDate":"2026-08-18",
                   "desiredStartTime":"10:00",
-                  "desiredEndTime":"18:00",
+                  "desiredEndTime":"09:00",
                   "start":{
                     "type":"CURRENT_LOCATION",
                     "name":"현재 위치",
@@ -221,7 +249,6 @@ class CoursePreviewControllerTest {
                 Instant.parse("2026-08-18T01:02:03Z"),
                 LocalDate.of(2026, 8, 18),
                 LocalTime.of(10, 0),
-                LocalTime.of(18, 0),
                 List.of(option));
     }
 

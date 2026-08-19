@@ -3,6 +3,8 @@ package com.ddemachim.server.domain.course.service;
 import com.ddemachim.server.domain.course.dto.CoursePreviewRequest;
 import com.ddemachim.server.domain.course.dto.CoursePreviewResponse;
 import com.ddemachim.server.domain.course.enums.CourseRouteStrategy;
+import com.ddemachim.server.domain.course.exception.CourseErrorStatus;
+import com.ddemachim.server.domain.course.exception.CourseException;
 import com.ddemachim.server.domain.course.service.CourseEasyWalkSelector.EasyTransitSelection;
 import com.ddemachim.server.domain.course.service.CourseEasyWalkSelector.EasyWalkPlan;
 import com.ddemachim.server.domain.course.service.CourseEasyWalkSelector.WalkSelection;
@@ -81,23 +83,41 @@ public class CoursePreviewService {
         FastPlan plan = fastPlanner.plan(request, resolvedPlaces);
         List<CoursePreviewResponse.Option> options = new ArrayList<>();
         options.add(toOption(plan));
-        if (easyWalkSelector != null) {
-            options.add(toOption(easyWalkSelector.select(plan)));
+        if (easyWalkSelector != null && easyWalkSelector.hasEligibleSelectedWalk(plan)) {
+            try {
+                CoursePreviewResponse.Option easyOption = toOption(easyWalkSelector.select(plan));
+                if (easyOption != null) {
+                    options.add(easyOption);
+                }
+            } catch (CourseException exception) {
+                if (!isOptionalPlanUnavailable(exception)) {
+                    throw exception;
+                }
+            }
         }
         if (quietPlanner != null) {
-            options.add(toOption(quietPlanner.plan(request, resolvedPlaces)));
+            try {
+                options.add(toOption(quietPlanner.plan(request, resolvedPlaces)));
+            } catch (CourseException exception) {
+                if (!isOptionalPlanUnavailable(exception)) {
+                    throw exception;
+                }
+            }
         }
         return new CoursePreviewResponse(
                 clock.instant(),
                 request.serviceDate(),
                 request.desiredStartTime(),
-                request.desiredEndTime(),
                 options);
+    }
+
+    private static boolean isOptionalPlanUnavailable(CourseException exception) {
+        return exception.getCode() == CourseErrorStatus.FAST_PLAN_UNAVAILABLE;
     }
 
     private CoursePreviewResponse.Option toOption(FastPlan plan) {
         List<CoursePreviewResponse.Stop> stops = plan.stops().stream()
-                .map(this::toStop)
+                .map(stop -> quietPlanner == null ? toStop(stop) : toStopWithCongestion(stop))
                 .toList();
         return new CoursePreviewResponse.Option(
                 plan.strategy(),
@@ -106,7 +126,7 @@ public class CoursePreviewService {
                 ceilMinutes(plan.totalTravelSeconds()),
                 aggregateDistance(stops),
                 null,
-                null,
+                averageCongestion(stops),
                 plan.scheduledStart().toLocalTime(),
                 plan.scheduledEnd().toLocalTime(),
                 stops);
@@ -126,6 +146,9 @@ public class CoursePreviewService {
                     : null;
             RouteOption easyRoute = rebuildRoute(fastStop, transitSelection);
             Integer routeDurationSeconds = easyRoute == null ? null : easyRoute.durationSeconds();
+            if (fastStop.incomingRoute() == null || fastStop.incomingRoute().durationSeconds() == null) {
+                return null;
+            }
             Integer scheduleDurationSeconds = routeDurationSeconds == null
                     || routeDurationSeconds < 0
                     ? fastStop.incomingRoute().durationSeconds()
@@ -141,7 +164,24 @@ public class CoursePreviewService {
                     effectiveArrival = opening;
                 }
             }
+            if (place.arrivalDeadline() != null
+                    && effectiveArrival.isAfter(fastPlan.scheduledStart()
+                    .toLocalDate()
+                    .atTime(place.arrivalDeadline())
+                    .minusMinutes(ARRIVAL_DEADLINE_BUFFER_MINUTES))) {
+                return null;
+            }
+            if (place.arrivalDeadline() != null) {
+                effectiveArrival = fastPlan.scheduledStart()
+                        .toLocalDate()
+                        .atTime(place.arrivalDeadline())
+                        .minusMinutes(ARRIVAL_DEADLINE_BUFFER_MINUTES);
+            }
             LocalDateTime departure = effectiveArrival.plusMinutes(place.dwellMinutes());
+            if (place.closeTime() != null
+                    && departure.isAfter(fastPlan.scheduledStart().toLocalDate().atTime(place.closeTime()))) {
+                return null;
+            }
             BigDecimal ascentMeters = ascentMeters(fastStop, transitSelection);
             easyStops.add(new EasyPlannedStop(
                     fastStop,
@@ -166,7 +206,8 @@ public class CoursePreviewService {
                 null,
                 fastPlan.scheduledStart().toLocalTime(),
                 currentTime.toLocalTime(),
-                stops);
+                stops,
+                elevationComparisons(fastPlan, transitSelections));
     }
 
     private CoursePreviewResponse.Option toOption(QuietPlan plan) {
@@ -216,7 +257,24 @@ public class CoursePreviewService {
                 place.closeTime(),
                 null,
                 null,
+                incomingRoute == null ? null : incomingRoute.mode(),
+                incomingRoute,
+                plannedStop.alternativeRoute(),
                 incomingRoute);
+    }
+
+    private CoursePreviewResponse.Stop toStopWithCongestion(PlannedStop plannedStop) {
+        CoursePreviewResponse.Stop stop = toStop(plannedStop);
+        var level = quietPlanner.forecast(plannedStop.resolvedPlace(), plannedStop.effectiveArrival());
+        BigDecimal score = level == null ? null : BigDecimal.valueOf(level.score());
+        return new CoursePreviewResponse.Stop(
+                stop.sequenceNo(), stop.basketItemId(), stop.placeName(), stop.address(),
+                stop.latitude(), stop.longitude(), stop.defaultDwellMinutes(), stop.dwellMinutes(),
+                stop.dwellSource(), stop.arrivalDeadline(), stop.arrivalBufferMinutes(),
+                stop.scheduledArrival(), stop.scheduledDeparture(), stop.travelMinutesFromPrevious(),
+                stop.travelDistanceMeters(), stop.ascentMeters(), score, stop.hoursSourceType(),
+                stop.openTime(), stop.closeTime(), stop.eventId(), stop.eventEndTime(), stop.selectedMode(),
+                stop.selectedRoute(), stop.alternativeRoute(), stop.incomingRoute());
     }
 
     private CoursePreviewResponse.Stop toStop(PlannedQuietStop plannedStop) {
@@ -244,6 +302,9 @@ public class CoursePreviewService {
                 place.openTime(),
                 place.closeTime(),
                 null,
+                null,
+                incomingRoute == null ? null : incomingRoute.mode(),
+                incomingRoute,
                 null,
                 incomingRoute);
     }
@@ -275,6 +336,9 @@ public class CoursePreviewService {
                 place.closeTime(),
                 null,
                 null,
+                incomingRoute == null ? null : incomingRoute.mode(),
+                incomingRoute,
+                plannedStop.alternativeRoute(),
                 incomingRoute);
     }
 
@@ -464,6 +528,54 @@ public class CoursePreviewService {
             total = total.add(stop.ascentMeters());
         }
         return total.setScale(2, RoundingMode.HALF_UP);
+    }
+
+    private static BigDecimal averageCongestion(List<CoursePreviewResponse.Stop> stops) {
+        if (stops.isEmpty() || stops.stream().anyMatch(stop -> stop.congestionScore() == null)) return null;
+        return stops.stream().map(CoursePreviewResponse.Stop::congestionScore)
+                .reduce(BigDecimal.ZERO, BigDecimal::add)
+                .divide(BigDecimal.valueOf(stops.size()), 2, RoundingMode.HALF_UP);
+    }
+
+    private static List<CoursePreviewResponse.ElevationComparison> elevationComparisons(
+            FastPlan fastPlan, List<EasyTransitSelection> selections) {
+        List<CoursePreviewResponse.ElevationComparison> result = new ArrayList<>();
+        for (int index = 0; index < fastPlan.stops().size(); index++) {
+            PlannedStop stop = fastPlan.stops().get(index);
+            EasyTransitSelection selection = index < selections.size() ? selections.get(index) : null;
+            List<WalkSelection> walks = selection == null ? List.of() : selection.walkSelections();
+            result.add(new CoursePreviewResponse.ElevationComparison(
+                    stop.sequence(), stop.resolvedPlace().placeName(),
+                    sumProfileMetric(walks, true, false), sumProfileMetric(walks, false, false),
+                    sumProfileMetric(walks, true, true), sumProfileMetric(walks, false, true),
+                    minimumCoverage(walks, true), minimumCoverage(walks, false)));
+        }
+        return List.copyOf(result);
+    }
+
+    private static BigDecimal sumProfileMetric(
+            List<WalkSelection> walks, boolean original, boolean steepDistance) {
+        if (walks.isEmpty()) return BigDecimal.ZERO.setScale(2);
+        double total = 0.0;
+        for (WalkSelection walk : walks) {
+            var profile = original ? walk.originalElevationProfile() : walk.elevationProfile();
+            Double value = profile == null ? null
+                    : steepDistance ? profile.steepUphillDistanceMeters() : profile.ascentMeters();
+            if (value == null || !Double.isFinite(value)) return null;
+            total += value;
+        }
+        return BigDecimal.valueOf(total).setScale(2, RoundingMode.HALF_UP);
+    }
+
+    private static BigDecimal minimumCoverage(List<WalkSelection> walks, boolean original) {
+        if (walks.isEmpty()) return BigDecimal.valueOf(100).setScale(2);
+        double coverage = 100.0;
+        for (WalkSelection walk : walks) {
+            var profile = original ? walk.originalElevationProfile() : walk.elevationProfile();
+            if (profile == null || profile.coveragePercent() == null) return null;
+            coverage = Math.min(coverage, profile.coveragePercent());
+        }
+        return BigDecimal.valueOf(coverage).setScale(2, RoundingMode.HALF_UP);
     }
 
     private static Integer ceilMinutes(long seconds) {

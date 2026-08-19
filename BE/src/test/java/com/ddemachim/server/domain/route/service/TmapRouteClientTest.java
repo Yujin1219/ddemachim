@@ -103,8 +103,6 @@ class TmapRouteClientTest {
                         }
                         """))
                 .andRespond(withSuccess(TRANSIT_RESPONSE, MediaType.APPLICATION_JSON));
-        testClient.server().expect(requestTo(org.hamcrest.Matchers.containsString("/transit/routes")))
-                .andRespond(withSuccess(TRANSIT_RESPONSE, MediaType.APPLICATION_JSON));
 
         SelectedTransitRoute selected = testClient.client()
                 .findSelectedTransit(ORIGIN, DESTINATION);
@@ -131,6 +129,26 @@ class TmapRouteClientTest {
         assertThatThrownBy(() -> selected.walkSegments().add(
                         selected.walkSegments().getFirst()))
                 .isInstanceOf(UnsupportedOperationException.class);
+        testClient.server().verify();
+    }
+
+    @Test
+    void transitFailure_isNotCachedAndTheSamePairIsRetriedAcrossEntrypoints() {
+        TestClient testClient = testClient("test-key");
+        testClient.server().expect(requestTo(org.hamcrest.Matchers.containsString("/transit/routes")))
+                .andRespond(withServerError());
+        testClient.server().expect(requestTo(org.hamcrest.Matchers.containsString("/transit/routes")))
+                .andRespond(withSuccess(TRANSIT_RESPONSE, MediaType.APPLICATION_JSON));
+
+        assertThatThrownBy(() -> testClient.client().findTransit(ORIGIN, DESTINATION))
+                .isInstanceOf(RouteProviderException.class)
+                .extracting("reason")
+                .isEqualTo(RouteUnavailableReason.PROVIDER_UNAVAILABLE);
+
+        SelectedTransitRoute retried = testClient.client()
+                .findSelectedTransit(ORIGIN, DESTINATION);
+
+        assertThat(retried.option().durationSeconds()).isEqualTo(1_320);
         testClient.server().verify();
     }
 

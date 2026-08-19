@@ -220,7 +220,6 @@ test('fetchCoursePreview posts the exact authenticated draft and preserves abort
   const payload = {
     serviceDate: '2026-08-18',
     desiredStartTime: '10:00',
-    desiredEndTime: '18:00',
     start: {
       type: 'SEARCHED_PLACE',
       name: '안국역 1번 출구',

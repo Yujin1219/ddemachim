@@ -5,17 +5,15 @@ import {
   createCourseConditionDefaults,
   formatCourseDateLabel,
   formatCourseTimeLabel,
-  isCourseTimeRangeValid,
   normalizeCourseStartPlace,
 } from './courseConditionsModel.js';
 
-test('course condition defaults round start time and keep the schedule on the same day', () => {
+test('course condition defaults round the start time', () => {
   assert.deepEqual(
     createCourseConditionDefaults(new Date(2026, 7, 18, 13, 43)),
     {
       serviceDate: '2026-08-18',
       desiredStartTime: '13:50',
-      desiredEndTime: '18:50',
     },
   );
   assert.deepEqual(
@@ -23,16 +21,8 @@ test('course condition defaults round start time and keep the schedule on the sa
     {
       serviceDate: '2026-08-18',
       desiredStartTime: '23:00',
-      desiredEndTime: '23:59',
     },
   );
-});
-
-test('course time range requires the end time to be later than the start time', () => {
-  assert.equal(isCourseTimeRangeValid('10:00', '18:00'), true);
-  assert.equal(isCourseTimeRangeValid('18:00', '18:00'), false);
-  assert.equal(isCourseTimeRangeValid('19:00', '18:00'), false);
-  assert.equal(isCourseTimeRangeValid('', '18:00'), false);
 });
 
 test('searched place is normalized to the preview request start contract', () => {

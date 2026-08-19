@@ -30,23 +30,10 @@ class CoursePreviewRequestTest {
     }
 
     @Test
-    void rejectsEndTimeThatIsNotAfterStartTime() {
-        CoursePreviewRequest request = new CoursePreviewRequest(
-                LocalDate.of(2026, 8, 18),
-                LocalTime.of(18, 0),
-                LocalTime.of(18, 0),
-                currentLocation(),
-                List.of(place(1L, 60, null)));
-
-        assertThat(paths(validator.validate(request))).contains("desiredTimeRangeValid");
-    }
-
-    @Test
     void rejectsDuplicateBasketItems() {
         CoursePreviewRequest request = new CoursePreviewRequest(
                 LocalDate.of(2026, 8, 18),
                 LocalTime.of(10, 0),
-                LocalTime.of(18, 0),
                 currentLocation(),
                 List.of(place(1L, 60, null), place(1L, 45, LocalTime.of(15, 0))));
 
@@ -58,13 +45,11 @@ class CoursePreviewRequestTest {
         CoursePreviewRequest empty = new CoursePreviewRequest(
                 LocalDate.of(2026, 8, 18),
                 LocalTime.of(10, 0),
-                LocalTime.of(18, 0),
                 currentLocation(),
                 List.of());
         CoursePreviewRequest invalidDwell = new CoursePreviewRequest(
                 LocalDate.of(2026, 8, 18),
                 LocalTime.of(10, 0),
-                LocalTime.of(18, 0),
                 currentLocation(),
                 List.of(place(1L, 0, null)));
 
@@ -77,7 +62,6 @@ class CoursePreviewRequestTest {
         CoursePreviewRequest request = new CoursePreviewRequest(
                 LocalDate.of(2026, 8, 18),
                 LocalTime.of(10, 0),
-                LocalTime.of(18, 0),
                 currentLocation(),
                 List.of(
                         place(1L, 30, null),
@@ -95,7 +79,6 @@ class CoursePreviewRequestTest {
         CoursePreviewRequest request = new CoursePreviewRequest(
                 LocalDate.of(2026, 8, 18),
                 LocalTime.of(10, 0),
-                LocalTime.of(18, 0),
                 currentLocation(),
                 List.of(
                         place(1L, 30, null),
@@ -114,7 +97,6 @@ class CoursePreviewRequestTest {
         CoursePreviewRequest request = new CoursePreviewRequest(
                 LocalDate.of(2026, 8, 18),
                 LocalTime.of(10, 0),
-                LocalTime.of(18, 0),
                 searchedWithoutName,
                 List.of(place(1L, 60, null)));
 
@@ -128,18 +110,16 @@ class CoursePreviewRequestTest {
                 null,
                 null,
                 null,
-                null,
                 List.of(place(0L, 60, null)));
 
         assertThat(paths(validator.validate(request)))
-                .contains("serviceDate", "desiredStartTime", "desiredEndTime", "start", "places[0].basketItemId");
+                .contains("serviceDate", "desiredStartTime", "start", "places[0].basketItemId");
     }
 
     private static CoursePreviewRequest validRequest() {
         return new CoursePreviewRequest(
                 LocalDate.of(2026, 8, 18),
                 LocalTime.of(10, 0),
-                LocalTime.of(18, 0),
                 currentLocation(),
                 List.of(place(1L, 60, LocalTime.of(15, 0)), place(2L, 45, null)));
     }

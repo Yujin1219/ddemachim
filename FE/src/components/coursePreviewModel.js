@@ -35,7 +35,6 @@ export function buildCoursePreviewRequest(draft, places) {
   return {
     serviceDate: draft?.serviceDate,
     desiredStartTime: draft?.desiredStartTime,
-    desiredEndTime: draft?.desiredEndTime,
     start: {
       type: draft?.start?.type,
       name: draft?.start?.name,
@@ -53,7 +52,6 @@ export function buildCoursePreviewRequest(draft, places) {
 export function validateCoursePreviewRequest(payload) {
   const serviceDateValid = isValidServiceDate(payload?.serviceDate);
   const startTime = normalizeTime(payload?.desiredStartTime);
-  const endTime = normalizeTime(payload?.desiredEndTime);
   const startType = payload?.start?.type;
   const latitude = payload?.start?.latitude;
   const longitude = payload?.start?.longitude;
@@ -61,7 +59,7 @@ export function validateCoursePreviewRequest(payload) {
     && typeof latitude === 'number' && Number.isFinite(latitude) && latitude >= -90 && latitude <= 90
     && typeof longitude === 'number' && Number.isFinite(longitude) && longitude >= -180 && longitude <= 180
     && (startType !== 'SEARCHED_PLACE' || Boolean(payload?.start?.name?.trim()));
-  if (!serviceDateValid || !startTime || !endTime || endTime <= startTime || !startValid) {
+  if (!serviceDateValid || !startTime || !startValid) {
     return '출발 위치와 날짜, 시간을 먼저 설정해주세요.';
   }
 
@@ -169,8 +167,8 @@ function normalizeRoute(route) {
   };
 }
 
-function flattenRouteLegs(stops) {
-  return stops.flatMap((stop) => (stop.incomingRoute?.legs || []).flatMap((leg) => {
+export function flattenRouteLegs(stops) {
+  return stops.flatMap((stop) => (stop.selectedRoute?.legs || stop.incomingRoute?.legs || []).flatMap((leg) => {
     if (leg.geometry) return [leg];
     if (leg.mode !== 'WALK') return [];
     return leg.steps
@@ -188,7 +186,147 @@ function flattenRouteLegs(stops) {
   }));
 }
 
+function routeDurationMinutes(route) {
+  if (!route || route.status !== 'AVAILABLE' || route.durationSeconds === null || route.durationSeconds === undefined) {
+    return null;
+  }
+  return route.durationSeconds >= 0 ? Math.ceil(route.durationSeconds / 60) : null;
+}
+
+function routeDistanceMeters(route) {
+  if (!route || route.status !== 'AVAILABLE' || route.distanceMeters === null || route.distanceMeters === undefined) {
+    return null;
+  }
+  return route.distanceMeters >= 0 ? route.distanceMeters : null;
+}
+
+function minutesFromTime(value) {
+  const normalized = normalizeTime(value);
+  if (!normalized) return null;
+  const [hours, minutes] = normalized.split(':').map(Number);
+  return (hours * 60) + minutes;
+}
+
+function timelineMinutes(value, notBefore = null) {
+  const minutes = minutesFromTime(value);
+  if (minutes === null) return null;
+  if (!Number.isFinite(notBefore)) return minutes;
+  return minutes + (Math.max(0, Math.ceil((notBefore - minutes) / 1440)) * 1440);
+}
+
+function formatTimelineTime(minutes) {
+  if (!Number.isFinite(minutes)) return null;
+  const normalized = ((minutes % 1440) + 1440) % 1440;
+  return `${String(Math.floor(normalized / 60)).padStart(2, '0')}:${String(normalized % 60).padStart(2, '0')}`;
+}
+
+function offsetMetric(value, delta) {
+  return Number.isFinite(value) && Number.isFinite(delta) ? value + delta : value;
+}
+
+export function stopRouteSelectionKey(stop, index = 0) {
+  return String(stop?.basketItemId ?? stop?.sequenceNo ?? index);
+}
+
+export function isTerrainEligibleRoute(route) {
+  const duration = routeDurationMinutes(route);
+  return route?.mode === 'WALK' && duration !== null && duration <= 20;
+}
+
+/**
+ * Keeps the server response as the scheduling baseline. A shorter route uses
+ * existing server-side waiting/fixed-time slack before changing later stops;
+ * a longer route propagates only the resulting overrun.
+ */
+export function applyRouteSelections(preview, selections = {}) {
+  if (!preview || !Array.isArray(preview.stops)) return preview;
+  let totalTravelDurationDelta = 0;
+  let cumulativeDistanceDelta = 0;
+  let hasTravelDurationDelta = false;
+  let hasDistanceDelta = false;
+  let scheduleRecalculated = false;
+  let previousBaselineDeparture = timelineMinutes(preview.scheduledStart);
+  let previousAdjustedDeparture = previousBaselineDeparture;
+  let lastBaselineDeparture = null;
+  let lastScheduleShift = null;
+  const selectionSignature = [];
+  const stops = preview.stops.map((stop, index) => {
+    const key = stopRouteSelectionKey(stop, index);
+    const hasAlternative = Boolean(stop?.alternativeRoute);
+    const useAlternative = hasAlternative && selections[key] === 'alternative';
+    const selectedRoute = useAlternative ? stop.alternativeRoute : (stop.selectedRoute || stop.incomingRoute);
+    const baselineRoute = stop.selectedRoute || stop.incomingRoute;
+    const baselineDuration = routeDurationMinutes(baselineRoute);
+    const selectedDuration = routeDurationMinutes(selectedRoute);
+    const baselineDistance = routeDistanceMeters(baselineRoute);
+    const selectedDistance = routeDistanceMeters(selectedRoute);
+    if (useAlternative) {
+      scheduleRecalculated = true;
+      selectionSignature.push(`${key}:alternative`);
+    }
+    if (baselineDuration !== null && selectedDuration !== null) {
+      totalTravelDurationDelta += selectedDuration - baselineDuration;
+      hasTravelDurationDelta = true;
+    }
+    if (baselineDistance !== null && selectedDistance !== null) {
+      cumulativeDistanceDelta += selectedDistance - baselineDistance;
+      hasDistanceDelta = true;
+    }
+    const baselineArrival = timelineMinutes(stop.scheduledArrival, previousBaselineDeparture);
+    const baselineDeparture = timelineMinutes(stop.scheduledDeparture, baselineArrival);
+    const canRecalculateSchedule = baselineDuration !== null
+      && selectedDuration !== null
+      && baselineArrival !== null
+      && baselineDeparture !== null
+      && baselineDeparture >= baselineArrival
+      && previousAdjustedDeparture !== null;
+    const adjustedArrival = canRecalculateSchedule
+      ? Math.max(baselineArrival, previousAdjustedDeparture + selectedDuration)
+      : baselineArrival;
+    const adjustedDeparture = canRecalculateSchedule
+      ? adjustedArrival + (baselineDeparture - baselineArrival)
+      : baselineDeparture;
+    if (baselineDeparture !== null) {
+      previousBaselineDeparture = baselineDeparture;
+      lastBaselineDeparture = baselineDeparture;
+    } else {
+      previousBaselineDeparture = null;
+    }
+    previousAdjustedDeparture = adjustedDeparture;
+    lastScheduleShift = canRecalculateSchedule ? adjustedDeparture - baselineDeparture : null;
+    return {
+      ...stop,
+      selectedMode: selectedRoute?.mode || stop.selectedMode || null,
+      selectedRoute,
+      // Keep the legacy field as an alias so older consumers keep rendering the selected route.
+      incomingRoute: selectedRoute,
+      travelMinutesFromPrevious: selectedDuration === null ? stop.travelMinutesFromPrevious : selectedDuration,
+      travelDistanceMeters: selectedDistance === null ? stop.travelDistanceMeters : selectedDistance,
+      scheduledArrival: canRecalculateSchedule ? formatTimelineTime(adjustedArrival) : stop.scheduledArrival,
+      scheduledDeparture: canRecalculateSchedule ? formatTimelineTime(adjustedDeparture) : stop.scheduledDeparture,
+    };
+  });
+  if (!scheduleRecalculated) return preview;
+  const travelDurationDelta = hasTravelDurationDelta ? totalTravelDurationDelta : 0;
+  const distanceDelta = hasDistanceDelta ? cumulativeDistanceDelta : 0;
+  const baselineScheduledEnd = timelineMinutes(preview.scheduledEnd, lastBaselineDeparture);
+  const canRecalculateEnd = baselineScheduledEnd !== null && lastScheduleShift !== null;
+  const timelineDurationDelta = canRecalculateEnd ? lastScheduleShift : 0;
+  return {
+    ...preview,
+    stops,
+    routeLegs: flattenRouteLegs(stops),
+    totalTravelMinutes: offsetMetric(preview.totalTravelMinutes, travelDurationDelta),
+    totalDurationMinutes: offsetMetric(preview.totalDurationMinutes, timelineDurationDelta),
+    totalDistanceMeters: offsetMetric(preview.totalDistanceMeters, distanceDelta),
+    scheduledEnd: canRecalculateEnd ? formatTimelineTime(baselineScheduledEnd + timelineDurationDelta) : preview.scheduledEnd,
+    scheduleRecalculated,
+    routeFitKey: `${preview.routeFitKey || 'preview'}|legs:${selectionSignature.join(',') || 'selected'}`,
+  };
+}
+
 function normalizeStop(stop) {
+  const selectedRoute = normalizeRoute(stop?.selectedRoute) || normalizeRoute(stop?.incomingRoute);
   return {
     ...stop,
     sequenceNo: finiteNumber(stop?.sequenceNo),
@@ -208,7 +346,11 @@ function normalizeStop(stop) {
     openTime: normalizeTime(stop?.openTime),
     closeTime: normalizeTime(stop?.closeTime),
     eventEndTime: normalizeTime(stop?.eventEndTime),
-    incomingRoute: normalizeRoute(stop?.incomingRoute),
+    selectedMode: stop?.selectedMode || selectedRoute?.mode || null,
+    selectedRoute,
+    alternativeRoute: normalizeRoute(stop?.alternativeRoute),
+    // selectedRoute is the canonical field; incomingRoute remains its legacy alias.
+    incomingRoute: selectedRoute,
   };
 }
 
@@ -217,6 +359,17 @@ function normalizeOption(response, option) {
   const stops = option.stops
     .map(normalizeStop)
     .sort((left, right) => (left.sequenceNo ?? Number.MAX_SAFE_INTEGER) - (right.sequenceNo ?? Number.MAX_SAFE_INTEGER));
+  const elevationComparisons = Array.isArray(option.elevationComparisons)
+    ? option.elevationComparisons.map((item) => ({
+      ...item,
+      sequenceNo: finiteNumber(item?.sequenceNo),
+      originalAscentMeters: finiteNumber(item?.originalAscentMeters),
+      easyAscentMeters: finiteNumber(item?.easyAscentMeters),
+      originalSteepUphillDistanceMeters: finiteNumber(item?.originalSteepUphillDistanceMeters),
+      easySteepUphillDistanceMeters: finiteNumber(item?.easySteepUphillDistanceMeters),
+      originalCoveragePercent: finiteNumber(item?.originalCoveragePercent),
+      easyCoveragePercent: finiteNumber(item?.easyCoveragePercent),
+    })) : [];
 
   return {
     ...option,
@@ -227,9 +380,9 @@ function normalizeOption(response, option) {
     totalDistanceMeters: finiteNumber(option.totalDistanceMeters),
     totalAscentMeters: finiteNumber(option.totalAscentMeters),
     averageCongestionScore: congestionNumber(option.averageCongestionScore),
+    elevationComparisons,
     serviceDate: response.serviceDate || null,
     desiredStartTime: normalizeTime(response.desiredStartTime),
-    desiredEndTime: normalizeTime(response.desiredEndTime),
     scheduledStart: normalizeTime(option.scheduledStart),
     scheduledEnd: normalizeTime(option.scheduledEnd),
     stops,

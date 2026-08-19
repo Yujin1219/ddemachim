@@ -25,8 +25,12 @@ public class CoursePreviewController {
 
     @Operation(
             summary = "전략별 코스 미리보기",
-            description = "코스를 저장하지 않고 FAST, EASY, QUIET 전략의 방문 일정과 경로를 계산합니다. "
-                    + "EASY는 FAST 방문 순서와 대중교통 구간을 유지하면서 도보 구간의 경로, 이동 지표, 오르막 고도를 반영합니다.")
+            description = "코스를 저장하지 않고 FAST 전략의 방문 일정과 경로를 계산합니다. "
+                    + "종료 희망 시각은 입력받지 않으며, 실제 종료 시각은 각 선택지의 scheduledEnd로 계산해 반환합니다. "
+                    + "EASY와 QUIET은 생성 가능한 경우에만 함께 반환됩니다. "
+                    + "EASY는 FAST 방문 순서와 대중교통 구간을 유지하면서 도보 구간의 경로, 이동 지표, 오르막 고도를 반영합니다. "
+                    + "FAST를 만들 수 없으면 HTTP 422 COURSE4222를 반환하며, result에는 요청한 모든 장소의 "
+                    + "진단 사유와 장소를 삭제하지 않는 조정 제안이 포함됩니다.")
     @PostMapping("/preview")
     public ResponseEntity<ApiResponse<CoursePreviewResponse>> preview(
             @AuthenticationPrincipal Long memberId,

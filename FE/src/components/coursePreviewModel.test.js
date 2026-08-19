@@ -8,6 +8,8 @@ import {
   coursePreviewErrorMessage,
   formatPreviewDistance,
   formatPreviewDuration,
+  applyRouteSelections,
+  isTerrainEligibleRoute,
   normalizeCoursePreview,
   validateCoursePreviewRequest,
 } from './coursePreviewModel.js';
@@ -87,7 +89,7 @@ test('selects FAST by strategy and normalizes server times and stop order', () =
   assert.ok(preview, 'FAST preview should be normalized');
   assert.equal(preview.strategy, 'FAST');
   assert.equal(preview.desiredStartTime, '10:00');
-  assert.equal(preview.desiredEndTime, '18:00');
+  assert.equal(Object.hasOwn(preview, 'desiredEndTime'), false);
   assert.equal(preview.scheduledStart, '10:00');
   assert.equal(preview.scheduledEnd, '14:20');
   assert.deepEqual(preview.stops.map((item) => item.sequenceNo), [1, 2]);
@@ -220,10 +222,132 @@ test('flattens incoming route legs and falls back to WALK step geometry', () => 
   );
 });
 
+test('prefers selectedRoute while preserving incomingRoute as its legacy alias', () => {
+  const selectedGeometry = { type: 'LineString', coordinates: [[126.98, 37.57], [126.99, 37.58]] };
+  const preview = normalizeCoursePreview({
+    options: [option('FAST', [stop(1, {
+      selectedMode: 'WALK',
+      selectedRoute: route({
+        mode: 'WALK',
+        durationSeconds: 720,
+        distanceMeters: 950,
+        legs: [{ mode: 'WALK', routeName: '선택 도보', durationSeconds: 720, distanceMeters: 950, geometry: selectedGeometry, steps: [] }],
+      }),
+      alternativeRoute: route({ mode: 'TRANSIT', durationSeconds: 1080 }),
+      incomingRoute: route({ mode: 'TRANSIT', durationSeconds: 900 }),
+    })])],
+  });
+
+  const normalizedStop = preview.stops[0];
+  assert.equal(normalizedStop.selectedRoute.mode, 'WALK');
+  assert.equal(normalizedStop.incomingRoute, normalizedStop.selectedRoute);
+  assert.equal(normalizedStop.alternativeRoute.mode, 'TRANSIT');
+  assert.deepEqual(preview.routeLegs.map((leg) => leg.geometry), [selectedGeometry]);
+});
+
+test('absorbs a shorter selected alternative into the server baseline waiting time', () => {
+  const base = normalizeCoursePreview({
+    options: [option('FAST', [
+      stop(1, {
+        basketItemId: 21,
+        scheduledArrival: '10:18:00',
+        scheduledDeparture: '11:03:00',
+        dwellMinutes: 45,
+        selectedRoute: route({ mode: 'TRANSIT', durationSeconds: 1080, distanceMeters: 2400 }),
+        alternativeRoute: route({ mode: 'WALK', durationSeconds: 720, distanceMeters: 950, legs: [] }),
+      }),
+      stop(2, {
+        basketItemId: 22,
+        scheduledArrival: '11:18:00',
+        scheduledDeparture: '12:03:00',
+        dwellMinutes: 45,
+        selectedRoute: route({ mode: 'TRANSIT', durationSeconds: 900, distanceMeters: 1800 }),
+      }),
+    ], {
+      totalDurationMinutes: 123,
+      totalTravelMinutes: 33,
+      totalDistanceMeters: 4200,
+      scheduledEnd: '12:03:00',
+    })],
+  });
+
+  const recalculated = applyRouteSelections(base, { 21: 'alternative' });
+  assert.equal(recalculated.scheduleRecalculated, true);
+  assert.equal(recalculated.stops[0].incomingRoute.mode, 'WALK');
+  assert.equal(recalculated.stops[0].travelMinutesFromPrevious, 12);
+  assert.equal(recalculated.stops[0].scheduledArrival, '10:18');
+  assert.equal(recalculated.stops[0].scheduledDeparture, '11:03');
+  assert.equal(recalculated.stops[1].scheduledArrival, '11:18');
+  assert.equal(recalculated.stops[1].scheduledDeparture, '12:03');
+  assert.equal(recalculated.stops[0].dwellMinutes, 45);
+  assert.equal(recalculated.totalTravelMinutes, 27);
+  assert.equal(recalculated.totalDurationMinutes, 123);
+  assert.equal(recalculated.totalDistanceMeters, 2750);
+  assert.equal(recalculated.scheduledEnd, '12:03');
+  assert.match(recalculated.routeFitKey, /21:alternative/);
+});
+
+test('propagates a longer selected alternative after retaining each stop base dwell duration', () => {
+  const base = normalizeCoursePreview({
+    options: [option('FAST', [
+      stop(1, {
+        basketItemId: 41,
+        scheduledArrival: '10:18:00',
+        scheduledDeparture: '11:03:00',
+        dwellMinutes: 45,
+        selectedRoute: route({ mode: 'TRANSIT', durationSeconds: 1080 }),
+        alternativeRoute: route({ mode: 'WALK', durationSeconds: 1440 }),
+      }),
+      stop(2, {
+        basketItemId: 42,
+        scheduledArrival: '11:18:00',
+        scheduledDeparture: '12:03:00',
+        dwellMinutes: 45,
+        selectedRoute: route({ mode: 'TRANSIT', durationSeconds: 900 }),
+      }),
+    ], {
+      totalDurationMinutes: 123,
+      totalTravelMinutes: 33,
+      scheduledEnd: '12:03:00',
+    })],
+  });
+  const recalculated = applyRouteSelections(base, { 41: 'alternative' });
+
+  assert.equal(recalculated.stops[0].scheduledArrival, '10:24');
+  assert.equal(recalculated.stops[0].scheduledDeparture, '11:09');
+  assert.equal(recalculated.stops[1].scheduledArrival, '11:24');
+  assert.equal(recalculated.stops[1].scheduledDeparture, '12:09');
+  assert.equal(recalculated.stops[0].dwellMinutes, 45);
+  assert.equal(recalculated.totalTravelMinutes, 39);
+  assert.equal(recalculated.totalDurationMinutes, 129);
+  assert.equal(recalculated.scheduledEnd, '12:09');
+});
+
+test('keeps the server schedule when route durations are unavailable while still recording the selection', () => {
+  const base = normalizeCoursePreview({
+    options: [option('FAST', [stop(1, {
+      basketItemId: 31,
+      selectedRoute: route({ durationSeconds: null }),
+      alternativeRoute: route({ mode: 'WALK', durationSeconds: 720 }),
+    })])],
+  });
+  const recalculated = applyRouteSelections(base, { 31: 'alternative' });
+  assert.equal(recalculated.scheduleRecalculated, true);
+  assert.equal(recalculated.stops[0].scheduledArrival, base.stops[0].scheduledArrival);
+  assert.equal(recalculated.totalDurationMinutes, base.totalDurationMinutes);
+});
+
+test('only treats a short selected walking route as terrain eligible', () => {
+  assert.equal(isTerrainEligibleRoute(route({ mode: 'WALK', durationSeconds: 1200 })), true);
+  assert.equal(isTerrainEligibleRoute(route({ mode: 'WALK', durationSeconds: 1201 })), false);
+  assert.equal(isTerrainEligibleRoute(route({ mode: 'TRANSIT', durationSeconds: 600 })), false);
+});
+
 test('builds the exact preview payload and validates the one-to-five unique place boundary', () => {
   const payload = buildCoursePreviewRequest({
     serviceDate: '2026-08-18',
     desiredStartTime: '10:00',
+    // Legacy drafts may still contain this key, but it must not reach the API.
     desiredEndTime: '18:00',
     start: {
       type: 'SEARCHED_PLACE',
@@ -240,7 +364,6 @@ test('builds the exact preview payload and validates the one-to-five unique plac
   assert.deepEqual(payload, {
     serviceDate: '2026-08-18',
     desiredStartTime: '10:00',
-    desiredEndTime: '18:00',
     start: {
       type: 'SEARCHED_PLACE',
       name: '안국역 1번 출구',
@@ -262,12 +385,11 @@ test('rejects preview requests that bypass valid conditions or stop settings', (
   const valid = buildCoursePreviewRequest({
     serviceDate: '2026-08-18',
     desiredStartTime: '10:00',
-    desiredEndTime: '18:00',
     start: { type: 'CURRENT_LOCATION', name: '현재 위치', latitude: 37.57, longitude: 126.98 },
   }, [{ basketItemId: 11, dwellMinutes: 60, arrivalDeadline: null }]);
 
   assert.equal(validateCoursePreviewRequest({ ...valid, start: null }), '출발 위치와 날짜, 시간을 먼저 설정해주세요.');
-  assert.equal(validateCoursePreviewRequest({ ...valid, desiredEndTime: '09:00' }), '출발 위치와 날짜, 시간을 먼저 설정해주세요.');
+  assert.equal(validateCoursePreviewRequest({ ...valid, desiredStartTime: '25:00' }), '출발 위치와 날짜, 시간을 먼저 설정해주세요.');
   assert.equal(validateCoursePreviewRequest({ ...valid, places: [{ basketItemId: 11, dwellMinutes: 0, arrivalDeadline: null }] }), '장소별 체류시간을 다시 확인해주세요.');
 });
 
@@ -275,7 +397,6 @@ test('requires serviceDate to be a real calendar date', () => {
   const payload = buildCoursePreviewRequest({
     serviceDate: '2028-02-29',
     desiredStartTime: '10:00',
-    desiredEndTime: '18:00',
     start: { type: 'CURRENT_LOCATION', name: '현재 위치', latitude: 37.57, longitude: 126.98 },
   }, [{ basketItemId: 11, dwellMinutes: 60, arrivalDeadline: null }]);
 
@@ -287,7 +408,6 @@ test('requires start coordinates to be actual finite numbers', () => {
   const payload = buildCoursePreviewRequest({
     serviceDate: '2026-08-18',
     desiredStartTime: '10:00',
-    desiredEndTime: '18:00',
     start: { type: 'CURRENT_LOCATION', name: '현재 위치', latitude: 37.57, longitude: 126.98 },
   }, [{ basketItemId: 11, dwellMinutes: 60, arrivalDeadline: null }]);
   const invalidMessage = '출발 위치와 날짜, 시간을 먼저 설정해주세요.';
@@ -301,7 +421,6 @@ test('requires integer numeric basket IDs and dwell minutes', () => {
   const payload = buildCoursePreviewRequest({
     serviceDate: '2026-08-18',
     desiredStartTime: '10:00',
-    desiredEndTime: '18:00',
     start: { type: 'CURRENT_LOCATION', name: '현재 위치', latitude: 37.57, longitude: 126.98 },
   }, [{ basketItemId: 11, dwellMinutes: 60, arrivalDeadline: null }]);
   const invalidMessage = '장소별 체류시간을 다시 확인해주세요.';

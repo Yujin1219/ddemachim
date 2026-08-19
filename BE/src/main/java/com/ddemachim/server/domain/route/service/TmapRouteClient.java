@@ -9,6 +9,8 @@ import com.ddemachim.server.domain.route.enums.RouteStatus;
 import com.ddemachim.server.domain.route.enums.RouteUnavailableReason;
 import com.ddemachim.server.domain.route.exception.RouteProviderException;
 import com.ddemachim.server.global.properties.TmapProperties;
+import com.github.benmanes.caffeine.cache.Cache;
+import com.github.benmanes.caffeine.cache.Caffeine;
 import java.io.IOException;
 import java.net.SocketTimeoutException;
 import java.net.http.HttpClient;
@@ -37,10 +39,13 @@ public class TmapRouteClient implements RouteProviderClient {
     private static final String WALKING_PATH = "/tmap/routes/pedestrian?version=1";
     private static final String TRANSIT_PATH = "/transit/routes";
     private static final String TAXI_PATH = "/tmap/routes?version=1";
+    private static final Duration DEFAULT_CACHE_TTL = Duration.ofMinutes(2);
+    private static final long DEFAULT_CACHE_MAXIMUM_SIZE = 1_000L;
 
     private final TmapProperties properties;
     private final ObjectMapper objectMapper;
     private final RestClient restClient;
+    private final Cache<TransitCacheKey, SelectedTransitRoute> transitCache;
 
     @Autowired
     public TmapRouteClient(TmapProperties properties, ObjectMapper objectMapper) {
@@ -59,6 +64,10 @@ public class TmapRouteClient implements RouteProviderClient {
         this.properties = properties;
         this.objectMapper = objectMapper;
         this.restClient = restClientBuilder.baseUrl(properties.getBaseUrl()).build();
+        this.transitCache = Caffeine.newBuilder()
+                .maximumSize(cacheMaximumSize(properties))
+                .expireAfterWrite(cacheTtl(properties))
+                .build();
     }
 
     private static RestClient.Builder productionRestClientBuilder(TmapProperties properties) {
@@ -139,6 +148,11 @@ public class TmapRouteClient implements RouteProviderClient {
         ensureConfigured();
         ensureCoordinates(origin, destination);
 
+        TransitCacheKey cacheKey = TransitCacheKey.from(origin, destination);
+        return transitCache.get(cacheKey, ignored -> loadSelectedTransit(origin, destination));
+    }
+
+    private SelectedTransitRoute loadSelectedTransit(Coordinate origin, Coordinate destination) {
         Map<String, Object> body = baseRequestBody(origin, destination);
         body.put("count", 10);
         body.put("lang", 0);
@@ -202,6 +216,23 @@ public class TmapRouteClient implements RouteProviderClient {
         } catch (RuntimeException exception) {
             throw unavailable();
         }
+    }
+
+    private static long cacheMaximumSize(TmapProperties properties) {
+        if (properties == null || properties.getCacheMaximumSize() <= 0) {
+            return DEFAULT_CACHE_MAXIMUM_SIZE;
+        }
+        return properties.getCacheMaximumSize();
+    }
+
+    private static Duration cacheTtl(TmapProperties properties) {
+        if (properties == null
+                || properties.getCacheTtl() == null
+                || properties.getCacheTtl().isNegative()
+                || properties.getCacheTtl().isZero()) {
+            return DEFAULT_CACHE_TTL;
+        }
+        return properties.getCacheTtl();
     }
 
     @Override
@@ -566,5 +597,20 @@ public class TmapRouteClient implements RouteProviderClient {
             Integer totalDistance,
             Integer distance,
             Integer taxiFare) {
+    }
+
+    private record TransitCacheKey(
+            double originLatitude,
+            double originLongitude,
+            double destinationLatitude,
+            double destinationLongitude) {
+
+        private static TransitCacheKey from(Coordinate origin, Coordinate destination) {
+            return new TransitCacheKey(
+                    origin.latitude(),
+                    origin.longitude(),
+                    destination.latitude(),
+                    destination.longitude());
+        }
     }
 }

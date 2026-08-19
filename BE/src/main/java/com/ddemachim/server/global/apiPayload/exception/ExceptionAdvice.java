@@ -1,6 +1,7 @@
 package com.ddemachim.server.global.apiPayload.exception;
 
 import com.ddemachim.server.global.apiPayload.ApiResponse;
+import com.ddemachim.server.domain.course.exception.CourseException;
 import com.ddemachim.server.global.apiPayload.code.ErrorReasonDTO;
 import com.ddemachim.server.global.apiPayload.code.status.ErrorStatus;
 import jakarta.servlet.http.HttpServletRequest;
@@ -91,7 +92,10 @@ public class ExceptionAdvice extends ResponseEntityExceptionHandler {
 
     private ResponseEntity<Object> handleExceptionInternal(
             Exception e, ErrorReasonDTO reason, HttpServletRequest request) {
-        ApiResponse<Object> body = ApiResponse.onFailure(reason.getCode(), reason.getMessage(), null);
+        Object resultDetail = e instanceof CourseException courseException
+                ? courseException.getResultDetail()
+                : null;
+        ApiResponse<Object> body = ApiResponse.onFailure(reason.getCode(), reason.getMessage(), resultDetail);
         WebRequest webRequest = new ServletWebRequest(request);
         return super.handleExceptionInternal(e, body, HttpHeaders.EMPTY, reason.getHttpStatus(), webRequest);
     }

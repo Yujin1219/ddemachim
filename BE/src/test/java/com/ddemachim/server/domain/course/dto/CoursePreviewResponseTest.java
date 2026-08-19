@@ -33,7 +33,6 @@ class CoursePreviewResponseTest {
                 Instant.parse("2026-08-18T01:00:00Z"),
                 LocalDate.of(2026, 8, 18),
                 LocalTime.of(10, 0),
-                LocalTime.of(18, 0),
                 source);
         source.clear();
 
@@ -64,7 +63,7 @@ class CoursePreviewResponseTest {
         stops.clear();
 
         assertThat(option.stops()).hasSize(1);
-        assertThat(new CoursePreviewResponse(null, null, null, null, null).options()).isEmpty();
+        assertThat(new CoursePreviewResponse(null, null, null, null).options()).isEmpty();
         assertThat(new CoursePreviewResponse.Option(
                         CourseRouteStrategy.EASY,
                         0,

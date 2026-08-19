@@ -145,6 +145,17 @@ test('renders FAST schedule, authoritative hours, incoming legs, WALK steps, and
   assert.equal(map.props.routeLegs, preview.routeLegs);
   assert.equal(map.props.routeFitKey, 'generated-1');
   assert.equal(map.props.center, undefined);
+  assert.equal(map.props.interactive, true);
+  assert.equal(map.props.clusterPlaces, false);
+  assert.equal(map.props.showCongestionAreas, false);
+  assert.equal(map.props.fitPlaceMarkers, false);
+  assert.equal(map.props.placeRequestKey, 'generated-1');
+  assert.deepEqual(map.props.routeFitPadding, [20, 20, 20, 20]);
+  assert.deepEqual(await map.props.loadPlacesInBounds(), [
+    { id: '1-서울공예박물관', name: '서울공예박물관', latitude: 37.576, longitude: 126.983, sequenceNo: 1 },
+    { id: '2-도토리가든', name: '도토리가든', latitude: 37.58, longitude: 126.986, sequenceNo: 2 },
+  ]);
+  assert.equal(map.props.placeMarkerLabel({ sequenceNo: 2 }), 2);
 });
 
 test('switches every displayed and mapped value between FAST and QUIET by strategy', async () => {
@@ -208,9 +219,14 @@ test('switches every displayed and mapped value between FAST and QUIET by strate
   assert.equal(copy.includes('10:40 도착 · 11:40 출발'), true);
   assert.equal(copy.includes('평균 혼잡도 보통'), true);
   assert.equal(copy.includes('예상 혼잡도 약간 붐빔'), true);
-  assert.equal(copy.includes('서울공예박물관'), false);
+  assert.equal(copy.includes('서울공예박물관'), true);
   assert.equal(map.props.routeLegs, quiet.routeLegs);
   assert.equal(map.props.routeFitKey, quiet.routeFitKey);
+  assert.equal(map.props.placeRequestKey, quiet.routeFitKey);
+  assert.equal(map.props.fitPlaceMarkers, true);
+  assert.deepEqual(await map.props.loadPlacesInBounds(), [
+    { id: '1-한적한 북촌 정원', name: '한적한 북촌 정원', latitude: 35.18, longitude: 129.07, sequenceNo: 1 },
+  ]);
   assert.deepEqual(map.props.center, [129.07, 35.18]);
   assert.equal(map.props.ariaLabel, '한적한 코스 추천 경로 지도');
 });
@@ -244,6 +260,101 @@ test('resets a prior QUIET choice to FAST when a new response arrives', async ()
   assert.equal(nextRadios.find((input) => input.props.value === 'QUIET').props.checked, false);
   assert.equal(textContent(renderer.toJSON()).includes('2시간'), true);
   assert.equal(renderer.root.findByType(FakeMap).props.routeFitKey, 'next-fast-route');
+});
+
+test('switches an individual leg locally and propagates a longer route to its map and downstream schedule', async () => {
+  const alternativeGeometry = { type: 'LineString', coordinates: [[126.982, 37.572], [126.99, 37.58]] };
+  const alternativeRoute = {
+    mode: 'WALK',
+    status: 'AVAILABLE',
+    durationSeconds: 1200,
+    distanceMeters: 900,
+    legs: [{ mode: 'WALK', routeName: '대안 도보', durationSeconds: 1200, distanceMeters: 900, geometry: alternativeGeometry, steps: [] }],
+  };
+  const selectable = {
+    ...preview,
+    stops: [
+      {
+        ...preview.stops[0],
+        basketItemId: 101,
+        scheduledArrival: '10:15',
+        scheduledDeparture: '11:00',
+        selectedRoute: preview.stops[0].incomingRoute,
+        alternativeRoute,
+      },
+      {
+        ...preview.stops[1],
+        basketItemId: 102,
+        scheduledArrival: '11:15',
+        scheduledDeparture: '12:15',
+        selectedRoute: { ...preview.stops[0].incomingRoute, legs: [] },
+      },
+    ],
+  };
+  let renderer;
+  await act(async () => {
+    renderer = create(createElement(CoursePreviewResults, { preview: selectable, status: 'success', MapComponent: FakeMap }));
+  });
+
+  const alternative = renderer.root.findAllByType('input').find((input) => input.props.value === 'alternative');
+  assert.ok(alternative);
+  assert.equal(textContent(renderer.toJSON()).includes('대안 · 도보 20분'), true);
+  await act(async () => alternative.props.onChange());
+
+  const copy = textContent(renderer.toJSON());
+  const map = renderer.root.findByType(FakeMap);
+  assert.equal(copy.includes('대체 경로를 반영해 예상 일정이 다시 계산되었어요.'), true);
+  assert.equal(copy.includes('10:20 도착 · 11:05 출발'), true);
+  assert.equal(copy.includes('11:20 도착 · 12:20 출발'), true);
+  assert.equal(copy.includes('4시간 25분'), true);
+  assert.equal(copy.includes('이동 57분'), true);
+  assert.deepEqual(map.props.routeLegs, [alternativeRoute.legs[0]]);
+  assert.match(map.props.routeFitKey, /101:alternative/);
+  assert.equal(map.props.placeRequestKey, map.props.routeFitKey);
+  assert.deepEqual(await map.props.loadPlacesInBounds(), [
+    { id: 101, name: '서울공예박물관', latitude: 37.576, longitude: 126.983, sequenceNo: 1 },
+    { id: 102, name: '도토리가든', latitude: 37.58, longitude: 126.986, sequenceNo: 2 },
+  ]);
+});
+
+test('hides EASY terrain metrics for transit and reveals them only for a short selected walk', async () => {
+  const easyPreview = {
+    ...preview,
+    strategy: 'EASY',
+    totalAscentMeters: 18,
+    elevationComparisons: [{
+      sequenceNo: 1,
+      placeName: '서울공예박물관',
+      originalAscentMeters: 22,
+      easyAscentMeters: 18,
+      originalSteepUphillDistanceMeters: 50,
+      easySteepUphillDistanceMeters: 20,
+      easyCoveragePercent: 100,
+    }],
+    stops: [{
+      ...preview.stops[0],
+      basketItemId: 201,
+      ascentMeters: 18,
+      selectedRoute: preview.stops[0].incomingRoute,
+      alternativeRoute: {
+        mode: 'WALK',
+        status: 'AVAILABLE',
+        durationSeconds: 1200,
+        distanceMeters: 1000,
+        legs: [],
+      },
+    }],
+  };
+  let renderer;
+  await act(async () => {
+    renderer = create(createElement(CoursePreviewResults, { preview: easyPreview, status: 'success', MapComponent: FakeMap }));
+  });
+  assert.equal(textContent(renderer.toJSON()).includes('상승 고도'), false);
+
+  const alternative = renderer.root.findAllByType('input').find((input) => input.props.value === 'alternative');
+  await act(async () => alternative.props.onChange());
+  assert.equal(textContent(renderer.toJSON()).includes('상승 고도 18m'), true);
+  assert.equal(textContent(renderer.toJSON()).includes('도보 경사 비교'), true);
 });
 
 test('announces course preview loading as a busy status', async () => {

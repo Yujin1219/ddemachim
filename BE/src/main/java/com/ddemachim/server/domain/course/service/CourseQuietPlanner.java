@@ -37,7 +37,6 @@ public class CourseQuietPlanner {
             throw new CourseException(CourseErrorStatus.INVALID_PREVIEW_INPUT);
         }
         LocalDateTime start = request.serviceDate().atTime(request.desiredStartTime());
-        LocalDateTime desiredEnd = request.serviceDate().atTime(request.desiredEndTime());
         LocalDateTime currentTime = start;
         Coordinate currentCoordinate = new Coordinate(request.start().latitude(), request.start().longitude());
         List<ResolvedPlace> remaining = new ArrayList<>(resolvedPlaces);
@@ -54,7 +53,7 @@ public class CourseQuietPlanner {
                 } catch (RouteProviderException exception) {
                     continue;
                 }
-                Candidate candidate = feasibleCandidate(request, desiredEnd, currentTime, place, route);
+                Candidate candidate = feasibleCandidate(request, currentTime, place, route);
                 if (candidate != null && (selected == null || candidate.costSeconds() < selected.costSeconds())) {
                     selected = candidate;
                 }
@@ -83,9 +82,13 @@ public class CourseQuietPlanner {
                 stops);
     }
 
+    CourseCongestionLevel forecast(ResolvedPlace place, LocalDateTime expectedArrival) {
+        CourseCongestionLevel level = congestionForecastProvider.forecast(place, expectedArrival);
+        return level == null ? CourseCongestionLevel.NORMAL : level;
+    }
+
     private Candidate feasibleCandidate(
             CoursePreviewRequest request,
-            LocalDateTime desiredEnd,
             LocalDateTime currentTime,
             ResolvedPlace place,
             RouteOption route) {
@@ -100,23 +103,17 @@ public class CourseQuietPlanner {
                 arrival = opening;
             }
         }
-        if (place.arrivalDeadline() != null
-                && arrival.isAfter(request.serviceDate().atTime(place.arrivalDeadline())
-                        .minus(ARRIVAL_DEADLINE_BUFFER))) {
-            return null;
+        if (place.arrivalDeadline() != null) {
+            LocalDateTime latestArrival = request.serviceDate().atTime(place.arrivalDeadline())
+                    .minus(ARRIVAL_DEADLINE_BUFFER);
+            if (arrival.isAfter(latestArrival)) return null;
         }
         LocalDateTime departure = arrival.plusMinutes(place.dwellMinutes());
         if (place.closeTime() != null
                 && departure.isAfter(request.serviceDate().atTime(place.closeTime()))) {
             return null;
         }
-        if (departure.isAfter(desiredEnd)) {
-            return null;
-        }
-        CourseCongestionLevel level = congestionForecastProvider.forecast(place, arrival);
-        if (level == null) {
-            level = CourseCongestionLevel.NORMAL;
-        }
+        CourseCongestionLevel level = forecast(place, arrival);
         long costSeconds = route.durationSeconds() + level.penaltyMinutes() * 60L;
         return new Candidate(place, route, arrival, departure, level, costSeconds);
     }

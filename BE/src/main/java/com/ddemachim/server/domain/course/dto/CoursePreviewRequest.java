@@ -1,6 +1,7 @@
 package com.ddemachim.server.domain.course.dto;
 
 import com.ddemachim.server.domain.course.enums.CourseStartType;
+import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
 import io.swagger.v3.oas.annotations.media.Schema;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.AssertTrue;
@@ -19,6 +20,7 @@ import java.util.List;
 import java.util.Set;
 
 @Schema(description = "코스 미리보기 생성 요청")
+@JsonIgnoreProperties({"desiredEndTime"})
 public record CoursePreviewRequest(
         @Schema(description = "코스를 진행할 날짜", example = "2026-08-18", requiredMode = Schema.RequiredMode.REQUIRED)
                 @NotNull(message = "코스 날짜는 필수입니다.")
@@ -26,9 +28,6 @@ public record CoursePreviewRequest(
         @Schema(description = "출발 희망 시각", example = "10:00", requiredMode = Schema.RequiredMode.REQUIRED)
                 @NotNull(message = "출발 희망 시각은 필수입니다.")
                 LocalTime desiredStartTime,
-        @Schema(description = "종료 희망 시각", example = "18:00", requiredMode = Schema.RequiredMode.REQUIRED)
-                @NotNull(message = "종료 희망 시각은 필수입니다.")
-                LocalTime desiredEndTime,
         @Schema(description = "검색 또는 현재 위치로 확정된 출발점", requiredMode = Schema.RequiredMode.REQUIRED)
                 @NotNull(message = "출발 위치는 필수입니다.")
                 @Valid
@@ -37,14 +36,6 @@ public record CoursePreviewRequest(
                 @NotEmpty(message = "코스에 포함할 장소가 한 개 이상 필요합니다.")
                 @Size(max = 5, message = "코스에 포함할 장소는 최대 5개입니다.")
                 List<@NotNull @Valid Place> places) {
-
-    @AssertTrue(message = "종료 희망 시각은 출발 희망 시각보다 늦어야 합니다.")
-    @Schema(hidden = true)
-    public boolean isDesiredTimeRangeValid() {
-        return desiredStartTime == null
-                || desiredEndTime == null
-                || desiredEndTime.isAfter(desiredStartTime);
-    }
 
     @AssertTrue(message = "같은 장바구니 장소를 중복해서 요청할 수 없습니다.")
     @Schema(hidden = true)

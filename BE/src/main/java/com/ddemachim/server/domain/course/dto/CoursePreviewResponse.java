@@ -4,6 +4,7 @@ import com.ddemachim.server.domain.course.enums.CourseDwellSource;
 import com.ddemachim.server.domain.course.enums.CourseHoursSourceType;
 import com.ddemachim.server.domain.course.enums.CourseRouteStrategy;
 import com.ddemachim.server.domain.route.dto.RouteComparisonResponse.RouteOption;
+import com.ddemachim.server.domain.route.enums.RouteMode;
 import io.swagger.v3.oas.annotations.media.Schema;
 import java.math.BigDecimal;
 import java.time.Instant;
@@ -16,7 +17,6 @@ public record CoursePreviewResponse(
         @Schema(description = "미리보기를 계산한 시각") Instant generatedAt,
         @Schema(description = "코스 진행 날짜", example = "2026-08-18") LocalDate serviceDate,
         @Schema(description = "요청한 출발 희망 시각", example = "10:00") LocalTime desiredStartTime,
-        @Schema(description = "요청한 종료 희망 시각", example = "18:00") LocalTime desiredEndTime,
         @Schema(description = "사용자가 비교할 코스 선택지") List<Option> options) {
 
     public CoursePreviewResponse {
@@ -35,12 +35,33 @@ public record CoursePreviewResponse(
                     BigDecimal averageCongestionScore,
             @Schema(description = "계산된 코스 시작 시각", example = "10:00") LocalTime scheduledStart,
             @Schema(description = "계산된 코스 종료 시각", example = "14:20") LocalTime scheduledEnd,
-            @Schema(description = "방문 순서대로 정렬된 장소") List<Stop> stops) {
+            @Schema(description = "방문 순서대로 정렬된 장소") List<Stop> stops,
+            @Schema(description = "편한 길의 도보 구간별 원본/선택 경사 비교") List<ElevationComparison> elevationComparisons) {
 
         public Option {
             stops = stops == null ? List.of() : List.copyOf(stops);
+            elevationComparisons = elevationComparisons == null ? List.of() : List.copyOf(elevationComparisons);
+        }
+
+        public Option(
+                CourseRouteStrategy strategy, Integer stopCount, Integer totalDurationMinutes,
+                Integer totalTravelMinutes, Integer totalDistanceMeters, BigDecimal totalAscentMeters,
+                BigDecimal averageCongestionScore, LocalTime scheduledStart, LocalTime scheduledEnd,
+                List<Stop> stops) {
+            this(strategy, stopCount, totalDurationMinutes, totalTravelMinutes, totalDistanceMeters,
+                    totalAscentMeters, averageCongestionScore, scheduledStart, scheduledEnd, stops, List.of());
         }
     }
+
+    public record ElevationComparison(
+            Integer sequenceNo,
+            String placeName,
+            BigDecimal originalAscentMeters,
+            BigDecimal easyAscentMeters,
+            BigDecimal originalSteepUphillDistanceMeters,
+            BigDecimal easySteepUphillDistanceMeters,
+            BigDecimal originalCoveragePercent,
+            BigDecimal easyCoveragePercent) {}
 
     @Schema(description = "코스 미리보기의 장소별 일정")
     public record Stop(
@@ -69,6 +90,24 @@ public record CoursePreviewResponse(
             @Schema(description = "적용한 운영 종료 시각", example = "18:00") LocalTime closeTime,
             @Schema(description = "연결된 팝업·행사 ID. 없으면 null", example = "20") Long eventId,
             @Schema(description = "팝업·행사 종료 시각 스냅샷. 없으면 null", example = "17:30") LocalTime eventEndTime,
-            @Schema(description = "직전 지점에서 현재 장소까지의 원본 TMAP 경로") RouteOption incomingRoute) {
+            @Schema(description = "서버가 이 구간에 선택한 이동수단", example = "WALK") RouteMode selectedMode,
+            @Schema(description = "서버가 일정과 합계에 반영한 경로") RouteOption selectedRoute,
+            @Schema(description = "사용자가 전환할 수 있는 대체 경로. 없으면 null") RouteOption alternativeRoute,
+            @Schema(description = "직전 지점에서 현재 장소까지의 선택 경로. 기존 클라이언트 호환 필드") RouteOption incomingRoute) {
+
+        public Stop(
+                Integer sequenceNo, Long basketItemId, String placeName, String address, Double latitude,
+                Double longitude, Integer defaultDwellMinutes, Integer dwellMinutes, CourseDwellSource dwellSource,
+                LocalTime arrivalDeadline, Integer arrivalBufferMinutes, LocalTime scheduledArrival,
+                LocalTime scheduledDeparture, Integer travelMinutesFromPrevious, Integer travelDistanceMeters,
+                BigDecimal ascentMeters, BigDecimal congestionScore, CourseHoursSourceType hoursSourceType,
+                LocalTime openTime, LocalTime closeTime, Long eventId, LocalTime eventEndTime,
+                RouteOption incomingRoute) {
+            this(sequenceNo, basketItemId, placeName, address, latitude, longitude, defaultDwellMinutes,
+                    dwellMinutes, dwellSource, arrivalDeadline, arrivalBufferMinutes, scheduledArrival,
+                    scheduledDeparture, travelMinutesFromPrevious, travelDistanceMeters, ascentMeters,
+                    congestionScore, hoursSourceType, openTime, closeTime, eventId, eventEndTime,
+                    incomingRoute == null ? null : incomingRoute.mode(), incomingRoute, null, incomingRoute);
+        }
     }
 }
