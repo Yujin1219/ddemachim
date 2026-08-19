@@ -8,6 +8,15 @@ function normalizeCoordinate(value) {
   return [longitude, latitude];
 }
 
+export function routeFitPointCoordinates(values, project = (coordinate) => coordinate) {
+  if (!Array.isArray(values)) return [];
+  return values
+    .map(normalizeCoordinate)
+    .filter(Boolean)
+    .map((coordinate) => project(coordinate))
+    .filter((coordinate) => Array.isArray(coordinate) && coordinate.length >= 2);
+}
+
 export function routeLegFeatureSpecs(routeLegs, project = (coordinate) => coordinate) {
   if (!Array.isArray(routeLegs)) return [];
 

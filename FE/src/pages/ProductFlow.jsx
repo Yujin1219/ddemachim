@@ -1,6 +1,6 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from 'react';
 import { motion, useDragControls, useReducedMotion } from 'motion/react';
-import { CalendarDays, ChevronLeft, ChevronRight, CircleDollarSign, CircleHelp, Clapperboard, Clock3, ExternalLink, Heart, Image as ImageIcon, LocateFixed, MapPin, Minus, MoreHorizontal, Plus, RefreshCw, Search, SearchX, SendHorizontal, ShoppingBasket, UserRound, X } from 'lucide-react';
+import { CalendarDays, ChevronLeft, ChevronRight, CircleDollarSign, CircleHelp, Clapperboard, Clock3, Coffee, ExternalLink, Flame, Heart, Image as ImageIcon, LocateFixed, MapPin, Minus, MoreHorizontal, Plus, RefreshCw, Search, SearchX, SendHorizontal, ShoppingBasket, Store, UserRound, Utensils, X } from 'lucide-react';
 import AppHeader from '../components/AppHeader';
 import BottomNav from '../components/BottomNav';
 import PlaceReviewPreview from '../components/PlaceReviewPreview';
@@ -17,6 +17,7 @@ import {
   fetchFilmingWorks,
   fetchKakaoPlaces,
   fetchMapPlaces,
+  fetchMockCrowdingGrids,
   fetchMyProfile,
   fetchMediaContent,
   fetchMediaContents,
@@ -65,24 +66,35 @@ import {
   updateCourseStopSetting,
 } from '../components/courseStopSettings.js';
 import { buildCoursePreviewRequest } from '../components/coursePreviewModel.js';
-import { CongestionBadge, CongestionPointBadge } from '../components/CongestionInfo';
+import { CongestionBadge, CongestionPointBadge, getMockCongestionAccessibleLabel } from '../components/CongestionInfo';
 import ScrollOnboarding from '../components/ScrollOnboarding';
-import {
-  formatCongestionPopulation,
-  formatCongestionTime,
-  mergeCongestionArea,
-  useJongnoCongestion,
-  useJongnoCongestionAtPoint,
-} from '../utils/jongnoCongestion';
+import { useMockCrowdingAtPoint } from '../utils/mockCrowdingStore.js';
 import { getSearchCoordinates, mapKakaoPlaceToMapCard, mapKakaoPlaceToSearchRow } from '../utils/placeSearch';
 import {
   buildKakaoTaxiHref,
   normalizeRouteCoordinate,
+  routeModeSelectionReducer,
   routeOptionByMode,
+  shouldLocateForDestinationSelection,
 } from '../utils/routeComparison.js';
 import { useCurrentLocation } from '../hooks/useCurrentLocation.js';
 import { useRouteComparison } from '../hooks/useRouteComparison.js';
 import { useCoursePreview } from '../hooks/useCoursePreview.js';
+import {
+  createInitialMapHomeInteraction,
+  mapHomeInteractionReducer,
+  subscribeToMapHomeViewport,
+} from '../utils/mapHomeInteraction.js';
+import {
+  MAP_HOME_FILTERS,
+  areAllMapFiltersSelected,
+  eventToMapMarker,
+  mapEventsForFilter,
+  mapFilterApiParams,
+  resolveCongestionPreference,
+  tagMapItemsForFilter,
+  toggleMapFilterSelection,
+} from '../utils/mapHomeFilters.js';
 
 const routeGroups = {
   auth: ['splash', 'intro', 'login', 'signup', 'onboarding', 'onboarding-schedule', 'onboarding-permissions'],
@@ -109,6 +121,7 @@ const images = {
 
 const EXPLORE_PAGE_SIZE = 6;
 const KAKAO_MAP_TARGET_KEY = 'ddemachim:kakao-map-target';
+const ANGUK_STATION_CENTER = Object.freeze([126.9854, 37.5766]);
 
 function writeKakaoMapTarget(place) {
   try {
@@ -128,11 +141,6 @@ function readKakaoMapTarget() {
   } catch {
     return null;
   }
-}
-
-function shouldLocateForDestinationSelection(locationStatus, destination) {
-  return (locationStatus === 'idle' || locationStatus === 'error')
-    && normalizeRouteCoordinate(destination) !== null;
 }
 
 function SearchIcon() {
@@ -796,8 +804,8 @@ function EventListItem({ event, onClick }) {
   const timeLabel = String(event.eventTime ?? '').trim();
   const venueLabel = eventVenueLabel(event);
   const decisionLabels = eventDecisionLabels(event);
-  const congestion = useJongnoCongestionAtPoint(event.longitude, event.latitude);
-  const congestionLabel = congestion ? `${congestion.stale ? '최근' : '지금'} 혼잡도 ${congestion.congestionLevel}` : null;
+  const congestion = useMockCrowdingAtPoint(event.longitude, event.latitude);
+  const congestionLabel = getMockCongestionAccessibleLabel(congestion);
   const accessibleLabel = [eventStatusLabel(event), event.name, [dateLabel, timeLabel].filter(Boolean).join(' · '), venueLabel, congestionLabel, ...decisionLabels].filter(Boolean).join(' · ');
 
   return (
@@ -823,7 +831,7 @@ function EventListItem({ event, onClick }) {
 function PlaceCard({ place, onClick, index = 0 }) {
   const entryTilt = index % 2 ? 'rotateY(2.5deg)' : 'rotateY(-2.5deg)';
   const hoverTilt = index % 2 ? 'rotateY(-1.2deg)' : 'rotateY(1.2deg)';
-  const congestion = useJongnoCongestionAtPoint(place.longitude, place.latitude);
+  const congestion = useMockCrowdingAtPoint(place.longitude, place.latitude);
 
   return (
     <motion.button
@@ -1060,20 +1068,15 @@ function AuthScreen({ screen, go, onLoginSuccess }) {
   return <section className="phone standard-screen onboarding-screen onboarding-v3"><main className="page-scroll onboarding-scroll"><div className="onboarding-progress"><strong>{step} / 3</strong><span><i style={{ transform: `scaleX(${step / 3})` }} /></span></div>{screen === 'onboarding' && <><div className="onboarding-copy"><h1>어떤 장소를 좋아하세요?</h1><p>관심 있는 테마를 고르면 첫 코스를 더 잘 추천할 수 있어요.</p></div><div className="onboarding-topic-list">{[['촬영지', '영화와 드라마 속 장면'], ['요즘 뜨는 곳', '저장과 사진 반응이 빠른 장소'], ['팝업·전시', '이번 주에만 만날 수 있는 공간'], ['골목·산책', '천천히 걷기 좋은 서울의 길'], ['카페·디저트', '메뉴와 공간이 함께 좋은 곳']].map(([name, copy]) => { const selected = themes.includes(name); return <button type="button" className={selected ? 'selected' : ''} key={name} onClick={() => setThemes((current) => selected ? current.filter((item) => item !== name) : [...current, name])}><i /><span><strong>{name}</strong><small>{copy}</small></span></button>; })}</div></>}{screen === 'onboarding-schedule' && <><div className="onboarding-copy"><h1>오늘 여행은 어떤 느낌이 좋아요?</h1><p>일정 밀도와 사용할 수 있는 시간을 알려주세요.</p></div><section className="onboarding-group"><h2>일정 밀도</h2><div className="onboarding-density-grid">{[['여유롭게', '장소마다 충분히 머물고 싶어요'], ['촘촘하게', '더 많은 장소를 방문하고 싶어요']].map(([name, copy]) => <button type="button" className={pace === name ? 'selected' : ''} key={name} onClick={() => setPace(name)}><strong>{name}</strong><small>{copy}</small></button>)}</div></section><section className="onboarding-group"><h2>여행 시간</h2><div className="onboarding-duration-grid">{[['3시간', '가볍게 반나절 걷기'], ['5시간', '점심부터 저녁 전까지'], ['하루 종일', '여유 있는 서울 여행']].map(([name, copy]) => <button type="button" className={tripTime === name ? 'selected' : ''} key={name} onClick={() => setTripTime(name)}><strong>{name}</strong><small>{copy}</small></button>)}</div></section></>}{screen === 'onboarding-permissions' && <><div className="onboarding-copy"><h1>필요한 순간에 알려드릴게요</h1><p>권한은 해당 기능을 사용할 때만 요청해요.</p></div><div className="onboarding-permission-list">{[['위치', '길 안내와 도착 감지에 사용'], ['알림', '혼잡 변화와 주변 장소 안내'], ['카메라', '촬영 장면 구도 맞추기'], ['사진', '방문 인증 사진 저장']].map(([name, copy]) => { const selected = permissions.includes(name); return <button type="button" className={selected ? 'selected' : ''} key={name} onClick={() => setPermissions((current) => selected ? current.filter((item) => item !== name) : [...current, name])}><i>{selected ? '✓' : ''}</i><span><strong>{name}</strong><small>{copy}</small></span></button>; })}</div><button type="button" className="onboarding-later" onClick={goNext}>나중에 설정<span>MY에서 언제든 변경 가능</span></button></>}</main><div className="sticky-actions"><ActionButton onClick={goNext}>{screen === 'onboarding-permissions' ? '때마침 시작' : '다음'}</ActionButton></div></section>;
 }
 
-const ALL_MAP_FILTER = { type: 'all', code: 'ALL', label: '전체' };
-const FIXED_MAP_FILTERS = [
-  { type: 'category', code: 'RESTAURANT', label: '음식점', tone: 'restaurant' },
-  { type: 'category', code: 'CAFE_DESSERT', codes: ['CAFE', 'DESSERT'], label: '카페/디저트', tone: 'cafe-dessert' },
-  { type: 'category', code: 'ATTRACTION', label: '관광지', tone: 'attraction' },
-  { type: 'category', code: 'CULTURE', label: '문화시설', tone: 'culture' },
-  { type: 'category', code: 'EXHIBITION', label: '전시', tone: 'exhibition' },
-  { type: 'category', code: 'SHOPPING', label: '쇼핑', tone: 'shopping' },
-  { type: 'category', code: 'POPUP', label: '팝업스토어', tone: 'popup' },
-  { type: 'category', code: 'PARK', label: '공원', tone: 'park' },
-  { type: 'category', code: 'WALK', label: '산책로', tone: 'walk' },
-  { type: 'category', code: 'PHOTO_SPOT', label: '포토스팟', tone: 'photo-spot' },
-  { type: 'tag', code: 'FILMING_LOCATION', label: '촬영지', tone: 'filming' },
-];
+const MAP_FILTER_ICONS = {
+  ALL: MapPin,
+  FILMING: Clapperboard,
+  HOT: Flame,
+  POPUP: Store,
+  EVENT: CalendarDays,
+  RESTAURANT: Utensils,
+  CAFE_DESSERT: Coffee,
+};
 
 const FILMING_COLLECTION_FILTERS = [
   { label: '전체', contentType: null },
@@ -1092,8 +1095,8 @@ const CONGESTION_LEVELS = [
 ];
 
 function readCongestionLayerPreference() {
-  if (typeof window === 'undefined') return true;
-  return window.localStorage.getItem(CONGESTION_LAYER_STORAGE_KEY) !== 'off';
+  if (typeof window === 'undefined') return false;
+  return resolveCongestionPreference(window.localStorage.getItem(CONGESTION_LAYER_STORAGE_KEY));
 }
 
 function normalizeMapCode(value) {
@@ -1109,17 +1112,30 @@ function normalizeMapTags(tags) {
 
 function MapHome({ go, basketState, onBasketAdded, onBasketRefresh, onAuthRequired }) {
   const [selectedPlace, setSelectedPlace] = useState(readKakaoMapTarget);
-  const [activeRouteMode, setActiveRouteMode] = useState('WALK');
-  const { data: jongnoCongestion } = useJongnoCongestion();
-  const [filter, setFilter] = useState('전체');
-  const [activeMapFilter, setActiveMapFilter] = useState(ALL_MAP_FILTER);
-  const [isMapFilterOpen, setIsMapFilterOpen] = useState(false);
+  const [routeModeSelection, dispatchRouteModeSelection] = useReducer(routeModeSelectionReducer, {
+    activeMode: 'WALK',
+    manuallySelected: false,
+  });
+  const activeRouteMode = routeModeSelection.activeMode;
+  const [activeMapFilterKeys, setActiveMapFilterKeys] = useState([]);
   const [isCongestionLayerVisible, setIsCongestionLayerVisible] = useState(readCongestionLayerPreference);
   const [selectedCongestionArea, setSelectedCongestionArea] = useState(null);
-  const [categorySourcePlaces, setCategorySourcePlaces] = useState([]);
-  const [isNearbySheetCollapsed, setIsNearbySheetCollapsed] = useState(false);
+  const [activeEvents, setActiveEvents] = useState([]);
+  const [eventStatus, setEventStatus] = useState('loading');
+  const [loadedMapFilterKey, setLoadedMapFilterKey] = useState(null);
+  const [visibleMapItemCount, setVisibleMapItemCount] = useState(0);
+  const [mapHomeInteraction, dispatchMapHomeInteraction] = useReducer(
+    mapHomeInteractionReducer,
+    typeof window === 'undefined' ? null : window.innerHeight,
+    (viewportHeight) => ({
+      ...createInitialMapHomeInteraction(viewportHeight),
+      isMapFocused: Boolean(selectedPlace),
+    }),
+  );
+  const { isMapFocused, isSheetCollapsed: isNearbySheetCollapsed } = mapHomeInteraction;
   const [nearbyPlace, setNearbyPlace] = useState(null);
   const nearbySheetDragControls = useDragControls();
+  const didDragNearbySheetRef = useRef(false);
   const routeDestination = normalizeRouteCoordinate(selectedPlace
     ? { latitude: selectedPlace.latitude, longitude: selectedPlace.longitude }
     : null);
@@ -1128,8 +1144,7 @@ function MapHome({ go, basketState, onBasketAdded, onBasketRefresh, onAuthRequir
     status: locationStatus,
     errorCode: locationErrorCode,
     locate,
-    clear: clearLocation,
-  } = useCurrentLocation({ auto: Boolean(routeDestination) });
+  } = useCurrentLocation({ auto: false });
   const {
     data: routeData,
     status: routeStatus,
@@ -1145,17 +1160,31 @@ function MapHome({ go, basketState, onBasketAdded, onBasketRefresh, onAuthRequir
     ? routeStatus
     : locationStatus === 'ready' ? 'loading' : 'idle';
   const selectedRoute = routeOptionByMode(effectiveRouteData, activeRouteMode);
+  const activeMapFilters = MAP_HOME_FILTERS.filter(
+    (filter) => filter.key !== 'ALL' && activeMapFilterKeys.includes(filter.key),
+  );
+  const activeMapFilterKey = activeMapFilterKeys.join(',');
+
+  useEffect(() => subscribeToMapHomeViewport(window, dispatchMapHomeInteraction), []);
 
   useEffect(() => {
     routeSelectionKeyRef.current = routeSelectionKey;
   }, [routeSelectionKey]);
 
   useEffect(() => {
+    if (effectiveRouteStatus !== 'ready') return;
+    dispatchRouteModeSelection({ type: 'ROUTES_READY', routeData: effectiveRouteData });
+  }, [effectiveRouteData, effectiveRouteStatus, routeSelectionKey]);
+
+  useEffect(() => {
+    if (shouldLocateForDestinationSelection(locationStatus, routeDestination)) locate();
+  }, [locate, routeSelectionKey]);
+
+  useEffect(() => {
     let cancelled = false;
-    fetchPlaces({ district: '종로구', size: 1000 })
+    fetchPlaces({ district: '종로구', size: 1 })
       .then((page) => {
         const first = page.content?.[0];
-        if (!cancelled) setCategorySourcePlaces(page.content ?? []);
         if (!cancelled && first) setNearbyPlace(placeToCardProps(first));
       })
       .catch((error) => console.error('주변 장소를 불러오지 못했어요', error));
@@ -1163,42 +1192,26 @@ function MapHome({ go, basketState, onBasketAdded, onBasketRefresh, onAuthRequir
   }, []);
 
   useEffect(() => {
+    const controller = new AbortController();
+    setEventStatus('loading');
+    fetchEvents({ status: 'ONGOING', size: 200, signal: controller.signal })
+      .then((page) => {
+        if (controller.signal.aborted) return;
+        setActiveEvents(page.content ?? []);
+        setEventStatus('ready');
+      })
+      .catch((error) => {
+        if (error?.name === 'AbortError') return;
+        setActiveEvents([]);
+        setEventStatus('error');
+      });
+    return () => controller.abort();
+  }, []);
+
+  useEffect(() => {
     window.localStorage.setItem(CONGESTION_LAYER_STORAGE_KEY, isCongestionLayerVisible ? 'on' : 'off');
     if (!isCongestionLayerVisible) setSelectedCongestionArea(null);
   }, [isCongestionLayerVisible]);
-
-  useEffect(() => {
-    if (!jongnoCongestion) return;
-    setSelectedCongestionArea((area) => mergeCongestionArea(area, jongnoCongestion));
-  }, [jongnoCongestion]);
-
-  const sourceCategoryByPlaceId = useMemo(() => {
-    const categories = new Map();
-    categorySourcePlaces.forEach((place) => {
-      if (!place.id || !place.categoryCode) return;
-      categories.set(place.id, {
-        code: normalizeMapCode(place.categoryCode),
-        label: place.categoryLabel || place.categoryCode,
-      });
-    });
-    return categories;
-  }, [categorySourcePlaces]);
-
-  const getMapPlaceCategory = (place) => {
-    if (place.categoryCode) {
-      return {
-        code: normalizeMapCode(place.categoryCode),
-        label: place.categoryLabel || place.categoryCode,
-      };
-    }
-    return sourceCategoryByPlaceId.get(place.id) || null;
-  };
-
-  const visibleMapFilters = isMapFilterOpen
-    ? FIXED_MAP_FILTERS
-    : activeMapFilter.type === 'all'
-      ? []
-      : [activeMapFilter];
 
   const nearbyByFilter = {
     전체: { title: '지금 가기 좋은 곳', place: nearbyPlace || { name: '주변 장소를 불러오는 중', meta: '', image: images.mapPlace, badge: '종로구' }, next: 'place' },
@@ -1212,136 +1225,209 @@ function MapHome({ go, basketState, onBasketAdded, onBasketRefresh, onAuthRequir
     : selectedPlace
       ? placeToCardProps({ ...selectedPlace, thumbnailUrl: selectedPlace.thumbnailUrl || images.mapPlace })
       : null;
-  const nearby = selectedPlace
-    ? {
-        title: '선택한 장소',
-        place: selectedPlaceCard,
-        next: null,
-      }
-    : nearbyByFilter[filter] || nearbyByFilter.전체;
-  const filterMapPlace = (place) => {
-    if (activeMapFilter.type === 'category') {
-      const categoryCode = getMapPlaceCategory(place)?.code;
-      const targetCodes = activeMapFilter.codes || [activeMapFilter.code];
-      return targetCodes.map(normalizeMapCode).includes(categoryCode);
-    }
-    if (activeMapFilter.type === 'tag') {
-      return normalizeMapTags(place.tags).includes(normalizeMapCode(activeMapFilter.code));
-    }
-    return true;
-  };
-  const mapApiFilterParams = () => {
-    if (activeMapFilter.type === 'category') {
-      return { category: activeMapFilter.codes?.join(',') || activeMapFilter.code };
-    }
-    if (activeMapFilter.type === 'tag') {
-      return { tag: activeMapFilter.code };
-    }
-    return {};
-  };
+  const selectedPlaceDetail = selectedPlace?.externalSource === 'EVENT'
+    ? { screen: 'event-detail', id: selectedPlace.eventId ?? selectedPlace.id }
+    : selectedPlace?.externalSource === 'KAKAO' || !selectedPlace
+      ? null
+      : { screen: 'place', id: selectedPlace.id };
+  const nearby = nearbyByFilter[activeMapFilters[0]?.label] || nearbyByFilter.전체;
   const selectMapFilter = (option) => {
-    setActiveMapFilter(option);
-    setIsMapFilterOpen(false);
-    setFilter(option.type === 'tag' && option.code === 'FILMING_LOCATION' ? '촬영지' : '전체');
-  };
-  const toggleAllFilters = () => {
-    setActiveMapFilter(ALL_MAP_FILTER);
-    setFilter('전체');
-    setIsMapFilterOpen((current) => !current);
+    setActiveMapFilterKeys((current) => toggleMapFilterSelection(current, option.key));
+    setSelectedPlace(null);
+    setLoadedMapFilterKey(null);
   };
   const settleNearbySheet = (_, info) => {
-    const swipedDown = info.offset.y > 54 || info.velocity.y > 420;
-    const swipedUp = info.offset.y < -54 || info.velocity.y < -420;
-    if (swipedDown) setIsNearbySheetCollapsed(true);
-    if (swipedUp) setIsNearbySheetCollapsed(false);
-  };
-  const clearSelectedPlace = () => {
-    setSelectedPlace(null);
-    setActiveRouteMode('WALK');
-    setIsNearbySheetCollapsed(false);
-    clearLocation();
+    dispatchMapHomeInteraction({
+      type: 'SHEET_DRAG_ENDED',
+      offsetY: info.offset.y,
+      velocityY: info.velocity.y,
+    });
   };
   const selectPlace = (place) => {
     setSelectedPlace(place);
-    setActiveRouteMode('WALK');
-    setIsNearbySheetCollapsed(false);
-    if (shouldLocateForDestinationSelection(locationStatus, {
-      latitude: place?.latitude,
-      longitude: place?.longitude,
-    })) locate();
+    dispatchRouteModeSelection({ type: 'PLACE_CHANGED' });
+    dispatchMapHomeInteraction({ type: 'PLACE_SELECTED' });
   };
+  const handleLocate = useCallback(() => locate().then((nextLocation) => {
+    if (!nextLocation) return null;
+    window.dispatchEvent(new CustomEvent('vworld:user-location', {
+      detail: [nextLocation.longitude, nextLocation.latitude],
+    }));
+    return nextLocation;
+  }), [locate]);
+  const selectCongestionArea = (area) => {
+    setSelectedCongestionArea(area);
+    if (area) dispatchMapHomeInteraction({ type: 'CROWDING_SELECTED' });
+  };
+  const collapsedSheetOffset = selectedPlace ? 300 : 178;
+  const isInsideMapBounds = (item, bounds) => {
+    const latitude = Number(item?.latitude);
+    const longitude = Number(item?.longitude);
+    return Number.isFinite(latitude)
+      && Number.isFinite(longitude)
+      && latitude >= bounds.minLat
+      && latitude <= bounds.maxLat
+      && longitude >= bounds.minLng
+      && longitude <= bounds.maxLng;
+  };
+  const activeFilterHasError = activeMapFilterKeys.some((filterKey) => (
+    (filterKey === 'POPUP' || filterKey === 'EVENT') && eventStatus === 'error'
+  ));
+  const activeFilterIsLoading = activeMapFilterKeys.some((filterKey) => (
+    (filterKey === 'POPUP' || filterKey === 'EVENT') && eventStatus === 'loading'
+  ));
+  const activeFilterEmpty = activeMapFilterKeys.length > 0
+    && !activeFilterHasError
+    && !activeFilterIsLoading
+    && loadedMapFilterKey === activeMapFilterKey
+    && visibleMapItemCount === 0;
+  const activeFilterLabel = activeMapFilters.map((filter) => filter.label).join(', ');
 
   return (
-    <section className="phone map-home-screen">
+    <section
+      className="phone map-home-screen"
+      data-map-focused={isMapFocused || undefined}
+    >
       <MapStage
         mapProps={{
-          center: selectedPlace ? [selectedPlace.longitude, selectedPlace.latitude] : undefined,
+          center: selectedPlace ? [selectedPlace.longitude, selectedPlace.latitude] : ANGUK_STATION_CENTER,
           zoom: selectedPlace ? 17 : 15,
           loadPlacesInBounds: async (bounds) => {
-            const placesInBounds = await fetchMapPlaces({ ...bounds, ...mapApiFilterParams() });
-            return selectedPlace?.externalSource === 'KAKAO'
-              ? [...placesInBounds, selectedPlace]
-              : placesInBounds;
+            const groups = await Promise.all(activeMapFilters.map(async (filter) => {
+              const placesInBounds = await fetchMapPlaces({
+                ...bounds,
+                ...mapFilterApiParams(filter),
+              });
+              const eventMarkers = mapEventsForFilter(activeEvents, filter.key)
+                .filter((event) => isInsideMapBounds(event, bounds))
+                .map(eventToMapMarker);
+              return tagMapItemsForFilter([...placesInBounds, ...eventMarkers], filter.key);
+            }));
+            const visibleItems = [];
+            const visibleItemKeys = new Set();
+            groups.flat().forEach((item) => {
+              const itemKey = `${item.externalSource || 'INTERNAL'}:${item.id}`;
+              if (visibleItemKeys.has(itemKey)) return;
+              visibleItemKeys.add(itemKey);
+              visibleItems.push(item);
+            });
+            if (selectedPlace) {
+              const selectedItemKey = `${selectedPlace.externalSource || 'INTERNAL'}:${selectedPlace.id}`;
+              if (!visibleItemKeys.has(selectedItemKey)) visibleItems.push(selectedPlace);
+            }
+            return visibleItems;
           },
-          congestionAreaUrl: '/data/jongno-city-areas.geojson',
-          congestionData: jongnoCongestion,
+          loadCongestionInBounds: (bounds, options) => fetchMockCrowdingGrids(bounds, options),
           showCongestionAreas: isCongestionLayerVisible,
-          onCongestionAreaClick: (area) => setSelectedCongestionArea(mergeCongestionArea(area, jongnoCongestion)),
-          placeMarkerFilter: filterMapPlace,
-          placeMarkerFilterKey: `${activeMapFilter.type}:${activeMapFilter.codes?.join(',') || activeMapFilter.code}`,
-          placeRequestKey: `${activeMapFilter.type}:${activeMapFilter.codes?.join(',') || activeMapFilter.code}`,
+          selectedCongestionGridCode: selectedCongestionArea?.gridCode ?? null,
+          onCongestionAreaClick: selectCongestionArea,
+          placeMarkerFilterKey: activeMapFilterKey,
+          placeRequestKey: `${activeMapFilterKey}:${activeEvents.length}:${routeSelectionKey}`,
           routeLegs: selectedRoute?.status === 'AVAILABLE' ? selectedRoute.legs : [],
           routeMode: activeRouteMode,
           routeFitKey: selectedPlace ? `${selectedPlace.externalSource || 'INTERNAL'}:${selectedPlace.id}` : '',
+          routeFitCoordinates: routeDestination && location
+            ? [[location.longitude, location.latitude], [routeDestination.longitude, routeDestination.latitude]]
+            : [],
           userLocation: location ? [location.longitude, location.latitude] : null,
+          onMapClick: () => dispatchMapHomeInteraction({ type: 'MAP_FOCUSED' }),
+          onPlacesChange: (places) => {
+            setVisibleMapItemCount(places.length);
+            setLoadedMapFilterKey(activeMapFilterKey);
+          },
           onPlaceClick: (place) => {
             selectPlace(place);
           },
         }}
       >
-        <div className="map-top-fade" />
-        <motion.header
-          className="map-home-header"
-          initial={{ opacity: 0, transform: 'perspective(1100px) translateY(-16px) rotateX(-4deg) translateZ(-18px)' }}
-          animate={{ opacity: 1, transform: 'perspective(1100px) translateY(0px) rotateX(0deg) translateZ(0px)' }}
-          transition={{ duration: 0.28, ease: [0.23, 1, 0.32, 1] }}
-        >
-          <p>안국동 · 내 주변</p>
-          <h1>오늘, 어디로 걸어볼까요?</h1>
-          <button className="map-search-trigger" onClick={() => go('search')} type="button"><span><SearchIcon /></span>장소·지역·테마 검색</button>
-          <div className="map-filter-bar">
-            <button
-              className={`map-filter-toggle ${activeMapFilter.type === 'all' ? 'is-active' : ''}`}
-              onClick={toggleAllFilters}
-              type="button"
-              aria-expanded={isMapFilterOpen}
-            >
-              전체
-            </button>
-            {visibleMapFilters.map((item) => (
-              <button
-                className={`map-filter-chip is-${item.tone} ${activeMapFilter.type === item.type && activeMapFilter.code === item.code ? 'is-active' : ''}`}
-                key={`${item.type}:${item.code}`}
-                onClick={() => selectMapFilter(item)}
-                type="button"
-                aria-pressed={activeMapFilter.type === item.type && activeMapFilter.code === item.code}
+        {!isMapFocused && <div className="map-top-fade" />}
+        {!isMapFocused
+          ? <>
+              <motion.header
+                className="map-home-header"
+                initial={{ opacity: 0, y: -12 }}
+                animate={{ opacity: 1, y: 0 }}
+                transition={{ type: 'spring', stiffness: 440, damping: 38 }}
               >
-                {item.label}
-              </button>
-            ))}
-            <button
-              className={`map-filter-chip map-congestion-toggle ${isCongestionLayerVisible ? 'is-active' : ''}`}
-              onClick={() => setIsCongestionLayerVisible((current) => !current)}
+                <p>안국동 · 내 주변</p>
+                <h1>오늘, 어디로 걸어볼까요?</h1>
+              </motion.header>
+              <motion.div
+                className="map-home-controls"
+                aria-label="지도 검색 및 필터"
+                initial={{ opacity: 0, y: -8 }}
+                animate={{ opacity: 1, y: 0 }}
+                transition={{ type: 'spring', stiffness: 440, damping: 38, delay: 0.03 }}
+              >
+                <button className="map-search-trigger" onClick={() => go('search')} type="button"><span><SearchIcon /></span>장소·지역·테마 검색</button>
+                <div className="map-category-heading">
+                  <strong>장소 카테고리</strong>
+                  <span>복수 선택 가능</span>
+                </div>
+                <div className="map-filter-bar" aria-label="장소 카테고리">
+                  {MAP_HOME_FILTERS.map((item) => {
+                    const FilterIcon = MAP_FILTER_ICONS[item.key];
+                    const selected = item.key === 'ALL'
+                      ? areAllMapFiltersSelected(activeMapFilterKeys)
+                      : activeMapFilterKeys.includes(item.key);
+                    return (
+                      <button
+                        className={`map-filter-chip is-${item.tone}${selected ? ' is-active' : ''}`}
+                        key={item.key}
+                        onClick={() => selectMapFilter(item)}
+                        type="button"
+                        aria-pressed={selected}
+                      >
+                        <FilterIcon aria-hidden="true" size={16} strokeWidth={2} />
+                        {item.label}
+                      </button>
+                    );
+                  })}
+                </div>
+              </motion.div>
+            </>
+          : <motion.button
+              className="map-search-restore"
               type="button"
-              aria-pressed={isCongestionLayerVisible}
+              aria-label="검색 및 필터 펼치기"
+              onClick={() => dispatchMapHomeInteraction({ type: 'SEARCH_RESTORED' })}
+              initial={{ opacity: 0, scale: 0.9 }}
+              animate={{ opacity: 1, scale: 1 }}
+              transition={{ type: 'spring', stiffness: 480, damping: 34 }}
             >
-              혼잡도
-            </button>
-          </div>
-        </motion.header>
+              <SearchIcon />
+            </motion.button>}
+        <button
+          className="map-congestion-switch"
+          type="button"
+          role="switch"
+          aria-checked={isCongestionLayerVisible}
+          onClick={() => setIsCongestionLayerVisible((current) => !current)}
+        >
+          <span>혼잡도</span>
+          <i aria-hidden="true"><b /></i>
+        </button>
+        {!selectedCongestionArea && (activeFilterHasError || activeFilterEmpty) && (
+          <p className="map-filter-status" role="status">
+            {activeFilterHasError
+              ? `${activeFilterLabel} 중 일부 정보를 불러오지 못했어요`
+              : `현재 표시할 ${activeFilterLabel}이 없어요`}
+          </p>
+        )}
         <MapPlacePulse />
-        {isCongestionLayerVisible && (
+        <button
+          className={`map-location-button ${locationStatus === 'ready' ? 'is-located' : ''}`}
+          type="button"
+          aria-label="현재 위치로 이동"
+          aria-pressed={locationStatus === 'ready'}
+          aria-busy={locationStatus === 'locating' || undefined}
+          onClick={handleLocate}
+        >
+          <LocateFixed aria-hidden="true" size={20} strokeWidth={2.2} />
+        </button>
+        {isCongestionLayerVisible && !selectedCongestionArea && (
           <div className="map-congestion-legend" aria-label="혼잡도 범례">
+            <strong>혼잡도</strong>
             {CONGESTION_LEVELS.map((item) => (
               <span key={item.level} data-level={item.level}>
                 <i aria-hidden="true" />
@@ -1350,49 +1436,47 @@ function MapHome({ go, basketState, onBasketAdded, onBasketRefresh, onAuthRequir
             ))}
           </div>
         )}
-        <button className={`map-location-button ${locationStatus === 'ready' ? 'is-located' : ''}`} type="button" aria-label="내 위치" aria-pressed={locationStatus === 'ready'} aria-busy={locationStatus === 'locating' || undefined} onClick={locate}><LocateFixed aria-hidden="true" size={20} strokeWidth={2.2} /></button>
-        {locationStatus === 'ready' && <p className="map-location-status" role="status">현재 위치를 기준으로 보고 있어요</p>}
         {isCongestionLayerVisible && selectedCongestionArea && (
           <aside className="map-congestion-detail" aria-live="polite">
             <button type="button" aria-label="혼잡도 상세 닫기" onClick={() => setSelectedCongestionArea(null)}><X aria-hidden="true" size={16} strokeWidth={2.2} /></button>
-            <span className="map-congestion-detail-level" data-level={selectedCongestionArea.congestionLevel}>{selectedCongestionArea.congestionLevel || '정보없음'}</span>
-            <strong>{selectedCongestionArea.areaName}</strong>
-            <p>{selectedCongestionArea.congestionMessage || '현재 혼잡도 안내 문구가 없어요.'}</p>
+            <span className="map-congestion-detail-level" data-level={selectedCongestionArea.levelLabel}>{selectedCongestionArea.levelLabel}</span>
+            <strong>{selectedCongestionArea.title}</strong>
+            <p>{selectedCongestionArea.gridCode}</p>
             <dl>
               <div>
-                <dt>예상 인원</dt>
-                <dd>{formatCongestionPopulation(selectedCongestionArea)}</dd>
+                <dt>혼잡도 점수</dt>
+                <dd>{selectedCongestionArea.scoreLabel}</dd>
               </div>
               <div>
                 <dt>기준 시간</dt>
-                <dd>{formatCongestionTime(selectedCongestionArea.populationTime || selectedCongestionArea.updatedAt)}</dd>
+                <dd>{selectedCongestionArea.slotLabel}</dd>
               </div>
             </dl>
-            {selectedCongestionArea.stale && <small>최신 응답이 아니어서 직전 값을 보여주고 있어요.</small>}
           </aside>
         )}
-        <motion.section className={`bottom-sheet map-nearby-sheet motion-depth-sheet${selectedPlace ? ' has-selected-route' : ''}`} data-collapsed={isNearbySheetCollapsed || undefined} initial={{ opacity: 0, y: 42 }} animate={{ opacity: 1, y: isNearbySheetCollapsed ? 176 : 0 }} transition={{ opacity: { duration: 0.28, delay: 0.08 }, y: { type: 'spring', stiffness: 420, damping: 38 } }} drag="y" dragControls={nearbySheetDragControls} dragListener={false} dragConstraints={{ top: 0, bottom: 176 }} dragElastic={0.06} dragMomentum={false} onDragEnd={settleNearbySheet}>
-          <button className="map-sheet-handle-button" type="button" aria-label={isNearbySheetCollapsed ? '주변 장소 패널 펼치기' : '주변 장소 패널 접기'} aria-expanded={!isNearbySheetCollapsed} onPointerDown={(event) => nearbySheetDragControls.start(event)} onClick={() => setIsNearbySheetCollapsed((current) => !current)}><span className="sheet-handle" /></button>
-          {selectedPlace && <button className="selected-route-close" type="button" aria-label="선택한 장소 닫기" onClick={clearSelectedPlace}><X aria-hidden="true" size={18} strokeWidth={2.2} /></button>}
-          <ScreenSection title={nearby.title} action={selectedPlace ? null : '전체보기'} onAction={() => go('explore')}><PlaceRow place={nearby.place} onClick={selectedPlace ? undefined : () => go(nearby.next, nearby.place.id)} /></ScreenSection>
-          {selectedPlace && <SelectedPlaceRoutePanel
-            selectedPlace={selectedPlace}
-            location={location}
-            locationStatus={locationStatus}
-            locationErrorCode={locationErrorCode}
-            routeStatus={effectiveRouteStatus}
-            routeData={effectiveRouteData}
-            activeMode={activeRouteMode}
-            onModeChange={setActiveRouteMode}
-            onRetryLocation={locate}
-            onRetryRoute={retryRoute}
-            taxiHref={activeRouteMode === 'TAXI' ? buildKakaoTaxiHref(routeDestination) : null}
-          />}
-          {selectedPlace?.externalSource === 'KAKAO'
-            ? <KakaoPlaceActions place={selectedPlace} basketItems={basketState?.items} onAdded={onBasketAdded} onAuthRequired={onAuthRequired} onRefresh={onBasketRefresh} />
-            : selectedPlace
-              ? <div className="map-internal-actions"><PlaceBasketAction placeId={selectedPlace.id} basketItems={basketState?.items} onAdded={onBasketAdded} onAuthRequired={onAuthRequired} onRefresh={onBasketRefresh} /><button type="button" className="map-place-detail-button" onClick={() => go('place', selectedPlace.id)}>장소 상세</button></div>
+        <motion.section className={`bottom-sheet map-nearby-sheet motion-depth-sheet${selectedPlace ? ' has-selected-route' : ''}`} data-collapsed={isNearbySheetCollapsed || undefined} initial={{ opacity: 0, y: 42 }} animate={{ opacity: 1, y: isNearbySheetCollapsed ? collapsedSheetOffset : 0 }} transition={{ opacity: { duration: 0.28, delay: 0.08 }, y: { type: 'spring', stiffness: 420, damping: 38 } }} drag="y" dragControls={nearbySheetDragControls} dragListener={false} dragConstraints={{ top: 0, bottom: collapsedSheetOffset }} dragElastic={0.06} dragMomentum={false} onDrag={(_, info) => { if (Math.abs(info.offset.y) > 6) didDragNearbySheetRef.current = true; }} onDragEnd={settleNearbySheet}>
+          <button className="map-sheet-handle-button" type="button" aria-label={isNearbySheetCollapsed ? '주변 장소 패널 펼치기' : '주변 장소 패널 접기'} aria-expanded={!isNearbySheetCollapsed} onPointerDown={(event) => { didDragNearbySheetRef.current = false; nearbySheetDragControls.start(event); }} onClick={() => { if (didDragNearbySheetRef.current) { didDragNearbySheetRef.current = false; return; } dispatchMapHomeInteraction({ type: 'SHEET_TOGGLED' }); }}><span className="sheet-handle" /></button>
+          <div className="map-sheet-content" aria-hidden={isNearbySheetCollapsed || undefined} inert={isNearbySheetCollapsed ? true : undefined}>
+            {!selectedPlace && <ScreenSection title={nearby.title} action="전체보기" onAction={() => go('explore')}><PlaceRow place={nearby.place} onClick={() => go(nearby.next, nearby.place.id)} /></ScreenSection>}
+            {selectedPlace
+              ? <SelectedPlaceRoutePanel
+                  selectedPlace={selectedPlace}
+                  location={location}
+                  locationStatus={locationStatus}
+                  locationErrorCode={locationErrorCode}
+                  routeStatus={effectiveRouteStatus}
+                  routeData={effectiveRouteData}
+                  activeMode={activeRouteMode}
+                  originLabel="현재 위치"
+                  placeCard={<PlaceRow place={selectedPlaceCard} onClick={selectedPlaceDetail ? () => go(selectedPlaceDetail.screen, selectedPlaceDetail.id) : undefined} />}
+                  onModeChange={(mode) => dispatchRouteModeSelection({ type: 'MODE_SELECTED', mode })}
+                  onResolvedModeChange={(mode) => dispatchRouteModeSelection({ type: 'MODE_RESOLVED', mode })}
+                  onRetryLocation={locate}
+                  onRetryRoute={retryRoute}
+                  taxiHref={activeRouteMode === 'TAXI' ? buildKakaoTaxiHref(routeDestination) : null}
+                />
               : <button type="button" className="map-live-link" onClick={() => go('live-talk')}><span>내 주변 지금톡</span><small>현장 소식 6개&nbsp; ›</small></button>}
+          </div>
         </motion.section>
       </MapStage>
       <BottomNav active="map" onNavigate={(tab) => go(rootRoutes[tab])} />
@@ -1860,8 +1944,9 @@ function FilmingPlaceCard({ place, onClick }) {
   const categoryLabel = place.labels?.category;
   const workCountLabel = place.filmingWorkCount ? `${place.filmingWorkCount}개 작품에 나온 장소` : null;
   const metadata = [contentLabel, categoryLabel].filter(Boolean);
-  const congestion = useJongnoCongestionAtPoint(place.longitude, place.latitude);
-  const congestionLabel = congestion ? `, ${congestion.stale ? '최근' : '지금'} 혼잡도 ${congestion.congestionLevel}` : '';
+  const congestion = useMockCrowdingAtPoint(place.longitude, place.latitude);
+  const congestionAccessibleLabel = getMockCongestionAccessibleLabel(congestion);
+  const congestionLabel = congestionAccessibleLabel ? `, ${congestionAccessibleLabel}` : '';
 
   return (
     <button
@@ -2903,7 +2988,7 @@ function FilmingWorkPlaceItem({ place, index, go }) {
   const sceneRef = useRef(null);
   const [isExpanded, setIsExpanded] = useState(false);
   const [canExpand, setCanExpand] = useState(false);
-  const congestion = useJongnoCongestionAtPoint(place.longitude, place.latitude);
+  const congestion = useMockCrowdingAtPoint(place.longitude, place.latitude);
 
   useEffect(() => {
     setIsExpanded(false);

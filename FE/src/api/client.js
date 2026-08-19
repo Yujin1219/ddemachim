@@ -152,6 +152,28 @@ export function fetchJongnoCongestion({ signal } = {}) {
   return request('/citydata/congestion/jongno', { signal });
 }
 
+export function fetchMockCrowdingPoints(points, { at, signal } = {}) {
+  const payload = { points };
+  if (at !== undefined && at !== null && at !== '') {
+    payload.at = at instanceof Date ? at.toISOString() : at;
+  }
+  return post('/v1/crowding/points', payload, { signal });
+}
+
+export function fetchMockCrowdingGrids(
+  { minLat, maxLat, minLng, maxLng } = {},
+  { at, signal } = {},
+) {
+  const requestAt = at instanceof Date ? at.toISOString() : at;
+  return request(`/v1/crowding/grids${toQuery({
+    minLat,
+    maxLat,
+    minLng,
+    maxLng,
+    at: requestAt,
+  })}`, { signal });
+}
+
 export function fetchPlace(id, { signal } = {}) {
   return request(`/places/${id}`, { signal });
 }

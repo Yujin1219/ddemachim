@@ -882,27 +882,51 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, [role='button
 .map-filter-chip.is-walk { --filter-text: #0f766e; --filter-bg: rgba(240,253,250,.92); --filter-border: rgba(20,184,166,.3); --filter-active-text: #115e59; --filter-active-bg: rgba(204,251,241,.98); --filter-active-border: rgba(15,118,110,.46); }
 .map-filter-chip.is-photo-spot { --filter-text: #4338ca; --filter-bg: rgba(238,242,255,.92); --filter-border: rgba(79,70,229,.28); --filter-active-text: #3730a3; --filter-active-bg: rgba(224,231,255,.98); --filter-active-border: rgba(79,70,229,.45); }
 .map-filter-chip.is-filming { --filter-text: #7e22ce; --filter-bg: rgba(250,245,255,.92); --filter-border: rgba(147,51,234,.3); --filter-active-text: #6b21a8; --filter-active-bg: rgba(243,232,255,.98); --filter-active-border: rgba(147,51,234,.48); }
-.map-congestion-toggle { --filter-text: #334155; --filter-bg: rgba(255,255,255,.86); --filter-border: rgba(148,163,184,.34); --filter-active-text: #155e75; --filter-active-bg: rgba(207,250,254,.94); --filter-active-border: rgba(8,145,178,.42); }
-.map-congestion-legend { position: absolute; z-index: 6; right: 76px; bottom: 354px; left: 20px; display: flex; flex-wrap: wrap; gap: 5px; padding: 7px 8px; border: 1px solid rgba(219,228,238,.72); border-radius: 10px; background: rgba(255,255,255,.88); box-shadow: 0 7px 18px rgba(24,40,61,.08); backdrop-filter: blur(12px); transition: bottom 280ms var(--ease-out); }
+.map-congestion-switch { position: absolute; z-index: 8; top: 248px; right: 20px; min-height: 44px; display: inline-flex; align-items: center; gap: 10px; padding: 8px 10px 8px 12px; border: 1px solid rgba(219,228,238,.92); border-radius: 13px; color: #334155; background: rgba(255,255,255,.94); box-shadow: 0 7px 18px rgba(24,40,61,.10); backdrop-filter: blur(12px); font-size: 12px; font-weight: 700; line-height: 18px; transition: top 220ms var(--ease-out), transform 150ms var(--ease-out); }
+.map-congestion-switch > i { position: relative; width: 34px; height: 20px; flex: 0 0 34px; display: block; border-radius: 999px; background: #c7d1de; transition: background-color 160ms ease; }
+.map-congestion-switch > i > b { position: absolute; top: 3px; left: 3px; width: 14px; height: 14px; border-radius: 50%; background: #fff; box-shadow: 0 1px 4px rgba(24,40,61,.24); transition: transform 180ms var(--ease-out); }
+.map-congestion-switch[aria-checked='true'] { color: #155e75; }
+.map-congestion-switch[aria-checked='true'] > i { background: #0891b2; }
+.map-congestion-switch[aria-checked='true'] > i > b { transform: translateX(14px); }
+.map-congestion-switch:active { transform: scale(.97); }
+.map-congestion-switch:focus-visible { outline: 3px solid var(--color-focus-ring); outline-offset: 2px; }
+.map-filter-status { position: absolute; z-index: 8; top: 300px; right: 20px; max-width: calc(100% - 40px); margin: 0; padding: 7px 10px; border-radius: 10px; color: var(--color-text-secondary); background: rgba(255,255,255,.94); box-shadow: 0 5px 14px rgba(24,40,61,.08); font-size: 11px; line-height: 16px; }
+.map-home-screen[data-map-focused] .map-congestion-switch { top: 84px; }
+.map-home-screen[data-map-focused] .map-filter-status { top: 136px; }
+.map-congestion-legend { position: absolute; z-index: 6; right: 76px; bottom: 354px; left: 20px; display: flex; flex-wrap: wrap; gap: 4px 6px; padding: 7px 8px; border: 1px solid rgba(219,228,238,.72); border-radius: 10px; background: rgba(255,255,255,.92); box-shadow: 0 7px 18px rgba(24,40,61,.08); backdrop-filter: blur(12px); transition: bottom 280ms var(--ease-out); }
 .map-home-screen:has(.map-nearby-sheet[data-collapsed]) .map-congestion-legend { bottom: 158px; }
+.map-congestion-legend > strong { flex: 0 0 100%; color: var(--color-text-primary); font-size: 11px; font-weight: 700; line-height: 16px; }
+.map-congestion-legend > strong small { margin-left: 4px; color: var(--color-text-secondary); font-size: 9px; font-weight: 500; line-height: 14px; }
 .map-congestion-legend span { display: inline-flex; align-items: center; gap: 4px; color: #334155; font-size: 11px; font-weight: 600; line-height: 16px; white-space: nowrap; }
 .map-congestion-legend i { width: 8px; height: 8px; flex: 0 0 8px; border-radius: 2px; background: #64748b; }
 .map-congestion-legend span[data-level='여유'] i, .map-congestion-detail-level[data-level='여유'] { background: #16a34a; }
 .map-congestion-legend span[data-level='보통'] i, .map-congestion-detail-level[data-level='보통'] { background: #0891b2; }
 .map-congestion-legend span[data-level='약간 붐빔'] i, .map-congestion-detail-level[data-level='약간 붐빔'] { background: #ea580c; }
 .map-congestion-legend span[data-level='붐빔'] i, .map-congestion-detail-level[data-level='붐빔'] { background: #dc2626; }
-.map-congestion-detail { position: absolute; z-index: 9; right: 20px; bottom: 332px; left: 20px; display: grid; gap: 6px; padding: 14px; border: 1px solid rgba(219,228,238,.82); border-radius: 16px; background: rgba(255,255,255,.94); box-shadow: 0 12px 28px rgba(24,40,61,.14); backdrop-filter: blur(14px); }
-.map-home-screen:has(.map-nearby-sheet[data-collapsed]) .map-congestion-detail { bottom: 156px; }
+.map-congestion-detail { position: absolute; z-index: 9; right: 76px; bottom: 350px; left: 20px; display: grid; gap: 5px; padding: 13px; border: 1px solid rgba(219,228,238,.82); border-radius: 16px; background: rgba(255,255,255,.96); box-shadow: 0 12px 28px rgba(24,40,61,.14); backdrop-filter: blur(14px); }
+.map-home-screen:has(.map-nearby-sheet[data-collapsed]) .map-congestion-detail { bottom: 154px; }
 .map-congestion-detail > button { position: absolute; top: 10px; right: 10px; width: 28px; height: 28px; display: grid; place-items: center; padding: 0; border: 0; border-radius: 8px; color: #64748b; background: transparent; }
+.map-congestion-detail > button:focus-visible { outline: 3px solid var(--color-focus-ring); outline-offset: 1px; }
 .map-congestion-detail-level { width: max-content; max-width: calc(100% - 34px); min-height: 22px; display: inline-flex; align-items: center; padding: 3px 8px; border-radius: 8px; color: #fff; background: #64748b; font-size: 12px; font-weight: 700; line-height: 16px; }
 .map-congestion-detail strong { max-width: calc(100% - 34px); overflow: hidden; color: var(--color-text-primary); font-size: 16px; line-height: 23px; text-overflow: ellipsis; white-space: nowrap; }
 .map-congestion-detail p { display: -webkit-box; overflow: hidden; margin: 0; color: var(--color-text-secondary); font-size: 12px; line-height: 18px; -webkit-box-orient: vertical; -webkit-line-clamp: 2; }
-.map-congestion-detail dl { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin: 3px 0 0; }
+.map-congestion-detail dl { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 7px; margin: 3px 0 0; }
 .map-congestion-detail dl div { min-width: 0; display: grid; gap: 1px; padding: 9px 10px; border-radius: 10px; background: #f1f5f9; }
 .map-congestion-detail dt { color: var(--color-text-secondary); font-size: 11px; line-height: 16px; }
-.map-congestion-detail dd { min-width: 0; margin: 0; overflow: hidden; color: var(--color-text-primary); font-size: 13px; font-weight: 700; line-height: 18px; text-overflow: ellipsis; white-space: nowrap; }
-.map-congestion-detail small { color: #b45309; font-size: 11px; line-height: 16px; }
+.map-congestion-detail dd { min-width: 0; margin: 0; color: var(--color-text-primary); font-size: 13px; font-weight: 700; line-height: 18px; overflow-wrap: anywhere; }
 .map-location-button { border-radius: var(--radius-control); box-shadow: 0 7px 18px rgba(24,40,61,.10); }
+@media (max-width: 350px) {
+  .map-congestion-detail { bottom: 340px; gap: 4px; padding: 11px; }
+  .map-congestion-detail dl div { padding: 8px; }
+  .map-congestion-detail dt { font-size: 10px; line-height: 15px; }
+}
+
+@media (max-width: 350px) and (max-height: 640px) {
+  .map-home-screen:not([data-map-focused]) .map-congestion-switch { top: calc(var(--app-header-height) + 228px); }
+  .map-congestion-legend { bottom: 310px; gap: 3px 5px; padding: 6px 7px; }
+  .map-home-screen:has(.map-nearby-sheet[data-collapsed]) .map-congestion-legend { bottom: 158px; }
+  .map-home-screen:has(.map-nearby-sheet[data-collapsed]) .map-congestion-detail { bottom: 154px; }
+}
 .bottom-sheet { padding-top: 26px; border-radius: 20px 20px 0 0; background: rgba(246,248,251,.97); box-shadow: 0 -10px 24px rgba(24,40,61,.08); }
 .sheet-handle { width: 36px; height: 3px; border-radius: 2px; background: #b9c5d3; }
 .map-nearby-sheet { min-height: 310px; }

@@ -252,3 +252,105 @@ test('fetchCoursePreview posts the exact authenticated draft and preserves abort
     globalThis.window = originalWindow;
   }
 });
+
+test('fetchMockCrowdingPoints posts one coordinate batch and unwraps the API result', async () => {
+  const client = await import('./client.js');
+  const originalFetch = globalThis.fetch;
+  const controller = new AbortController();
+  let request;
+  const points = [
+    { referenceId: 'place:101', latitude: 37.5759, longitude: 126.9768 },
+    { referenceId: 'event:202', latitude: 37.5826, longitude: 126.9832 },
+  ];
+  const result = [
+    {
+      referenceId: 'place:101',
+      covered: true,
+      gridCode: 'G-100-100',
+      score: 42,
+      level: 'NORMAL',
+      levelLabel: '보통',
+      mock: true,
+      slotStart: '2026-08-18T14:00:00+09:00',
+      slotEnd: '2026-08-18T14:30:00+09:00',
+    },
+    { referenceId: 'event:202', covered: false },
+  ];
+  globalThis.fetch = async (url, options) => {
+    request = { url, options };
+    return successResponse(result);
+  };
+
+  try {
+    const response = await client.fetchMockCrowdingPoints(points, {
+      at: '2026-08-18T14:17:00+09:00',
+      signal: controller.signal,
+    });
+
+    assert.equal(request.url, '/api/v1/crowding/points');
+    assert.equal(request.options.method, 'POST');
+    assert.deepEqual(JSON.parse(request.options.body), {
+      points,
+      at: '2026-08-18T14:17:00+09:00',
+    });
+    assert.equal(request.options.signal, controller.signal);
+    assert.deepEqual(response, result);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test('fetchMockCrowdingGrids sends WGS84 viewport bounds, optional slot time, and abort signal', async () => {
+  const client = await import('./client.js');
+  const originalFetch = globalThis.fetch;
+  const controller = new AbortController();
+  let request;
+  const result = [{
+    gridCode: 'G-100-100',
+    coordinates: [[
+      [126.9765, 37.5757],
+      [126.9771, 37.5757],
+      [126.9771, 37.5761],
+      [126.9765, 37.5761],
+      [126.9765, 37.5757],
+    ]],
+    centerLatitude: 37.5759,
+    centerLongitude: 126.9768,
+    score: 76,
+    level: 'VERY_CROWDED',
+    levelLabel: '붐빔',
+    mock: true,
+    slotStart: '2026-08-18T14:00:00+09:00',
+    slotEnd: '2026-08-18T14:30:00+09:00',
+  }];
+  globalThis.fetch = async (url, options) => {
+    request = { url, options };
+    return successResponse(result);
+  };
+
+  try {
+    const response = await client.fetchMockCrowdingGrids({
+      minLat: 37.57,
+      maxLat: 37.58,
+      minLng: 126.97,
+      maxLng: 126.98,
+    }, {
+      at: '2026-08-18T14:17:00+09:00',
+      signal: controller.signal,
+    });
+
+    const url = new URL(request.url, 'https://ddemachim.test');
+    assert.equal(url.pathname, '/api/v1/crowding/grids');
+    assert.deepEqual(Object.fromEntries(url.searchParams), {
+      minLat: '37.57',
+      maxLat: '37.58',
+      minLng: '126.97',
+      maxLng: '126.98',
+      at: '2026-08-18T14:17:00+09:00',
+    });
+    assert.equal(request.options.signal, controller.signal);
+    assert.deepEqual(response, result);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});

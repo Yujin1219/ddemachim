@@ -137,18 +137,9 @@ class TrendKeywordGroup:
 
 def build_keyword_groups(
     candidate_places: Sequence[Mapping[str, Any]],
-    topics_by_place: Mapping[str, Sequence[str]] | None = None,
-    *,
-    include_topics: bool = True,
 ) -> list[TrendKeywordGroup]:
-    """Build place/alias and place+topic groups before API batching.
+    """Build one Search Trend group per place from its name and aliases."""
 
-    The Search Trend API treats keywords in one group as alternatives.  A
-    topic group therefore contains phrases such as ``place topic`` (and the
-    corresponding aliases), while the place group contains the plain aliases.
-    """
-
-    topic_map = topics_by_place or {}
     groups: list[TrendKeywordGroup] = []
     for place in candidate_places:
         if not isinstance(place, Mapping):
@@ -163,22 +154,6 @@ def build_keyword_groups(
             continue
         label_id = place_id or plain_keywords[0]
         groups.append(TrendKeywordGroup(f"place:{label_id}", tuple(plain_keywords), "place", place_id))
-        if not include_topics:
-            continue
-        topics = topic_map.get(place_id or "", ())
-        if isinstance(topics, str):
-            topics = [topics]
-        for topic in _unique(topics):
-            phrase_keywords = _unique([f"{alias} {topic}" for alias in plain_keywords])
-            if phrase_keywords:
-                groups.append(
-                    TrendKeywordGroup(
-                        f"place_topic:{label_id}:{topic}",
-                        tuple(phrase_keywords),
-                        "place_topic",
-                        place_id,
-                    )
-                )
     return groups
 
 
@@ -411,6 +386,8 @@ def summarize_trend_ratio(
                 baseline_values.append(ratio)
     recent_average = sum(recent_values) / len(recent_values) if recent_values else 0.0
     baseline_average = sum(baseline_values) / len(baseline_values) if baseline_values else 0.0
+    recent_nonzero = sum(value > 0 for value in recent_values)
+    baseline_nonzero = sum(value > 0 for value in baseline_values)
     ratio_growth = None if baseline_average == 0 else recent_average / baseline_average
     if baseline_average == 0:
         state = "new_or_no_baseline" if recent_average > 0 else "no_baseline"
@@ -429,6 +406,8 @@ def summarize_trend_ratio(
         "state": state,
         "recent_observations": len(recent_values),
         "baseline_observations": len(baseline_values),
+        "recent_nonzero_observations": recent_nonzero,
+        "baseline_nonzero_observations": baseline_nonzero,
         "relative_ratio_only": True,
         "absolute_volume_available": False,
         "windows": {

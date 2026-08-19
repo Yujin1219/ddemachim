@@ -228,7 +228,7 @@ python scripts/run_seoul_culture_event.py      # 서울시 문화행사 정보
 python scripts/quality_report.py               # 전체 통계 리포트
 ```
 
-### 블로그 장소 트렌드 7단계 파이프라인
+### 블로그 장소 트렌드 6단계 파이프라인
 
 기존 `blog_trend_pilot.py`는 검색/본문 파일럿 호환용으로 유지하고, 후속
 검증·집계·리포트는 [`scripts/blog_trend_pipeline.py`](scripts/blog_trend_pipeline.py)가
@@ -253,30 +253,188 @@ python3 scripts/blog_trend_pipeline.py \
 
 실행 순서는 `1 Kakao Local 검증 → 2 raw 선별 점수 → 3 검증 ID 기준
 7일/이전 28일 집계 → 4 JSONL snapshot → 5 Search Trend 상대 ratio →
-6 반복 화제어 후보 → 7 JSON+TXT 최종 리포트`다. 각 단계는
-`--stage validate|select|aggregate|snapshot|trend|topics|report`로 진입할 수
+6 JSON+TXT 최종 리포트`다. 각 단계는
+`--stage validate|select|aggregate|snapshot|trend|report`로 진입할 수
 있고, `--dry-run`은 인증키·네트워크·snapshot append를 하지 않는다.
 
-Kakao client는 프로세스 `KAKAO_REST_API_KEY`만 읽고, Search Trend client는
-`NAVER_SEARCH_TREND_CLIENT_ID`/`NAVER_SEARCH_TREND_CLIENT_SECRET`를 우선
-사용한다(`NAVER_CLIENT_*`, 기존 `NAVER_API_HUB_CLIENT_*`도 호환 fallback).
+Kakao client는 프로세스 `KAKAO_REST_API_KEY`만 읽는다. Search Trend client는
+`NAVER_API_HUB_CLIENT_ID`/`NAVER_API_HUB_CLIENT_SECRET`가 있으면 API HUB
+endpoint/header 계약을 사용하고, legacy `NAVER_SEARCH_TREND_*` 또는
+`NAVER_CLIENT_*` 쌍은 기존 endpoint 호환용으로만 사용한다.
 새 client들은 `.env`를 자동 로드하지 않으며 키 값과 API 원문 응답은 출력/저장하지
 않는다. 키가 없으면 해당 live 단계는 `unavailable`로 명시된다.
 
 기본 결과는 `results/blog_trend_pipeline/`에 저장된다.
 
 - `kakao-validation_*.json`: `matched`, `category_mismatch`, `location_mismatch`, `ambiguous`, `not_found`, `error`
-- `selection_*.json`, `metrics_*.json`, `topics_*.json`, `naver-trend_*.json`
+- `selection_*.json`, `metrics_*.json`, `naver-trend_*.json`
 - `blog-post-snapshots.jsonl`: schema v1, append-only, `(collected_at, query, link)` idempotency
 - `final-report_*.json`와 `final-report_*.txt`: 기준일·근거·상태를 보존하며 관리자 `review_required` 상태를 유지
 
-최종 기본 기준은 local validation `matched`, 최근 unique link ≥ 3,
+위 6단계 파일럿의 기본 기준은 local validation `matched`, 최근 unique link ≥ 3,
 blogger ≥ 3, weekly-average growth ≥ 2x, absolute delta ≥ 2다. Search Trend
 ratio는 절대량이 아닌 상대값이며 corroboration으로만 사용한다. prior가 0이면
 `new_candidate`로 분리하고 growth를 임의로 계산하지 않는다. 광고 표현은
 title/description의 관찰 가능한 signal/penalty만 남기며 광고라고 확정하지
 않는다. 고정 메뉴 목록 대신 장소명·지역명을 제외한 한국어 토큰/구문과
 unique blogger support ≥ 3만 evidence term으로 저장한다.
+
+### 반복 관측 기반 장소 발굴
+
+[`scripts/repeated_blog_trend.py`](scripts/repeated_blog_trend.py)는 위 파일럿에서
+검증된 본문 지도 추출, 대표 장소 선택, 네이버 지도 주소의 종로구 확인, Naver API
+HUB Search Trend를 재사용하면서 여러 query와 여러 수집일의 evidence를 누적한다.
+
+이 시스템은 **네이버 전체 블로그 게시물 수나 전체 언급 증가율을 측정하지
+않는다.** 검색 API가 반환한 관측 표본에서 서로 다른 작성자, 검색어, 수집일에
+같은 장소가 반복적으로 나타나는지 확인한다. 따라서 결과를 "네이버 전체
+블로그에서 3배 증가"와 같이 표현하면 안 된다.
+
+데이터별 역할은 다음과 같다.
+
+- Naver Blog Search: 장소 discovery와 social evidence 관측
+- 공개 블로그 본문 `v2_map`: 구조화된 장소 근거 추출
+- Naver `v2_map` place ID: 동일 지도 장소의 안정적인 식별자
+- 지도 주소: `종로구` 장소만 수집하는 지역 경계
+- Naver Search Trend: 절대 검색량이 아닌 검색 관심 상승 보조 신호
+- 반복 수집: 동일 게시물의 재노출과 여러 날짜에 걸친 지속성 관측
+
+설정은 [`config/blog_trend_discovery.json`](config/blog_trend_discovery.json)에
+있다. 기본 실행은 안국·서촌·익선동·삼청동·혜화·부암동·서순라길·창신동·동묘
+9개 대표 지역마다 `카페`, `맛집` query를 각각 1개씩 만들어 총 18개를
+수집한다. 북촌·경복궁·종로3가·대학로·종묘·숭인동 등 canonical alias는
+지역 그룹 metadata와 집계에만 사용하며 같은 날 별도 query를 만들지 않는다.
+query당 최대 500개 metadata를 Naver Blog Search의 `display=100` 제한에 맞춰
+`start=1,101,201,301,401` 다섯 페이지로 수집한다. 전체 unique post 중
+relevance·cross-query 우선순위로 최대 500개 본문을 조회하고, 후보가 있는 각
+지역에 최대 2개를 먼저 배정한다. `authorCap=0`은 무제한이며, 동일 작성자의
+서로 다른 URL도 `uniquePosts` 근거에서 제외하지 않는다.
+
+```bash
+# query, 최대 metadata, 본문 조회 상한만 확인; 인증·네트워크·파일 쓰기 없음
+python3 scripts/repeated_blog_trend.py --date 2026-08-13 --dry-run
+
+# 작은 파일럿
+python3 scripts/repeated_blog_trend.py \
+  --date 2026-08-13 \
+  --regions 안국 서촌 \
+  --results-per-query 500 \
+  --body-limit 500
+
+# 다음 날 같은 명령을 실행하면 기존 기록을 덮어쓰지 않고 observation을 추가한다.
+python3 scripts/repeated_blog_trend.py \
+  --date 2026-08-14 \
+  --regions 안국 서촌 \
+  --results-per-query 500 \
+  --body-limit 500
+```
+
+`search-observations.jsonl`의 idempotency key는
+`(collectionDate, query, postUrl)`이다. `place-evidence.jsonl`에는 주소에서
+`종로구`가 확인된 네이버 지도 관측과
+`NAVER_MAP:<placeId>` 식별자를 저장한다. 동일 URL이 여러 query에
+나오면 `uniquePosts=1`, `uniqueQueries=N`이며, 다음 날 다시 나오면 새 게시글로
+세지 않고 `collectionDays`가 증가한다. `searchRank`도 원시 관측 근거로 남기지만
+이를 네이버 전체의 절대 인기 순위로 해석하지 않는다. 광고 표현 역시 삭제 근거가
+아니라 `isAdSuspected`와 `adSignals`로 보존해 최종 광고 의심 비율에만 사용한다.
+서로 비슷한 query 문장은 독립 근거로 중복 계산하지 않는다. 상태 판정에는
+`uniqueQueries` 대신 `uniqueIntentCategories`를 사용한다. 블로그 지도에서 읽은
+장소명은 `observedPlaceName`과 검색 트렌드 keyword로 사용하되 API HUB 제한에
+맞춰 장소당 최대 5개로 제한한다.
+
+본문은 `v2_map` 위치를 읽어 장소 근거만 추출한다. 본문 HTML과 본문 원문은
+저장하지 않는다. Search Trend의 keyword group은 장소 대표명과 별칭을 네이버
+API에 전달하기 위한 입력 계약이며 표시용 본문 키워드가 아니다.
+
+일반 실행은 JSONL 감사 기록을 남긴 뒤 `DATABASE_URL`의 PostgreSQL에도 같은
+결과를 한 트랜잭션으로 적재한다. 종로구 네이버 지도 장소는 기존 `place`와
+`place_source(source=NAVER_MAP)`에 보수적으로 병합하고 다음 두 테이블을
+사용한다.
+
+- `blog_trend_observation`: 검색일·검색어·게시글 URL 단위 원시 관측과 장소·표본 근거
+- `place_trend_snapshot`: 장소·기준일 단위 누적 수치, 판정 상태, Search Trend 신호
+
+같은 날짜에 다시 실행하면 관측은 `(collection_date, query, post_url)`, 스냅샷은
+`(place_id, snapshot_date)` 기준으로 UPSERT한다. DB 오류가 발생하면 트랜잭션을
+롤백하고 프로세스를 실패 처리하므로
+Spring 스케줄러에서도 성공으로 오인하지 않는다. 테이블을 수동 생성해야 하는
+환경에서는 `src/db/add_blog_trend_tables.sql`을 적용한다. 파일 결과만 확인할 때는
+명시적으로 `--skip-db`를 사용한다.
+
+### 기존 evidence의 Search Trend 재평가
+
+블로그를 다시 수집하지 않고 기존 run의 장소 evidence만 Naver API HUB
+Search Trend로 다시 조회해야 할 때는 focused 명령을 사용한다.
+
+```bash
+python3 scripts/re_evaluate_search_trend.py \
+  --input results/repeated_blog_trend/run_2026-08-13.json \
+  --output results/repeated_blog_trend/run_2026-08-13_search_trend_api_hub.json
+```
+
+장소마다 대표명과 별칭을 합쳐 최대 5개 keyword를 하나의 group으로 만들고,
+API HUB의 요청당 최대 5 groups 계약에 따라 모든 장소를 batch 처리한다. 한
+batch의 인증·요청·결과 누락은 해당 장소에 `API_ERROR:<ErrorClass>` 또는
+`MISSING_RESPONSE` 같은 명시적 `reason`으로
+기록하며 `trend_missing`으로 숨기지 않는다.
+
+재평가는 `timeUnit=month`로 기준일과 직전 완료 3개월을 함께 조회한다. 예를
+들어 기준일이 2026-08-13이면 조회 범위는 `2026-05-01..2026-08-13`이고,
+응답의 월별 `ratio`는 해당 월의 포함 일수로 나눠 월별 일평균 상대 검색
+관심도로 보정한다. 완료 월은 달력 일수, 현재 월은 `as_of.day`를 사용한다.
+`baseline`은 직전 완료 3개월 보정값 평균, `current`는 현재 월 보정값,
+`ratio=current/baseline`이다. `ratio>=2.0`이면 `SURGING`, baseline이 0이고
+current가 양수면 `NEWLY_EMERGING`, baseline이 양수이고 ratio가 2 미만이면
+`STABLE`, 둘 다 0이면 `INSUFFICIENT_DATA`다. 유효 관측일 최소 조건은
+적용하지 않는다.
+
+이 값은 절대 검색량이 아니라 Naver API HUB의 상대적 검색 관심도 지수다.
+`trend.rising`은 기존 `WATCH`/`TRENDING` 호환을 위해 `SURGING` 또는
+`NEWLY_EMERGING`일 때만 true로 저장한다. 재평가 결과는 JSON의 `searchTrend`,
+각 evidence의 `trend`에 `monthValues`, `partialMonthAdjusted`,
+`baselineMonths=3`, `comparisonLabel`을 남기고, 같은 값을
+`place_trend_snapshot`의 월간 상태·ratio·window 컬럼에 idempotent upsert한다.
+
+이 파이프라인의 기본 검색 의도는 대표 지역의 `카페`·`맛집` 발견으로
+고정한다. 수집 날짜에 따라 query를 바꾸지 않으며, 이벤트성 발견은
+별도 파이프라인과 데이터 계약에서 처리한다.
+
+본문 표본은 활성 검색어마다 균등하게 배정한다. 기본 18개 검색어와 본문 상한
+500개에서는 검색어별 27~28개의 고유 게시글을 선택한다. 같은 URL이 여러
+검색어에 노출돼도 하나의 검색어 표본에만 배정하고 본문은 한 번만 조회한다.
+
+```text
+검색어별 언급률 = 해당 검색어 표본에서 장소가 확인된 고유 글 수 / 실제 본문 표본 수
+장소 상대 언급률 = 장소가 확인된 검색어별 언급률의 평균
+```
+
+`relativeMentionRate`, `sampledMentionPosts`, `sampledAuthorCount`, `sampledQueryCount`,
+`queryMentionRates`는 결과 JSON과 `place_trend_snapshot`에 저장한다. 절대
+게시글·작성자 수는 순위가 아니라 최소 2개 게시글·2명 작성자 신뢰도 검증과
+감사 근거로만 보존한다.
+
+```bash
+python3 scripts/repeated_blog_trend.py \
+  --date 2026-08-13 \
+  --regions 안국 서촌 \
+  --results-per-query 500 \
+  --body-limit 500 \
+  --skip-db
+```
+
+상태는 설정 가능한 threshold로 판정한다.
+
+- `INSUFFICIENT_EVIDENCE`: 실제 장소는 확인됐지만 독립 근거가 부족함
+- `WATCH`: 작성자·intent category·수집일·검색 관심 상승 신호 중 설정된 개수 이상 충족
+- `TRENDING`: 작성자, intent category, 수집일, 최근 게시글, 검색 관심 상승, 광고 의심 비율 기준을 모두 충족
+
+Search Trend는 상대값이므로 임의의 절대 floor를 적용하지 않는다. 대신 이전
+28일의 0보다 큰 관측이 7개 이상, 최근 7일의 0보다 큰 관측이 3개 이상일 때만
+최근 평균/이전 평균 배율을 평가한다. 현재 설정에서는 이 배율이 2.0 이상이어야
+상승 보조 신호가 된다. 내부 결과에는 `uniquePosts`, `uniqueAuthors`,
+`uniqueQueries`, `uniqueIntentCategories`, `aliases`, `collectionDays`,
+`recentObservedPosts`, `averageObservedRank`, 관측 시각, `adSuspectedRatio`와 원시
+evidence를 함께 보존한다.
 
 모든 스크립트는 `--dry-run` 옵션으로 DB 적재 없이 통계만 미리 확인 가능(`run_seoul_tour.py`, `run_filming_location.py` 등 일부는 옵션 유무가 다를 수 있어 `--help`로 확인).
 

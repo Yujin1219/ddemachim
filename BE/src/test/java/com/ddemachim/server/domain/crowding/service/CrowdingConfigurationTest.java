@@ -3,7 +3,9 @@ package com.ddemachim.server.domain.crowding.service;
 import static org.assertj.core.api.Assertions.assertThat;
 
 import com.ddemachim.server.global.properties.CrowdingMockProperties;
+import java.io.IOException;
 import java.time.Duration;
+import java.util.Properties;
 import org.junit.jupiter.api.Test;
 import org.springframework.boot.autoconfigure.AutoConfigurations;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
@@ -13,6 +15,8 @@ import org.springframework.boot.test.context.ConfigDataApplicationContextInitial
 import org.springframework.boot.test.context.runner.ApplicationContextRunner;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.context.annotation.Import;
+import org.springframework.core.io.ClassPathResource;
+import org.springframework.core.io.support.PropertiesLoaderUtils;
 import org.springframework.data.redis.connection.RedisConnectionFactory;
 import org.springframework.data.redis.connection.lettuce.LettuceConnectionFactory;
 import org.springframework.data.redis.core.StringRedisTemplate;
@@ -33,6 +37,35 @@ class CrowdingConfigurationTest {
                     "ddemachim.crowding.mock.maximum-viewport-grids=1234",
                     "ddemachim.crowding.mock.maximum-batch-points=42")
             .withUserConfiguration(CrowdingTestConfiguration.class);
+
+    @Test
+    void applicationPropertiesShipsOnlyRedisAndCrowdingMockDefaults() throws IOException {
+        ClassPathResource resource = new ClassPathResource("application.properties");
+        assertThat(resource.exists()).isTrue();
+
+        Properties properties = PropertiesLoaderUtils.loadProperties(resource);
+
+        assertThat(properties.stringPropertyNames()).containsExactlyInAnyOrder(
+                "spring.data.redis.host",
+                "spring.data.redis.port",
+                "spring.data.redis.connect-timeout",
+                "spring.data.redis.timeout",
+                "ddemachim.crowding.mock.seed",
+                "ddemachim.crowding.mock.ttl",
+                "ddemachim.crowding.mock.zone",
+                "ddemachim.crowding.mock.maximum-viewport-grids",
+                "ddemachim.crowding.mock.maximum-batch-points");
+        assertThat(properties)
+                .containsEntry("spring.data.redis.host", "${REDIS_HOST:localhost}")
+                .containsEntry("spring.data.redis.port", "${REDIS_PORT:6379}")
+                .containsEntry("spring.data.redis.connect-timeout", "${REDIS_CONNECT_TIMEOUT:2s}")
+                .containsEntry("spring.data.redis.timeout", "${REDIS_COMMAND_TIMEOUT:2s}")
+                .containsEntry("ddemachim.crowding.mock.seed", "${MOCK_CROWDING_SEED:ddemachim-demo-v1}")
+                .containsEntry("ddemachim.crowding.mock.ttl", "24h")
+                .containsEntry("ddemachim.crowding.mock.zone", "Asia/Seoul")
+                .containsEntry("ddemachim.crowding.mock.maximum-viewport-grids", "5000")
+                .containsEntry("ddemachim.crowding.mock.maximum-batch-points", "300");
+    }
 
     @Test
     void springAutoConfigurationBindsOverridesAndCreatesBeansWithoutConnectingToRedis() {

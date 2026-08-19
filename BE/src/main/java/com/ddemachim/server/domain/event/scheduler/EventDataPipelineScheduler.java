@@ -20,6 +20,7 @@ public class EventDataPipelineScheduler {
     private final DataPipelineSchedulerProperties properties;
     private final AtomicBoolean tourApiEventsRunning = new AtomicBoolean(false);
     private final AtomicBoolean seoulCultureEventsRunning = new AtomicBoolean(false);
+    private final AtomicBoolean repeatedBlogTrendRunning = new AtomicBoolean(false);
 
     public EventDataPipelineScheduler(
             PipelineProcessRunner processRunner,
@@ -41,6 +42,13 @@ public class EventDataPipelineScheduler {
             zone = "${ddemachim.data-pipeline.scheduler.zone:Asia/Seoul}")
     public void runSeoulCultureEvents() {
         runJob("seoul-culture-events", properties.getSeoulCultureEvents(), seoulCultureEventsRunning);
+    }
+
+    @Scheduled(
+            cron = "${ddemachim.data-pipeline.scheduler.repeated-blog-trend.cron:0 30 4 * * *}",
+            zone = "${ddemachim.data-pipeline.scheduler.zone:Asia/Seoul}")
+    public void runRepeatedBlogTrend() {
+        runJob("repeated-blog-trend", properties.getRepeatedBlogTrend(), repeatedBlogTrendRunning);
     }
 
     private void runJob(String jobName, Job job, AtomicBoolean running) {

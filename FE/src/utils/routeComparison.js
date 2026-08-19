@@ -1,11 +1,37 @@
 export const ROUTE_MODES = ['WALK', 'TRANSIT', 'TAXI'];
 
+export function normalizeRouteNumber(value) {
+  if (typeof value === 'number') return Number.isFinite(value) ? value : null;
+  if (typeof value !== 'string' || value.trim() === '') return null;
+  const number = Number(value);
+  return Number.isFinite(number) ? number : null;
+}
+
 export function normalizeRouteCoordinate(value) {
-  const latitude = Number(value?.latitude);
-  const longitude = Number(value?.longitude);
-  if (!Number.isFinite(latitude) || latitude < -90 || latitude > 90) return null;
-  if (!Number.isFinite(longitude) || longitude < -180 || longitude > 180) return null;
+  const latitude = normalizeRouteNumber(value?.latitude);
+  const longitude = normalizeRouteNumber(value?.longitude);
+  if (latitude === null || latitude < -90 || latitude > 90) return null;
+  if (longitude === null || longitude < -180 || longitude > 180) return null;
   return { latitude, longitude };
+}
+
+export function shouldLocateForDestinationSelection(locationStatus, destinationValue) {
+  return (locationStatus === 'idle' || locationStatus === 'error')
+    && normalizeRouteCoordinate(destinationValue) !== null;
+}
+
+export function routeOriginMarkerCoordinates(selectedPlace, locationValue) {
+  const location = normalizeRouteCoordinate(locationValue);
+  return selectedPlace && location ? [location.longitude, location.latitude] : null;
+}
+
+export function resolveRouteFitDuration(matchMedia = globalThis.window?.matchMedia?.bind(globalThis.window)) {
+  if (typeof matchMedia !== 'function') return 220;
+  try {
+    return matchMedia('(prefers-reduced-motion: reduce)').matches ? 0 : 220;
+  } catch {
+    return 220;
+  }
 }
 
 export function distanceBetweenMeters(originValue, destinationValue) {
@@ -22,8 +48,8 @@ export function distanceBetweenMeters(originValue, destinationValue) {
 }
 
 export function formatRouteDuration(secondsValue) {
-  const seconds = Number(secondsValue);
-  if (!Number.isFinite(seconds) || seconds < 0) return null;
+  const seconds = normalizeRouteNumber(secondsValue);
+  if (seconds === null || seconds < 0) return null;
   const minutes = Math.max(1, Math.round(seconds / 60));
   if (minutes < 60) return `${minutes}분`;
   const hours = Math.floor(minutes / 60);
@@ -32,19 +58,48 @@ export function formatRouteDuration(secondsValue) {
 }
 
 export function formatRouteDistance(metersValue) {
-  const meters = Number(metersValue);
-  if (!Number.isFinite(meters) || meters < 0) return null;
+  const meters = normalizeRouteNumber(metersValue);
+  if (meters === null || meters < 0) return null;
   if (meters < 1_000) return `${Math.round(meters)}m`;
   return `${Number((meters / 1_000).toFixed(1))}km`;
 }
 
 export function formatRouteFare(wonValue) {
-  const won = Number(wonValue);
-  return Number.isFinite(won) && won >= 0 ? `${Math.round(won).toLocaleString('ko-KR')}원` : null;
+  const won = normalizeRouteNumber(wonValue);
+  return won !== null && won >= 0 ? `${Math.round(won).toLocaleString('ko-KR')}원` : null;
 }
 
 export function routeOptionByMode(response, mode) {
   return response?.routes?.find((route) => route?.mode === mode) ?? null;
+}
+
+export function fastestAvailableRouteMode(response, modes = ROUTE_MODES) {
+  let fastest = null;
+  for (const mode of modes) {
+    const option = routeOptionByMode(response, mode);
+    const duration = normalizeRouteNumber(option?.durationSeconds);
+    if (option?.status !== 'AVAILABLE' || duration === null || duration < 0) continue;
+    if (!fastest || duration < fastest.duration) fastest = { mode, duration };
+  }
+  return fastest?.mode ?? null;
+}
+
+export function routeModeSelectionReducer(state, action) {
+  if (action.type === 'PLACE_CHANGED') {
+    return { activeMode: 'WALK', manuallySelected: false };
+  }
+  if (action.type === 'MODE_SELECTED') {
+    return { activeMode: action.mode, manuallySelected: true };
+  }
+  if (action.type === 'MODE_RESOLVED') {
+    return { ...state, activeMode: action.mode };
+  }
+  if (action.type === 'ROUTES_READY') {
+    if (state.manuallySelected) return state;
+    const activeMode = fastestAvailableRouteMode(action.routeData) || state.activeMode;
+    return activeMode === state.activeMode ? state : { ...state, activeMode };
+  }
+  return state;
 }
 
 function createAbortError() {
