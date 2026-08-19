@@ -3,8 +3,8 @@ package com.ddemachim.server.domain.place.repository;
 import static org.assertj.core.api.Assertions.assertThat;
 
 import com.ddemachim.server.domain.place.entity.Place;
-import com.ddemachim.server.domain.place.entity.PlaceImage;
 import jakarta.persistence.EntityManager;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.BeanUtils;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -12,10 +12,13 @@ import org.springframework.boot.data.jpa.test.autoconfigure.DataJpaTest;
 import org.springframework.boot.jdbc.test.autoconfigure.AutoConfigureTestDatabase;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
+import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.test.util.ReflectionTestUtils;
+import org.springframework.test.context.jdbc.Sql;
 
 @DataJpaTest
 @AutoConfigureTestDatabase(replace = AutoConfigureTestDatabase.Replace.NONE)
+@Sql(scripts = "/place-trend-test-schema.sql")
 class PlaceRepositoryTest {
 
     private static final String TEST_DISTRICT = "정렬테스트구";
@@ -26,20 +29,26 @@ class PlaceRepositoryTest {
     @Autowired
     private EntityManager entityManager;
 
+    @Autowired
+    private JdbcTemplate jdbcTemplate;
+
+    @BeforeEach
+    void registerH2Functions() {
+        jdbcTemplate.execute(
+                "CREATE ALIAS IF NOT EXISTS STRING_TO_ARRAY FOR 'com.ddemachim.server.domain.place.repository.PlaceRepositoryTest.stringToArray'");
+    }
+
     @Test
     void search_filmingLocationOrdersPlacesWithImagesFirstAndKeepsPaginationStable() {
-        Place withoutImage = place("이미지 없는 촬영지");
-        Place imagePlaceWithLowerId = place("이미지 있는 촬영지 1");
-        Place imagePlaceWithHigherId = place("이미지 있는 촬영지 2");
+        Place withoutImage = place("이미지 없는 촬영지", null);
+        Place imagePlaceWithLowerId = place("이미지 있는 촬영지 1", "https://example.com/1.jpg");
+        Place imagePlaceWithHigherId = place("이미지 있는 촬영지 2", "https://example.com/2.jpg");
 
         entityManager.persist(withoutImage);
         entityManager.persist(imagePlaceWithLowerId);
         entityManager.persist(imagePlaceWithHigherId);
         entityManager.flush();
 
-        entityManager.persist(image(imagePlaceWithLowerId, "https://example.com/1.jpg"));
-        entityManager.persist(image(imagePlaceWithHigherId, "https://example.com/2.jpg"));
-        entityManager.flush();
         entityManager.clear();
 
         PageRequest firstPage = PageRequest.of(0, 2);
@@ -71,20 +80,17 @@ class PlaceRepositoryTest {
                 .containsExactly(withoutImage.getId(), imagePlaceWithLowerId.getId(), imagePlaceWithHigherId.getId());
     }
 
-    private static Place place(String name) {
+    private static Place place(String name, String imageUrl) {
         Place place = BeanUtils.instantiateClass(Place.class);
         ReflectionTestUtils.setField(place, "name", name);
         ReflectionTestUtils.setField(place, "normalizedName", name);
         ReflectionTestUtils.setField(place, "district", TEST_DISTRICT);
         ReflectionTestUtils.setField(place, "tags", new String[] {"FILMING_LOCATION", "OTHER"});
+        ReflectionTestUtils.setField(place, "imageUrl", imageUrl);
         return place;
     }
 
-    private static PlaceImage image(Place place, String sourceUrl) {
-        PlaceImage image = BeanUtils.instantiateClass(PlaceImage.class);
-        ReflectionTestUtils.setField(image, "place", place);
-        ReflectionTestUtils.setField(image, "source", "TEST");
-        ReflectionTestUtils.setField(image, "sourceUrl", sourceUrl);
-        return image;
+    public static String[] stringToArray(String value, String delimiter) {
+        return value == null ? null : value.split(java.util.regex.Pattern.quote(delimiter), -1);
     }
 }

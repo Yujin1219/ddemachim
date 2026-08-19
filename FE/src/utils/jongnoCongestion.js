@@ -1,8 +1,13 @@
 import { useMemo, useSyncExternalStore } from 'react';
 import GeoJSON from 'ol/format/GeoJSON.js';
 import { fetchJongnoCongestion } from '../api/client';
+import {
+  hasLiveJongnoCongestion,
+  JONGNO_CONGESTION_REFRESH_MS,
+  resolveJongnoCongestionRefreshMs,
+} from './jongnoCongestionRefresh.js';
 
-export const JONGNO_CONGESTION_REFRESH_MS = 5 * 60 * 1000;
+export { JONGNO_CONGESTION_REFRESH_MS } from './jongnoCongestionRefresh.js';
 
 const JONGNO_CONGESTION_AREA_URL = '/data/jongno-city-areas.geojson';
 const geoJsonFormat = new GeoJSON();
@@ -83,7 +88,7 @@ function loadCongestionPolygons() {
 
 function congestionCacheIsFresh() {
   return Boolean(
-    snapshot.data
+    hasLiveJongnoCongestion(snapshot.data)
       && snapshot.cachedAt
       && Date.now() - snapshot.cachedAt < JONGNO_CONGESTION_REFRESH_MS,
   );
@@ -133,11 +138,14 @@ function scheduleRefresh() {
   if (typeof window === 'undefined' || listeners.size === 0) return;
   clearRefreshTimer();
 
-  const lastReferenceAt = Math.max(snapshot.cachedAt, lastCongestionAttemptAt);
+  const refreshMs = resolveJongnoCongestionRefreshMs(snapshot.data);
+  const lastReferenceAt = hasLiveJongnoCongestion(snapshot.data)
+    ? snapshot.cachedAt
+    : lastCongestionAttemptAt;
   const elapsed = lastReferenceAt ? Date.now() - lastReferenceAt : 0;
   const delay = lastReferenceAt
-    ? Math.max(1000, JONGNO_CONGESTION_REFRESH_MS - elapsed)
-    : JONGNO_CONGESTION_REFRESH_MS;
+    ? Math.max(1000, refreshMs - elapsed)
+    : refreshMs;
 
   refreshTimerId = window.setTimeout(async () => {
     refreshTimerId = null;

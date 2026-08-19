@@ -49,8 +49,11 @@
 .vworld-place-marker.is-zoom-near { --marker-size: 17px; }
 .vworld-place-marker.is-numbered { --marker-size: 28px; border-width: 2px; color: #fff; box-shadow: 0 5px 13px rgb(15 23 42 / 24%); font-size: 11px; font-weight: 700; line-height: 1; }
 .vworld-place-marker.is-numbered span { display: block; }
-.vworld-place-marker.is-restaurant, .vworld-place-cluster.is-restaurant { --marker-color: #ef4444; }
-.vworld-place-marker.is-cafe-dessert, .vworld-place-cluster.is-cafe-dessert { --marker-color: #c47a2c; }
+.vworld-place-marker.is-restaurant, .vworld-place-cluster.is-restaurant { --marker-color: #dc2626; }
+.vworld-place-marker.is-cafe-dessert, .vworld-place-cluster.is-cafe-dessert { --marker-color: #b45309; }
+.vworld-place-marker.is-hot, .vworld-place-cluster.is-hot { --marker-color: #db2777; }
+.vworld-place-marker.is-event, .vworld-place-cluster.is-event { --marker-color: #4f46e5; }
+.vworld-place-cluster.is-mixed { --marker-color: #334155; }
 .vworld-place-marker.is-attraction, .vworld-place-cluster.is-attraction { --marker-color: #2563eb; }
 .vworld-place-marker.is-culture, .vworld-place-cluster.is-culture { --marker-color: #0891b2; }
 .vworld-place-marker.is-exhibition, .vworld-place-cluster.is-exhibition { --marker-color: #7c3aed; }
@@ -59,7 +62,7 @@
 .vworld-place-marker.is-park, .vworld-place-cluster.is-park { --marker-color: #16a34a; }
 .vworld-place-marker.is-walk, .vworld-place-cluster.is-walk { --marker-color: #0f766e; }
 .vworld-place-marker.is-photo-spot, .vworld-place-cluster.is-photo-spot { --marker-color: #4f46e5; }
-.vworld-place-marker.is-filming, .vworld-place-cluster.is-filming { --marker-color: #9333ea; }
+.vworld-place-marker.is-filming, .vworld-place-cluster.is-filming { --marker-color: #7c3aed; }
 .vworld-place-marker.is-search { --marker-color: #172033; --marker-size: 22px; border-width: 3px; outline: 2px solid rgb(255 212 42 / 85%); outline-offset: 2px; }
 .vworld-place-marker.is-crowding-relaxed { --crowding-marker-color: #188553; }
 .vworld-place-marker.is-crowding-normal { --crowding-marker-color: #2563eb; }

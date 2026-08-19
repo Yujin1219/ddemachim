@@ -25,7 +25,10 @@ public record PlaceDetailResponse(
         String accessibility,
         String[] tags,
         List<PlaceOperatingHoursResponse> operatingHours,
-        List<PlaceImageResponse> images) {
+        String imageUrl,
+        String imageSource,
+        String imageAttribution,
+        PlaceTrendResponse trend) {
 
     public static PlaceDetailResponse of(
             Place place,

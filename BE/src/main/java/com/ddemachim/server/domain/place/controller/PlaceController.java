@@ -3,6 +3,7 @@ package com.ddemachim.server.domain.place.controller;
 import com.ddemachim.server.domain.place.dto.PlaceDetailResponse;
 import com.ddemachim.server.domain.place.dto.PlaceMapResponse;
 import com.ddemachim.server.domain.place.dto.PlaceSummaryResponse;
+import com.ddemachim.server.domain.place.dto.PlaceTrendSummaryResponse;
 import com.ddemachim.server.domain.place.service.PlaceQueryService;
 import com.ddemachim.server.global.apiPayload.ApiResponse;
 import io.swagger.v3.oas.annotations.Operation;
@@ -65,6 +66,17 @@ public class PlaceController {
                     @RequestParam(required = false) Integer limit) {
         return ApiResponse.onSuccess(
                 placeQueryService.getPlacesInBounds(category, tag, minLat, maxLat, minLng, maxLng, limit));
+    }
+
+    @Operation(
+            summary = "장소 트렌드 목록 조회",
+            description = "가장 최근 스냅샷이 TRENDING 또는 WATCH인 장소만 공개 트렌드 목록으로 조회합니다. "
+                    + "limit은 기본 6건이며 1~20건을 지원합니다. 트렌드 상태와 최신 스냅샷 날짜만 반환합니다.")
+    @GetMapping("/trends")
+    public ApiResponse<List<PlaceTrendSummaryResponse>> getTrends(
+            @Parameter(description = "반환할 장소 트렌드 수 (1~20, 기본 6)", example = "6")
+            @RequestParam(defaultValue = "6") Integer limit) {
+        return ApiResponse.onSuccess(placeQueryService.getTrends(limit));
     }
 
     @Operation(

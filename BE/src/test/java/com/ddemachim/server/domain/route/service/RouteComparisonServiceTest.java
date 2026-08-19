@@ -15,6 +15,7 @@ import com.ddemachim.server.domain.route.exception.RouteException;
 import com.ddemachim.server.domain.route.exception.RouteProviderException;
 import com.ddemachim.server.global.properties.TmapProperties;
 import java.time.Clock;
+import java.time.Duration;
 import java.time.Instant;
 import java.time.ZoneOffset;
 import java.util.ArrayList;
@@ -27,15 +28,18 @@ class RouteComparisonServiceTest {
 
     private static final Instant GENERATED_AT = Instant.parse("2026-08-13T03:00:00Z");
 
-    private FakeRouteProvider provider;
+    private FakeRoadRouteProvider roadProvider;
+    private FakeTransitRouteProvider transitProvider;
     private RouteComparisonService service;
 
     @BeforeEach
     void setUp() {
-        provider = new FakeRouteProvider();
+        roadProvider = new FakeRoadRouteProvider();
+        transitProvider = new FakeTransitRouteProvider();
         Executor directExecutor = Runnable::run;
         service = new RouteComparisonService(
-                provider,
+                roadProvider,
+                transitProvider,
                 directExecutor,
                 new TmapProperties(),
                 Clock.fixed(GENERATED_AT, ZoneOffset.UTC));
@@ -43,7 +47,7 @@ class RouteComparisonServiceTest {
 
     @Test
     void compare_keepsWalkTransitTaxiOrderWhenOneProviderFails() {
-        provider.transitFailure = new RouteProviderException(RouteUnavailableReason.NO_ROUTE);
+        transitProvider.failure = new RouteProviderException(RouteUnavailableReason.NO_ROUTE);
 
         RouteComparisonResponse response = service.compare(request());
 
@@ -52,13 +56,15 @@ class RouteComparisonServiceTest {
                 .containsExactly(RouteMode.WALK, RouteMode.TRANSIT, RouteMode.TAXI);
         assertThat(response.routes().get(1).status()).isEqualTo(RouteStatus.UNAVAILABLE);
         assertThat(response.routes().get(1).unavailableReason()).isEqualTo(RouteUnavailableReason.NO_ROUTE);
+        assertThat(roadProvider.calls).containsExactly(RouteMode.WALK, RouteMode.TAXI);
+        assertThat(transitProvider.calls).containsExactly(RouteMode.TRANSIT);
     }
 
     @Test
     void compare_throwsBadGatewayWhenEveryProviderFailsForAReasonOtherThanConfiguration() {
-        provider.walkingFailure = new RouteProviderException(RouteUnavailableReason.NO_ROUTE);
-        provider.transitFailure = new RouteProviderException(RouteUnavailableReason.TIMEOUT);
-        provider.taxiFailure = new RouteProviderException(RouteUnavailableReason.PROVIDER_UNAVAILABLE);
+        roadProvider.walkingFailure = new RouteProviderException(RouteUnavailableReason.NO_ROUTE);
+        transitProvider.failure = new RouteProviderException(RouteUnavailableReason.TIMEOUT);
+        roadProvider.taxiFailure = new RouteProviderException(RouteUnavailableReason.PROVIDER_UNAVAILABLE);
 
         assertThatThrownBy(() -> service.compare(request()))
                 .isInstanceOf(RouteException.class)
@@ -69,9 +75,9 @@ class RouteComparisonServiceTest {
 
     @Test
     void compare_throwsServiceUnavailableWhenEveryProviderIsNotConfigured() {
-        provider.walkingFailure = new RouteProviderException(RouteUnavailableReason.NOT_CONFIGURED);
-        provider.transitFailure = new RouteProviderException(RouteUnavailableReason.NOT_CONFIGURED);
-        provider.taxiFailure = new RouteProviderException(RouteUnavailableReason.NOT_CONFIGURED);
+        roadProvider.walkingFailure = new RouteProviderException(RouteUnavailableReason.NOT_CONFIGURED);
+        transitProvider.failure = new RouteProviderException(RouteUnavailableReason.NOT_CONFIGURED);
+        roadProvider.taxiFailure = new RouteProviderException(RouteUnavailableReason.NOT_CONFIGURED);
 
         assertThatThrownBy(() -> service.compare(request()))
                 .isInstanceOf(RouteException.class)
@@ -81,11 +87,53 @@ class RouteComparisonServiceTest {
     }
 
     @Test
+    void compare_keepsRoadRoutesWhenOnlyTransitIsNotConfigured() {
+        transitProvider.failure = new RouteProviderException(RouteUnavailableReason.NOT_CONFIGURED);
+
+        RouteComparisonResponse response = service.compare(request());
+
+        assertThat(response.routes()).extracting(RouteOption::mode)
+                .containsExactly(RouteMode.WALK, RouteMode.TRANSIT, RouteMode.TAXI);
+        assertThat(response.routes().get(0).status()).isEqualTo(RouteStatus.AVAILABLE);
+        assertThat(response.routes().get(1).status()).isEqualTo(RouteStatus.UNAVAILABLE);
+        assertThat(response.routes().get(1).unavailableReason())
+                .isEqualTo(RouteUnavailableReason.NOT_CONFIGURED);
+        assertThat(response.routes().get(2).status()).isEqualTo(RouteStatus.AVAILABLE);
+    }
+
+    @Test
     void compare_reusesTwoMinuteCacheForCoordinatesInSameFourDecimalCell() {
         service.compare(request(37.56651, 126.97801, 37.55591, 126.97231));
         service.compare(request(37.56654, 126.97804, 37.55594, 126.97234));
 
-        assertThat(provider.totalCalls()).isEqualTo(3);
+        assertThat(roadProvider.totalCalls()).isEqualTo(2);
+        assertThat(transitProvider.totalCalls()).isEqualTo(1);
+    }
+
+    @Test
+    void oversizedCacheTtl_isCappedAtTwoMinutes() {
+        TmapProperties properties = new TmapProperties();
+        properties.setCacheTtl(Duration.ofMinutes(15));
+
+        assertThat(RouteComparisonService.cacheTtl(properties)).isEqualTo(Duration.ofMinutes(2));
+    }
+
+    @Test
+    void oversizedCacheMaximumSize_isCappedAtOneThousand() {
+        TmapProperties properties = new TmapProperties();
+        properties.setCacheMaximumSize(5_000);
+
+        assertThat(RouteComparisonService.cacheMaximumSize(properties)).isEqualTo(1_000L);
+    }
+
+    @Test
+    void smallerPositiveCacheConfiguration_isKept() {
+        TmapProperties properties = new TmapProperties();
+        properties.setCacheTtl(Duration.ofSeconds(45));
+        properties.setCacheMaximumSize(250);
+
+        assertThat(RouteComparisonService.cacheTtl(properties)).isEqualTo(Duration.ofSeconds(45));
+        assertThat(RouteComparisonService.cacheMaximumSize(properties)).isEqualTo(250L);
     }
 
     private static RouteComparisonRequest request() {
@@ -115,10 +163,9 @@ class RouteComparisonServiceTest {
                 List.of());
     }
 
-    private static final class FakeRouteProvider implements RouteProviderClient {
+    private static final class FakeRoadRouteProvider implements RoadRouteProviderClient {
 
         private RouteProviderException walkingFailure;
-        private RouteProviderException transitFailure;
         private RouteProviderException taxiFailure;
         private final List<RouteMode> calls = new ArrayList<>();
 
@@ -132,21 +179,31 @@ class RouteComparisonServiceTest {
         }
 
         @Override
-        public RouteOption findTransit(Coordinate origin, Coordinate destination) {
-            calls.add(RouteMode.TRANSIT);
-            if (transitFailure != null) {
-                throw transitFailure;
-            }
-            return available(RouteMode.TRANSIT);
-        }
-
-        @Override
         public RouteOption findTaxi(Coordinate origin, Coordinate destination) {
             calls.add(RouteMode.TAXI);
             if (taxiFailure != null) {
                 throw taxiFailure;
             }
             return available(RouteMode.TAXI);
+        }
+
+        private int totalCalls() {
+            return calls.size();
+        }
+    }
+
+    private static final class FakeTransitRouteProvider implements TransitRouteProviderClient {
+
+        private RouteProviderException failure;
+        private final List<RouteMode> calls = new ArrayList<>();
+
+        @Override
+        public RouteOption findTransit(Coordinate origin, Coordinate destination) {
+            calls.add(RouteMode.TRANSIT);
+            if (failure != null) {
+                throw failure;
+            }
+            return available(RouteMode.TRANSIT);
         }
 
         private int totalCalls() {

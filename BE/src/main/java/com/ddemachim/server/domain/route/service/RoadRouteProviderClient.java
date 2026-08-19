@@ -4,7 +4,7 @@ import com.ddemachim.server.domain.route.dto.RouteComparisonRequest.Coordinate;
 import com.ddemachim.server.domain.route.dto.RouteComparisonResponse.RouteOption;
 import java.util.List;
 
-public interface RouteProviderClient {
+public interface RoadRouteProviderClient {
 
     RouteOption findWalking(Coordinate origin, Coordinate destination);
 

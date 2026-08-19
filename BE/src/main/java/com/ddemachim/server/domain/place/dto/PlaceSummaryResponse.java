@@ -16,7 +16,7 @@ public record PlaceSummaryResponse(
         String phone,
         String[] tags,
         List<String> filmingContentTypes,
-        String thumbnailUrl) {
+        String imageUrl) {
 
     public static PlaceSummaryResponse of(Place place, List<String> filmingContentTypes) {
         Double latitude = place.getLocation() != null ? place.getLocation().getY() : null;
