@@ -15,6 +15,10 @@ public enum PlaceErrorStatus implements BaseErrorCode {
             HttpStatus.BAD_REQUEST,
             "PLACE4002",
             "지원하지 않는 촬영 콘텐츠 유형입니다. DRAMA, VARIETY, MOVIE 중 하나를 사용해야 합니다."),
+    INVALID_PLACE_TREND_LIMIT(
+            HttpStatus.BAD_REQUEST,
+            "PLACE4003",
+            "장소 트렌드 limit은 1 이상 20 이하이어야 합니다."),
     PLACE_NOT_FOUND(HttpStatus.NOT_FOUND, "PLACE4041", "찾을 수 없는 장소입니다."),
     ;
 

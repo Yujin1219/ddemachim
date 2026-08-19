@@ -57,32 +57,6 @@ function normalizeCenter(center) {
     : DEFAULT_CENTER
 }
 
-function hasPlaceTag(place, tagCode) {
-  const normalize = (value) => (typeof value === 'string' ? value.trim().toUpperCase() : '')
-  const tags = Array.isArray(place.tags)
-    ? place.tags.map((tag) => normalize(typeof tag === 'string' ? tag : tag?.code))
-    : [normalize(place.tags)]
-  return tags.includes(normalize(tagCode))
-}
-
-function placeMarkerTone(place) {
-  if (place.externalSource === 'KAKAO') return 'search'
-  if (hasPlaceTag(place, 'FILMING_LOCATION')) return 'filming'
-
-  const categoryCode = typeof place.categoryCode === 'string' ? place.categoryCode.trim().toUpperCase() : ''
-  if (categoryCode === 'RESTAURANT') return 'restaurant'
-  if (categoryCode === 'CAFE' || categoryCode === 'DESSERT') return 'cafe-dessert'
-  if (categoryCode === 'ATTRACTION') return 'attraction'
-  if (categoryCode === 'CULTURE') return 'culture'
-  if (categoryCode === 'EXHIBITION') return 'exhibition'
-  if (categoryCode === 'SHOPPING') return 'shopping'
-  if (categoryCode === 'POPUP') return 'popup'
-  if (categoryCode === 'PARK') return 'park'
-  if (categoryCode === 'WALK') return 'walk'
-  if (categoryCode === 'PHOTO_SPOT') return 'photo-spot'
-  return 'default'
-}
-
 function markerSizeClass(map) {
   const zoomLevel = map.getView().getZoom() ?? 15
   if (zoomLevel >= 17) return 'is-zoom-near'
@@ -148,6 +122,7 @@ export default function VWorldMap({
   const loadCongestionRef = useRef(loadCongestionInBounds)
   const placeMarkerFilterRef = useRef(placeMarkerFilter)
   const placeMarkerLabelRef = useRef(placeMarkerLabel)
+  const onMapClickRef = useRef(onMapClick)
   const onPlaceClickRef = useRef(onPlaceClick)
   const onCongestionAreaClickRef = useRef(onCongestionAreaClick)
   const selectedCongestionGridCodeRef = useRef(selectedCongestionGridCode)
@@ -165,6 +140,7 @@ export default function VWorldMap({
     loadCongestionRef.current = loadCongestionInBounds
     placeMarkerFilterRef.current = placeMarkerFilter
     placeMarkerLabelRef.current = placeMarkerLabel
+    onMapClickRef.current = onMapClick
     onPlaceClickRef.current = onPlaceClick
     onCongestionAreaClickRef.current = onCongestionAreaClick
     selectedCongestionGridCodeRef.current = selectedCongestionGridCode
@@ -287,7 +263,7 @@ export default function VWorldMap({
 
   function addClusterOverlay(map, cluster) {
     const marker = document.createElement('button')
-    marker.className = `vworld-place-cluster is-${placeMarkerTone(cluster.places[0])} ${markerSizeClass(map)}`
+    marker.className = `vworld-place-cluster is-${resolveMapClusterTone(cluster.places)} ${markerSizeClass(map)}`
     marker.type = 'button'
     marker.setAttribute('aria-label', `${cluster.places.length}개 장소 모아보기`)
     marker.title = `${cluster.places.length}개 장소`
@@ -589,11 +565,11 @@ export default function VWorldMap({
     }
     if (fittedRouteKeyRef.current === routeFitKey) return
 
-    const features = layer.getSource().getFeatures()
-    if (!features.length) return
-    const extents = features
+    const extents = layer.getSource().getFeatures()
       .map((feature) => feature.getGeometry()?.getExtent())
       .filter((extent) => Array.isArray(extent) && extent.length === 4)
+    const fitPoints = routeFitPointCoordinates(routeFitCoordinates, fromLonLat)
+    if (fitPoints.length) extents.push(boundingExtent(fitPoints))
     if (!extents.length) return
     const extent = extents.reduce((combined, current) => [
       Math.min(combined[0], current[0]),
@@ -605,7 +581,7 @@ export default function VWorldMap({
     map.getView().fit(extent, {
       padding: routeFitPadding,
       maxZoom: 17,
-      duration: 220,
+      duration: resolveRouteFitDuration(),
     })
   }, [routeFitKey, routeLegs, routeFitPadding])
 

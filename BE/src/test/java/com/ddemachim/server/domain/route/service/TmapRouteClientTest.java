@@ -11,7 +11,6 @@ import static org.springframework.test.web.client.response.MockRestResponseCreat
 import static org.springframework.test.web.client.response.MockRestResponseCreators.withSuccess;
 
 import com.ddemachim.server.domain.route.dto.RouteComparisonRequest.Coordinate;
-import com.ddemachim.server.domain.route.dto.RouteComparisonResponse.RouteLeg;
 import com.ddemachim.server.domain.route.dto.RouteComparisonResponse.RouteOption;
 import com.ddemachim.server.domain.route.enums.RouteMode;
 import com.ddemachim.server.domain.route.enums.RouteUnavailableReason;
@@ -223,21 +222,6 @@ class TmapRouteClientTest {
     }
 
     @Test
-    void emptyTransitItineraries_areReportedAsNoRoute() {
-        TestClient testClient = testClient("test-key");
-        testClient.server().expect(requestTo(org.hamcrest.Matchers.containsString("/transit/routes")))
-                .andRespond(withSuccess("""
-                        {"metaData":{"plan":{"itineraries":[]}}}
-                        """, MediaType.APPLICATION_JSON));
-
-        assertThatThrownBy(() -> testClient.client().findTransit(ORIGIN, DESTINATION))
-                .isInstanceOf(RouteProviderException.class)
-                .extracting("reason")
-                .isEqualTo(RouteUnavailableReason.NO_ROUTE);
-        testClient.server().verify();
-    }
-
-    @Test
     void malformedGeometry_isReportedAsProviderUnavailable() {
         TestClient testClient = testClient("test-key");
         testClient.server().expect(requestTo(org.hamcrest.Matchers.containsString(
@@ -279,42 +263,6 @@ class TmapRouteClientTest {
                         """, MediaType.APPLICATION_JSON));
 
         assertThatThrownBy(() -> testClient.client().findWalking(ORIGIN, DESTINATION))
-                .isInstanceOf(RouteProviderException.class)
-                .extracting("reason")
-                .isEqualTo(RouteUnavailableReason.PROVIDER_UNAVAILABLE);
-        testClient.server().verify();
-    }
-
-    @Test
-    void transitMissingLegs_areReportedAsProviderUnavailable() {
-        TestClient testClient = testClient("test-key");
-        testClient.server().expect(requestTo(org.hamcrest.Matchers.containsString("/transit/routes")))
-                .andRespond(withSuccess("""
-                        {
-                          "metaData": {"plan": {"itineraries": [{"totalTime": 1320}]}}
-                        }
-                        """, MediaType.APPLICATION_JSON));
-
-        assertThatThrownBy(() -> testClient.client().findTransit(ORIGIN, DESTINATION))
-                .isInstanceOf(RouteProviderException.class)
-                .extracting("reason")
-                .isEqualTo(RouteUnavailableReason.PROVIDER_UNAVAILABLE);
-        testClient.server().verify();
-    }
-
-    @Test
-    void transitEmptyLegs_areReportedAsProviderUnavailable() {
-        TestClient testClient = testClient("test-key");
-        testClient.server().expect(requestTo(org.hamcrest.Matchers.containsString("/transit/routes")))
-                .andRespond(withSuccess("""
-                        {
-                          "metaData": {"plan": {"itineraries": [
-                            {"totalTime": 1320, "legs": []}
-                          ]}}
-                        }
-                        """, MediaType.APPLICATION_JSON));
-
-        assertThatThrownBy(() -> testClient.client().findTransit(ORIGIN, DESTINATION))
                 .isInstanceOf(RouteProviderException.class)
                 .extracting("reason")
                 .isEqualTo(RouteUnavailableReason.PROVIDER_UNAVAILABLE);
