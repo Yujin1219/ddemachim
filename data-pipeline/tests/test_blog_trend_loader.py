@@ -232,6 +232,109 @@ def _run_result() -> dict[str, Any]:
 
 
 class BlogTrendLoaderTest(unittest.TestCase):
+    def test_naver_map_place_dto_prefers_reliable_matched_kakao_category(self) -> None:
+        evidence = {
+            "canonicalPlaceId": "NAVER_MAP:13034552",
+            "canonicalPlaceName": "카페 이름",
+            "canonicalRoadAddress": "서울특별시 종로구 계동길 37",
+            "matched_place": {
+                "category_group_code": "CE7",
+                "category_name": "음식점 > 카페 > 테마카페",
+            },
+            "evidence": [
+                {"postUrl": "https://blog.naver.com/a/1", "intent": "맛집"},
+                {"postUrl": "https://blog.naver.com/b/2", "intent": "맛집"},
+            ],
+        }
+
+        dto = blog_trend_loader.naver_map_place_dto_from_evidence(evidence)
+
+        self.assertEqual(dto.category_code, "CAFE")
+        self.assertEqual(dto.raw_category, "음식점 > 카페 > 테마카페")
+
+    def test_naver_map_place_dto_falls_back_to_distinct_post_intent_evidence(self) -> None:
+        evidence = {
+            "canonicalPlaceId": "NAVER_MAP:13034552",
+            "canonicalPlaceName": "식당 이름",
+            "canonicalRoadAddress": "서울특별시 종로구 계동길 37",
+            "evidence": [
+                {"postUrl": "https://blog.naver.com/a/1", "intent": "맛집"},
+                {"postUrl": "https://blog.naver.com/a/1", "intent": "맛집"},
+                {"postUrl": "https://blog.naver.com/b/2", "query": "안국 맛집"},
+                {"postUrl": "https://blog.naver.com/c/3", "intent": "카페"},
+            ],
+        }
+
+        dto = blog_trend_loader.naver_map_place_dto_from_evidence(evidence)
+
+        self.assertEqual(dto.category_code, "RESTAURANT")
+
+    def test_naver_map_place_dto_leaves_tied_intents_unclassified(self) -> None:
+        evidence = {
+            "canonicalPlaceId": "NAVER_MAP:13034552",
+            "canonicalPlaceName": "모호한 장소",
+            "canonicalRoadAddress": "서울특별시 종로구 계동길 37",
+            "evidence": [
+                {"postUrl": "https://blog.naver.com/a/1", "intent": "맛집"},
+                {"postUrl": "https://blog.naver.com/b/2", "intent": "카페"},
+            ],
+        }
+
+        dto = blog_trend_loader.naver_map_place_dto_from_evidence(evidence)
+
+        self.assertIsNone(dto.category_code)
+
+    def test_naver_map_place_dto_leaves_conflicting_kakao_categories_unclassified(self) -> None:
+        evidence = {
+            "canonicalPlaceId": "NAVER_MAP:13034552",
+            "canonicalPlaceName": "복합 장소",
+            "canonicalRoadAddress": "서울특별시 종로구 계동길 37",
+            "matched_places": [
+                {"category_group_code": "CE7", "category_name": "음식점 > 카페"},
+                {"category_group_code": "FD6", "category_name": "음식점 > 한식"},
+            ],
+        }
+
+        dto = blog_trend_loader.naver_map_place_dto_from_evidence(evidence)
+
+        self.assertIsNone(dto.category_code)
+
+    def test_blog_trend_refresh_can_preserve_an_existing_category(self) -> None:
+        connection = ScriptedPlaceConnection(existing_source_id=808)
+        dto = PlaceDTO(
+            name="종로 카페",
+            road_address="서울 종로구 율곡로 1",
+            lot_address=None,
+            latitude=None,
+            longitude=None,
+            phone=None,
+            raw_category="음식점 > 카페",
+            description=None,
+            source="NAVER_MAP",
+            source_id="13034552",
+            district="종로구",
+            normalized_name="종로카페",
+            category_code="CAFE",
+            tags=["BLOG_TREND"],
+            has_coordinates=False,
+        )
+
+        place_id = load_place(
+            connection,
+            dto,
+            LoadStats(),
+            preserve_existing_category=True,
+        )
+
+        self.assertEqual(place_id, 808)
+        update_sql, update_params = next(
+            (sql, params)
+            for sql, params in connection.recording_cursor.calls
+            if "update place set" in sql
+        )
+        self.assertIn("coalesce(category_id", update_sql)
+        self.assertTrue(update_params[4])
+
     def test_resolve_attaches_single_address_matching_candidate_after_distance_review(self) -> None:
         self.assertIsNotNone(blog_trend_loader, "blog trend loader module must exist")
         connection = ScriptedPlaceConnection(
