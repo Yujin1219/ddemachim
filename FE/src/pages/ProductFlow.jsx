@@ -45,7 +45,6 @@ import {
 import {
   ArrivalMotion,
   BrandLoading,
-  CameraGuide,
   CrowdMotion,
   MapPlacePulse,
   NearbyMotion,
@@ -94,13 +93,18 @@ import {
   tagMapItemsForFilter,
   toggleMapFilterSelection,
 } from '../utils/mapHomeFilters.js';
+import { SceneCameraProvider } from '../sceneCamera/SceneCameraSession.js';
+import { SceneCameraScreen, SceneDetailCameraPanel, SceneShotResultScreen } from '../sceneCamera/SceneCameraScreens.jsx';
+import { SceneDetailHeading } from '../sceneCamera/ui.js';
+import { createSceneNavigationTarget, sceneRouteMotion } from '../sceneCamera/flow.js';
+import { guardSceneRouteHash } from '../sceneCamera/routes.js';
 
 const routeGroups = {
   auth: ['splash', 'intro', 'login', 'signup', 'onboarding', 'onboarding-schedule', 'onboarding-permissions'],
   discovery: ['map', 'explore', 'place', 'event-detail', 'search', 'search-empty', 'saved', 'trending', 'filming-locations', 'popups', 'live-talk'],
   course: ['course-home', 'course-conditions', 'course-place-times', 'basket', 'basket-natural', 'basket-glass', 'compare', 'route-map'],
   travel: ['progress', 'arrival', 'navigation', 'reroute', 'reroute-applied', 'transit', 'taxi', 'nearby', 'nearby-added', 'nearby-arrival', 'active-course', 'next-stop', 'gps-error', 'taxi-handoff', 'offline', 'closed-place', 'stop-course'],
-  filming: ['onsite', 'filming-work', 'filming-content', 'camera', 'scene-list', 'scene-detail', 'camera-permission', 'shot-result', 'photo-saved', 'image-missing', 'filming-restricted', 'report'],
+  filming: ['onsite', 'filming-work', 'filming-content', 'camera', 'scene-list', 'scene-detail', 'shot-result', 'photo-saved', 'image-missing', 'filming-restricted', 'report'],
   record: ['complete', 'record', 'saved-courses', 'record-detail', 'write-review', 'reviews', 'review-detail'],
   my: ['my', 'location-permission', 'notifications', 'profile-edit', 'privacy', 'app-permissions', 'support', 'loading', 'server-error'],
 };
@@ -159,6 +163,11 @@ const CURATED_TRENDING_PLACES = [
 ];
 
 function readHash() {
+  const guardedScene = guardSceneRouteHash(window.location.hash);
+  if (guardedScene) {
+    if (guardedScene.replaceHash) window.history.replaceState(null, '', guardedScene.replaceHash);
+    return { screen: guardedScene.screen, id: guardedScene.id };
+  }
   const [candidate, hashId] = window.location.hash.replace(/^#\/?/, '').split('/');
   return { screen: routes.has(candidate) ? candidate : 'map', id: hashId || null };
 }
@@ -1595,7 +1604,7 @@ function filmingMediaLabel(mediaContent) {
   return [mediaType, mediaContent.releaseDate].filter(Boolean).join(' · ');
 }
 
-function FilmingSceneSection({ filmingLocations }) {
+function FilmingSceneSection({ filmingLocations, go }) {
   if (!filmingLocations.length) return null;
 
   return (
@@ -1609,6 +1618,7 @@ function FilmingSceneSection({ filmingLocations }) {
               <span>{filmingMediaLabel(item.mediaContent)}</span>
               <strong>{title}</strong>
               <p>{description}</p>
+              <button type="button" onClick={() => go('scene-detail', item.id)}>이 장면 구도 보기 <span aria-hidden="true">›</span></button>
             </article>
           );
         })}
@@ -1706,7 +1716,7 @@ function PlaceDetail({ go, placeId, basketState, onBasketAdded, onBasketRefresh,
   const heroImage = place.images?.[0]?.sourceUrl || images.detail;
   const hoursLabel = formatOperatingHours(place.operatingHours) || place.operatingHoursRaw || '운영시간 정보 없음';
 
-  return <section className="phone standard-screen place-detail-screen"><main className="page-scroll"><div className="detail-hero"><img src={heroImage} alt={`${place.name} 외관`} /><DetailHeroControls onBack={() => go('explore')} /></div><DetailContentSheet className="detail-content detail-content-v3"><p className="eyebrow place-detail-eyebrow"><span className="place-detail-eyebrow-text">{[place.district, place.categoryLabel].filter(Boolean).join(' · ')}</span><CongestionPointBadge longitude={place.longitude} latitude={place.latitude} /></p><h1>{place.name}</h1><p className="detail-meta">{hoursLabel}</p><div className="chip-row">{place.phone && <Chip active>{place.phone}</Chip>}<Chip>{place.roadAddress || place.lotAddress || '주소 정보 없음'}</Chip></div><FilmingSceneSection filmingLocations={filmingLocations} /><PlaceDescriptionSection description={place.description} /><ScreenSection title="방문자 후기"><PlaceReviewPreview onViewAll={() => go('reviews')} summary={PLACE_REVIEW_SUMMARY} reviews={PLACE_REVIEW_ITEMS} /></ScreenSection></DetailContentSheet></main><div className="sticky-actions split place-actions"><PlaceBasketAction placeId={placeId} basketItems={basketState?.items} onAdded={onBasketAdded} onAuthRequired={onAuthRequired} onRefresh={onBasketRefresh} /><ActionButton tone="secondary" onClick={() => go('write-review')}>후기 남기기</ActionButton></div></section>;
+  return <section className="phone standard-screen place-detail-screen"><main className="page-scroll"><div className="detail-hero"><img src={heroImage} alt={`${place.name} 외관`} /><DetailHeroControls onBack={() => go('explore')} /></div><DetailContentSheet className="detail-content detail-content-v3"><p className="eyebrow place-detail-eyebrow"><span className="place-detail-eyebrow-text">{[place.district, place.categoryLabel].filter(Boolean).join(' · ')}</span><CongestionPointBadge longitude={place.longitude} latitude={place.latitude} /></p><h1>{place.name}</h1><p className="detail-meta">{hoursLabel}</p><div className="chip-row">{place.phone && <Chip active>{place.phone}</Chip>}<Chip>{place.roadAddress || place.lotAddress || '주소 정보 없음'}</Chip></div><FilmingSceneSection filmingLocations={filmingLocations} go={go} /><PlaceDescriptionSection description={place.description} /><ScreenSection title="방문자 후기"><PlaceReviewPreview onViewAll={() => go('reviews')} summary={PLACE_REVIEW_SUMMARY} reviews={PLACE_REVIEW_ITEMS} /></ScreenSection></DetailContentSheet></main><div className="sticky-actions split place-actions"><PlaceBasketAction placeId={placeId} basketItems={basketState?.items} onAdded={onBasketAdded} onAuthRequired={onAuthRequired} onRefresh={onBasketRefresh} /><ActionButton tone="secondary" onClick={() => go('write-review')}>후기 남기기</ActionButton></div></section>;
 }
 
 function EventDetail({ go, eventId }) {
@@ -3255,20 +3265,6 @@ function FilmingWorkDetail({ go, workId }) {
   );
 }
 
-const filmingState = {
-  'filming-content': ['촬영지 콘텐츠', '도깨비', '창덕궁 후원', '이 장면은 연못가에서 촬영되었어요.', 'scene-list'],
-  'scene-detail': ['장면 상세', '도깨비', '비밀의 정원 장면', '인물의 시선을 따라 연못 쪽으로 프레임을 맞춰보세요.', 'camera-permission'],
-  'shot-result': ['촬영 결과', '도깨비', '멋지게 담았어요', '같은 장면을 내 여행 기록에 남겨보세요.', 'photo-saved'],
-  'photo-saved': ['방문 확인', '오늘의 기록', '사진을 저장했어요', '창덕궁 후원 방문이 기록에 추가됐어요.', 'record'],
-  'image-missing': ['이미지 안내', '도깨비', '참고 이미지를 불러오지 못했어요', '장면 설명과 위치 안내는 계속 볼 수 있어요.', 'scene-list'],
-  'filming-restricted': ['촬영 안내', '운현궁', '이 구역은 촬영이 제한돼요', '관람을 방해하지 않는 범위에서만 촬영해주세요.', 'onsite'],
-  report: ['데이터 출처 신고', '촬영지 정보', '정보를 검토할게요', '잘못된 정보나 저작권 이슈를 알려주세요.', 'filming-content'],
-};
-
-function CameraScreen({ go }) {
-  return <section className="phone camera-screen camera-match-screen"><img className="camera-live-image" src="/assets/figma/intro-visual.png" alt="카메라 미리보기" /><div className="camera-dim" /><div className="camera-header"><IconButton label="닫기" onClick={() => go('scene-detail')}>×</IconButton><span>촬영 장면 구도 맞추기</span><IconButton label="도움말">?</IconButton></div><CameraGuide /><div className="camera-caption"><strong>처마 끝을 파란 선에 맞춰보세요</strong><span>눈물의 여왕 · EP.03</span></div><div className="camera-reference-note"><span>참고 장면과 현재 화면을 겹쳐 보여줘요</span><small>TMDB 이미지 · 공공데이터 위치</small></div><div className="camera-controls"><button type="button" className="camera-gallery" aria-label="앨범"><ImageIcon aria-hidden="true" size={22} strokeWidth={2} /></button><button type="button" className="camera-shutter" aria-label="촬영" onClick={() => go('shot-result')}><span /></button><button type="button" className="camera-switch" aria-label="카메라 전환">1×</button></div></section>;
-}
-
 function MapPermissionPrompt({ go, title, copy, detail, action, next }) {
   return <section className="phone map-permission-screen"><MapStage variant="home"><div className="map-top-fade" /><header className="server-map-heading"><p>안국동 · 내 주변</p><h1>오늘, 어디로 걸어볼까요?</h1><button type="button"><span><SearchIcon /></span>장소 · 지역 · 테마 검색</button><div><Chip active>전체</Chip><Chip>요즘</Chip><Chip>팝업</Chip><Chip>촬영지</Chip></div></header><div className="server-error-dim" /><BottomSheet className="map-permission-sheet"><h1>{title}</h1><p>{copy}</p><article><strong>{detail[0]}</strong><small>{detail[1]}</small></article><ActionButton onClick={() => go(next)}>{action}</ActionButton></BottomSheet></MapStage></section>;
 }
@@ -3277,25 +3273,19 @@ function MapLoadingPrompt({ go }) {
   return <section className="phone map-permission-screen map-loading-screen"><MapStage variant="home"><div className="map-top-fade" /><header className="server-map-heading"><p>안국동 · 내 주변</p><h1>오늘, 어디로 걸어볼까요?</h1><button type="button"><span><SearchIcon /></span>장소 · 지역 · 테마 검색</button><div><Chip active>전체</Chip><Chip>요즘</Chip><Chip>팝업</Chip><Chip>촬영지</Chip></div></header><div className="server-error-dim" /><BottomSheet className="map-permission-sheet map-loading-sheet"><BrandLoading /><h1>장소 정보를 불러오고 있어요</h1><p>공공데이터와 실시간 혼잡 정보를 확인하는 중이에요.</p><article><strong>잠시만 기다려주세요</strong><small>네트워크 상태에 따라 몇 초 걸릴 수 있어요.</small></article><ActionButton tone="secondary" onClick={() => go('map')}>나중에 다시 보기</ActionButton></BottomSheet></MapStage></section>;
 }
 
-function ShotResultScreen({ go }) {
-  return <section className="phone camera-screen shot-result-screen"><img className="camera-live-image" src="/assets/figma/intro-visual.png" alt="촬영 결과" /><div className="camera-dim" /><div className="camera-header"><IconButton label="닫기" onClick={() => go('scene-detail')}>×</IconButton><span>촬영 결과 비교</span><IconButton label="도움말">?</IconButton></div><div className="shot-result-score">참고 장면과 구도가 86% 일치해요</div><div className="shot-result-comparison"><div><span>원본</span></div><i /><div><span>참고</span></div></div><div className="shot-result-copy"><strong>참고 장면 · EP.03</strong><span>좌우로 밀어 원본과 참고 장면을 비교해요</span><small>TMDB 참고 이미지 · 내 촬영 결과</small></div><div className="sticky-actions split shot-result-actions"><ActionButton onClick={() => go('photo-saved')}>사진 저장</ActionButton><ActionButton tone="secondary" onClick={() => go('camera')}>다시 촬영</ActionButton></div></section>;
-}
-
 function FilmingScreen({ screen, go, id }) {
   if (screen === 'filming-work') return <FilmingWorkDetail go={go} workId={id} />;
-  if (screen === 'camera') return <CameraScreen go={go} />;
-  if (screen === 'camera-permission') return <MapPermissionPrompt go={go} title="카메라 권한이 필요해요" copy="촬영 장면과 현재 화면을 겹쳐 보려면 카메라 접근이 필요해요." detail={['사진과 동영상 촬영 허용', '촬영한 사진은 저장하기 전까지 기기에 남지 않아요.']} action="카메라 권한 허용" next="camera" />;
-  if (screen === 'scene-list') return <section className="phone standard-screen scene-list-v3"><BackHeader title="촬영 장면 · 운현궁" onBack={() => go('filming-content')} /><main className="page-scroll scene-list-scroll"><header><h1>이곳에서 촬영된 장면</h1><p>눈물의 여왕 · 장면 2개</p></header><div className="scene-sort-row"><Chip active>작품별</Chip><Chip>최신순</Chip></div><article className="scene-work-card"><img src="/assets/figma/intro-visual.png" alt="운현궁 촬영 장면" /><div><span>눈물의 여왕</span><small>tvN · 2024 · TMDB 작품 정보</small><p>EP.03 · 마당을 지나 대화를 나누는 장면<br />EP.11 · 처마 아래에서 재회하는 장면</p></div></article><p className="scene-list-note">스틸 이미지는 참고용으로 제공돼요</p><ScreenSection title="장면 선택"><div className="scene-choice-list"><button type="button" onClick={() => go('scene-detail')}><span><strong>EP.03</strong><small>낮 장면 · 구도 가이드 제공</small></span><b>장면 상세&nbsp; ›</b></button><button type="button" onClick={() => go('scene-detail')}><span><strong>EP.11</strong><small>저녁 장면 · 구도 가이드 제공</small></span><b>장면 보기&nbsp; ›</b></button></div></ScreenSection></main></section>;
+  if (screen === 'camera') return <SceneCameraScreen id={id} go={go} />;
+  if (screen === 'scene-list') return <section className="phone standard-screen scene-list-v3"><BackHeader title="촬영 장면 · 운현궁" onBack={() => go('filming-content')} /><main className="page-scroll scene-list-scroll"><header><h1>이곳에서 촬영된 장면</h1><p>장면 ID가 확인된 항목만 촬영할 수 있어요</p></header><div className="scene-sort-row"><Chip active>작품별</Chip><Chip>최신순</Chip></div><article className="scene-work-card"><img src="/assets/figma/intro-visual.png" alt="운현궁 촬영 장소" /><div><span>작품 정보</span><small>촬영지 장면 연결 준비 중</small><p>이 예시 목록에는 실제 촬영지 장면 ID가 없어 카메라를 연결하지 않아요.</p></div></article><p className="scene-list-note" role="status">장소 상세의 실제 촬영 장면 목록에서 선택해주세요.</p><div className="sticky-actions"><ActionButton onClick={() => go('filming-locations')}>촬영지 다시 찾기</ActionButton></div></main></section>;
   if (screen === 'onsite') return <section className="phone standard-screen onsite-screen"><main className="page-scroll"><div className="onsite-hero"><img src="/assets/figma/intro-visual.png" alt="운현궁 전경" /><div className="onsite-overlay-actions"><IconButton label="이전" onClick={() => go('arrival')}>‹</IconButton><IconButton label="장소 저장" onClick={() => go('saved')}>♡</IconButton></div></div><div className="onsite-copy"><p className="eyebrow">안국 · 궁궐</p><h1>운현궁</h1><p>화-일 09:00-18:00</p><div className="chip-row"><Chip active>지금 여유</Chip><Chip>관람 약 20분</Chip></div><ScreenSection title="운현궁에서 놓치지 말 것"><div className="why-card"><span>현장 위치 확인 완료 · 오늘 업데이트</span><strong>노안당과 이로당을 잇는<br />마당 동선을 천천히 걸어보세요.</strong><p>오후에는 처마 그림자가 선명해요.</p></div></ScreenSection><ScreenSection title="지금 현장에서는" action="방금 도착"><div className="onsite-fact-grid"><article><span>관람</span><b>약 20분</b></article><article><span>촬영</span><b>삼각대 사용 제한</b></article></div></ScreenSection></div></main><div className="sticky-actions split onsite-actions"><ActionButton onClick={() => go('complete')}>관람 완료</ActionButton><ActionButton tone="secondary" onClick={() => go('filming-content')}>후기 보기</ActionButton></div></section>;
-  if (screen === 'filming-content') return <section className="phone standard-screen filming-content-v3"><main className="page-scroll"><div className="filming-content-hero"><img src="/assets/figma/intro-visual.png" alt="운현궁 촬영지 전경" /><div className="filming-content-controls"><IconButton label="이전" onClick={() => go('onsite')}>‹</IconButton><IconButton label="장소 저장" onClick={() => go('saved')}>♡</IconButton></div></div><div className="filming-content-copy"><p className="eyebrow">촬영지 · 서울 종로</p><h1>운현궁 · 눈물의 여왕</h1><p>tvN · 2024 · EP.03</p><div className="chip-row"><Chip active>현장 일치</Chip><Chip>장면 2개</Chip></div><ScreenSection title="이 장소에서 촬영된 장면"><div className="why-card filming-why-card"><span>공공데이터 위치 확인 · TMDB 작품 정보</span><strong>주인공이 마당을 지나 대화를 나누는 장면이에요.<br />같은 시선 높이에서 처마 끝을 맞춰보세요.</strong><p>TMDB 이미지 · 방송 장면 참고</p></div></ScreenSection><ScreenSection title="촬영 포인트" action="현재 위치"><div className="onsite-fact-grid"><article><span>카메라</span><b>1× 렌즈</b></article><article><span>빛 방향</span><b>오후 3시 추천</b></article></div></ScreenSection></div></main><div className="sticky-actions split filming-content-actions"><ActionButton onClick={() => go('scene-detail')}>구도 맞추기</ActionButton><ActionButton tone="secondary" onClick={() => go('scene-list')}>장면 보기</ActionButton></div></section>;
-  if (screen === 'scene-detail') return <section className="phone standard-screen scene-detail-v3"><main className="page-scroll"><div className="scene-detail-copy"><p className="eyebrow">눈물의 여왕 · EP.03</p><h1>마당을 지나던 장면</h1><p>00:24:18 · 운현궁 노안당 앞</p><div className="chip-row"><Chip active>스팟컷</Chip><Chip>1 / 2</Chip></div><ScreenSection title="장면 속 위치와 방향" action="좌표"><p className="scene-detail-description">노안당을 등지고 이로당 방향을 바라본 구도예요.<br />카메라 높이는 눈높이, 1× 렌즈를 권장해요.</p><small>TMDB 스틸 이미지 · 실제 방송 화면과 다를 수 있어요</small></ScreenSection><ScreenSection title="구도 정보" action="방향"><div className="scene-spec-grid"><article><span>렌즈</span><b>동쪽 · 92°</b></article><article><span>높이</span><b>눈높이 1.6m</b></article></div></ScreenSection></div></main><div className="sticky-actions split scene-detail-actions"><ActionButton onClick={() => go('camera-permission')}>구도 맞추기</ActionButton><ActionButton tone="secondary" onClick={() => go('scene-list')}>장면 보기</ActionButton></div></section>;
-  if (screen === 'shot-result') return <ShotResultScreen go={go} />;
+  if (screen === 'filming-content') return <section className="phone standard-screen filming-content-v3"><main className="page-scroll"><div className="filming-content-hero"><img src="/assets/figma/intro-visual.png" alt="운현궁 촬영지 전경" /><div className="filming-content-controls"><IconButton label="이전" onClick={() => go('onsite')}>‹</IconButton><IconButton label="장소 저장" onClick={() => go('saved')}>♡</IconButton></div></div><div className="filming-content-copy"><p className="eyebrow">촬영지 · 서울 종로</p><h1>운현궁 · 작품 정보</h1><p>촬영 가능한 장면은 실제 장면 ID가 있는 장소 상세에서 선택해주세요.</p><ScreenSection title="장면 선택 안내"><div className="why-card filming-why-card"><span>정확한 촬영지 장면 연결</span><strong>예시 이미지나 작품 ID를 촬영 장면 ID 대신 사용하지 않아요.</strong><p>장소 상세에서 확인된 촬영 장면만 카메라로 연결해요.</p></div></ScreenSection></div></main><div className="sticky-actions filming-content-actions"><ActionButton onClick={() => go('filming-locations')}>촬영지 찾기</ActionButton></div></section>;
+  if (screen === 'scene-detail') return <section className="phone standard-screen scene-detail-v3"><main className="page-scroll"><div className="scene-detail-copy"><p className="eyebrow">촬영 장면 · {id ? `#${id}` : '선택 필요'}</p><SceneDetailHeading>참고 장면과 현장 구도 맞추기</SceneDetailHeading><p>선택한 촬영지 장면의 ID를 촬영과 결과까지 안전하게 유지해요.</p><ScreenSection title="촬영 전 확인"><p className="scene-detail-description">승인된 참고 스틸의 권리, 실제 크기, 내보내기 안전성을 먼저 확인해요.</p><small>확인이 끝나기 전에는 카메라 권한을 요청하지 않아요.</small></ScreenSection></div></main><div className="sticky-actions scene-detail-actions"><SceneDetailCameraPanel id={id} go={go} /></div></section>;
+  if (screen === 'shot-result') return <SceneShotResultScreen id={id} go={go} />;
   if (screen === 'photo-saved') return <CourseComplete go={go} photoSaved />;
-  if (screen === 'image-missing') return <section className="phone standard-screen missing-filming-v3"><BackHeader title="촬영지 정보" onBack={() => go('filming-content')} /><main className="page-scroll missing-filming-scroll"><p className="eyebrow">촬영지 · 서울 종로</p><h1>운현궁 · 작품 정보</h1><div className="chip-row"><Chip active>위치 확인</Chip><Chip>정보 1개</Chip></div><ScreenSection title="장면 이미지 준비 중"><div className="why-card"><span>참고 장면을 불러올 수 없어요</span><strong>공공데이터 위치는 정상적으로 확인됐어요</strong><p>TMDB에 제공된 스틸 이미지가 없어<br />현재는 위치와 촬영 방향만 안내해요.</p></div><p className="missing-update-copy">이미지가 추가되면 자동으로 표시돼요</p></ScreenSection><ScreenSection title="대체 안내"><div className="scene-spec-grid"><article><span>방향</span><b>동쪽 · 92°</b></article><article><span>높이</span><b>눈높이</b></article></div></ScreenSection></main><div className="sticky-actions"><ActionButton onClick={() => go('scene-detail')}>위치 안내 보기</ActionButton></div></section>;
-  if (screen === 'filming-restricted') return <GuidanceMapState go={go} data={{ kicker: '촬영 안내', title: '현재 위치에서는 촬영할 수 없어요', copy: '문화재 보호와 관람객 안전을 위해 카메라 사용이 제한돼요.', detail: '촬영 가능 지점까지 80m', source: '공공데이터 운영정보 · 오늘 확인', button: '촬영 가능 지점 보기', next: 'scene-detail' }} />;
+  if (screen === 'image-missing') return <section className="phone standard-screen missing-filming-v3"><BackHeader title="촬영지 정보" onBack={() => go('filming-content')} /><main className="page-scroll missing-filming-scroll"><p className="eyebrow">촬영지 · 서울 종로</p><h1>운현궁 · 작품 정보</h1><div className="chip-row"><Chip active>위치 확인</Chip><Chip>정보 1개</Chip></div><ScreenSection title="장면 이미지 준비 중"><div className="why-card"><span>참고 장면을 불러올 수 없어요</span><strong>공공데이터 위치는 정상적으로 확인됐어요</strong><p>TMDB에 제공된 스틸 이미지가 없어<br />현재는 위치와 촬영 방향만 안내해요.</p></div><p className="missing-update-copy">이미지가 추가되면 자동으로 표시돼요</p></ScreenSection><ScreenSection title="대체 안내"><div className="scene-spec-grid"><article><span>방향</span><b>동쪽 · 92°</b></article><article><span>높이</span><b>눈높이</b></article></div></ScreenSection></main><div className="sticky-actions"><ActionButton onClick={() => go('filming-locations')}>촬영지 다시 찾기</ActionButton></div></section>;
+  if (screen === 'filming-restricted') return <GuidanceMapState go={go} data={{ kicker: '촬영 안내', title: '현재 위치에서는 촬영할 수 없어요', copy: '문화재 보호와 관람객 안전을 위해 카메라 사용이 제한돼요.', detail: '촬영 가능 지점까지 80m', source: '공공데이터 운영정보 · 오늘 확인', button: '다른 촬영지 찾기', next: 'filming-locations' }} />;
   if (screen === 'report') return <section className="phone standard-screen report-v3"><BackHeader title="데이터 출처·오류 신고" onBack={() => go('filming-content')} /><main className="page-scroll report-scroll"><p className="eyebrow">운현궁 촬영지 정보</p><h1>어떤 정보가 다른가요?</h1><p className="report-lede">확인할 항목을 선택하면 운영팀이 검토해요.</p><ScreenSection title="현재 사용 중인 출처"><div className="report-source-list"><article><strong>장소 좌표</strong><span>공공데이터포털 · 서울 열린데이터광장</span></article><article><strong>작품·장면 정보</strong><span>TMDB API · 마지막 확인 오늘</span></article></div></ScreenSection><ScreenSection title="신고할 항목"><div className="review-choice-row"><Chip active>위치</Chip><Chip>작품</Chip><Chip>스틸컷</Chip></div></ScreenSection><ScreenSection title="문제 유형"><div className="report-type-grid"><button type="button" className="selected"><strong>정보가 달라요</strong><small>현장 위치가 일치하지 않아요</small></button><button type="button"><strong>촬영 제한</strong><small>운영시간 또는 촬영 규정이 달라요</small></button></div></ScreenSection><ScreenSection title="공개 범위"><div className="review-choice-row"><Chip active>익명</Chip><Chip>연락 가능</Chip><Chip>답변 받기</Chip></div></ScreenSection><StatusBanner tone="blue" title="신고 내용은 출처와 현장을 다시 확인해요" copy="확인 전까지 기존 정보에는 검토 중 표시가 붙어요." /></main><div className="sticky-actions"><ActionButton onClick={() => go('filming-content')}>오류 신고</ActionButton></div></section>;
-  const data = filmingState[screen];
-  return <section className="phone standard-screen filming-state"><BackHeader title={data[0]} onBack={() => go('onsite')} /><main className="page-scroll"><div className="filming-visual"><img src={images.scene} alt="촬영지 장면" /><span>{data[1]}</span></div><div className="filming-copy"><h1>{data[2]}</h1><p>{data[3]}</p>{screen === 'filming-content' && <div className="content-facts"><p><b>촬영 장소</b>창덕궁 후원 연못가</p><p><b>추천 시간</b>오전 10시-오후 3시</p></div>}{screen === 'report' && <label className="field-label">신고 내용<textarea placeholder="검토할 내용을 적어주세요" /></label>}<ActionButton onClick={() => go(data[4])}>{screen === 'filming-content' ? '장면 목록 보기' : screen === 'report' ? '신고 접수하기' : '계속'}</ActionButton></div></main></section>;
+  return <section className="phone standard-screen"><main className="page-scroll centered-state"><h1>화면을 찾지 못했어요</h1><ActionButton onClick={() => go('map')}>지도로 돌아가기</ActionButton></main></section>;
 }
 
 const recordStates = {
@@ -3324,7 +3314,7 @@ function RecordScreen({ screen, go }) {
   }
   if (screen === 'record-detail') return <section className="phone standard-screen tab-screen record-overview record-detail-v3"><main className="page-scroll record-overview-scroll"><h1>여행 기록 상세</h1><JourneySummary /><ScreenSection title="이동 타임라인"><button type="button" className="journey-map-card" onClick={() => go('active-course')}><VWorldMap ariaLabel="안국과 성수를 잇는 코스 지도" interactive={false} style={{ width: '100%', height: 122 }} /><span><strong>안국에서 성수까지, 여름 하루</strong><small>5곳 · 6시간 20분 · 오늘</small></span></button></ScreenSection><ScreenSection title="오늘의 기록"><div className="today-record-grid"><article><span>방문 사진</span><b>12</b></article><article><span>남긴 후기</span><b>2</b></article></div></ScreenSection></main><BottomNav active="my" onNavigate={(tab) => go(rootRoutes[tab])} /></section>;
   if (screen === 'reviews') return <section className="phone standard-screen reviews-v3"><main className="page-scroll"><div className="reviews-hero"><img src={images.detail} alt="도토리가든" /><div className="detail-controls"><IconButton label="이전" onClick={() => go('place')}>‹</IconButton></div></div><div className="reviews-copy"><p className="eyebrow">안국 · 카페</p><h1>도토리가든</h1><p>매일 10:00-21:00</p><div className="chip-row"><Chip active>지금 여유</Chip><Chip>도보 8분</Chip></div><ScreenSection title="방문자 후기 126"><p className="review-section-lede">사진과 위치가 인증된 후기부터 보여줘요</p><article className="verified-review-card"><p>정원이 생각보다 조용했고 오후 햇빛이 예뻤어요.<br />소금빵은 3시 전에 가는 걸 추천해요.</p><span>유진 · 오늘 · 방문 인증</span><div><button type="button">후기 필터</button><b>최신순</b><small>사진 후기&nbsp; 82</small><small>추천&nbsp; 104</small></div></article></ScreenSection></div></main><div className="sticky-actions split reviews-actions"><ActionButton onClick={() => go('course-conditions')}>코스에 추가</ActionButton><ActionButton tone="secondary" onClick={() => go('write-review')}>후기 남기기</ActionButton></div></section>;
-  if (screen === 'review-detail') return <section className="phone standard-screen review-detail-v3"><BackHeader title="방문 인증 후기" onBack={() => go('reviews')} /><main className="page-scroll review-detail-scroll"><p className="eyebrow">추천해요 · 사진 3장</p><h1>오후 햇빛이 정말 예뻤어요</h1><p className="review-author">유진 · 오늘 14:25</p><div className="review-detail-photo"><img src="/assets/figma/intro-visual.png" alt="운현궁 방문 사진" /></div><section className="review-verified-note"><strong>운현궁을 다녀왔어요</strong><span>위치 좌표로 방문이 인증된 후기예요</span></section><p className="review-detail-body">사람이 많지 않아 천천히 보기 좋았어요.<br />처마 쪽에서 찍으면 구도가 예쁘게 나와요.</p><ScreenSection title="후기 정보"><div className="review-info-grid"><article><span>추천</span><b>추천해요</b></article><article><span>방문 당시</span><b>여유</b></article></div></ScreenSection></main><div className="sticky-actions split"><ActionButton onClick={() => go('scene-detail')}>구도 맞추기</ActionButton><ActionButton tone="secondary" onClick={() => go('scene-list')}>장면 보기</ActionButton></div></section>;
+  if (screen === 'review-detail') return <section className="phone standard-screen review-detail-v3"><BackHeader title="방문 인증 후기" onBack={() => go('reviews')} /><main className="page-scroll review-detail-scroll"><p className="eyebrow">추천해요 · 사진 3장</p><h1>오후 햇빛이 정말 예뻤어요</h1><p className="review-author">유진 · 오늘 14:25</p><div className="review-detail-photo"><img src="/assets/figma/intro-visual.png" alt="운현궁 방문 사진" /></div><section className="review-verified-note"><strong>운현궁을 다녀왔어요</strong><span>위치 좌표로 방문이 인증된 후기예요</span></section><p className="review-detail-body">사람이 많지 않아 천천히 보기 좋았어요.<br />처마 쪽에서 찍으면 구도가 예쁘게 나와요.</p><ScreenSection title="후기 정보"><div className="review-info-grid"><article><span>추천</span><b>추천해요</b></article><article><span>방문 당시</span><b>여유</b></article></div></ScreenSection></main><div className="sticky-actions split"><ActionButton onClick={() => go('filming-locations')}>촬영 장면 찾기</ActionButton><ActionButton tone="secondary" onClick={() => go('scene-list')}>장면 보기</ActionButton></div></section>;
   if (screen === 'write-review') return <section className="phone standard-screen write-review-v3"><BackHeader title="후기 작성" onBack={() => go('record')} /><main className="page-scroll write-review-scroll"><p className="eyebrow">운현궁</p><h1>오늘의 장소는 어땠나요?</h1><p className="write-review-lede">경험을 남기면 다음 여행자에게 도움이 돼요.</p><ScreenSection title="평가"><div className="review-setting-list"><button type="button"><span>⌖ 전체 만족도</span><strong>아주 좋았어요&nbsp; ›</strong></button><button type="button"><span>◷ 방문 시간</span><strong>오늘 13:40-14:20&nbsp; ›</strong></button></div></ScreenSection><ScreenSection title="분위기"><div className="review-choice-row"><Chip>한적해요</Chip><Chip active>사진 좋아요</Chip><Chip>혼자 좋아요</Chip></div></ScreenSection><ScreenSection title="후기 내용"><div className="review-content-grid"><button type="button" className="selected"><strong>공간이 차분하고</strong><small>오후 햇빛이 예뻤어요</small></button><button type="button"><strong>사진 추가</strong><small>최대 5장까지 올릴 수 있어요</small></button></div></ScreenSection><ScreenSection title="공개 범위"><div className="review-choice-row"><Chip>전체</Chip><Chip active>팔로워</Chip><Chip>나만 보기</Chip></div></ScreenSection><StatusBanner tone="blue" title="위치와 방문 시간은 자동으로 기록돼요" copy="작성 후에도 수정하거나 삭제할 수 있어요." /></main><div className="sticky-actions"><ActionButton onClick={() => go('reviews')}>후기 등록</ActionButton></div></section>;
   const [title, heading, copy, next] = recordStates[screen];
   const isReviewForm = screen === 'write-review';
@@ -3489,7 +3479,7 @@ function RenderScreen({ screen, id, go, basketState, courseFlow, onBasketAdded, 
   else if (routeGroups.record.includes(screen)) renderedScreen = <RecordScreen screen={screen} go={go} />;
   else renderedScreen = <MyScreen screen={screen} go={go} />;
 
-  return <AppScreenFrame basketCount={basketState.items.length} go={go} hideHeader={screen === 'place' || screen === 'filming-work' || screen === 'event-detail'}>{renderedScreen}</AppScreenFrame>;
+  return <AppScreenFrame basketCount={basketState.items.length} go={go} hideHeader={screen === 'place' || screen === 'filming-work' || screen === 'event-detail' || screen === 'camera' || screen === 'shot-result'}>{renderedScreen}</AppScreenFrame>;
 }
 
 export default function ProductFlow() {
@@ -3533,11 +3523,16 @@ export default function ProductFlow() {
     coursePreview.reset();
   }, [basketItemKey]);
 
-  const go = (next, nextId) => {
+  const go = useCallback((next, nextId, options = {}) => {
     if (!routes.has(next)) return;
-    window.location.hash = nextId ? `/${next}/${nextId}` : `/${next}`;
-    setRoute({ screen: next, id: nextId || null });
-  };
+    const sceneTarget = createSceneNavigationTarget(next, nextId);
+    if (['scene-detail', 'camera', 'shot-result'].includes(next) && !sceneTarget) return;
+    const targetId = sceneTarget?.id ?? nextId ?? null;
+    const nextHash = sceneTarget?.hash ?? (targetId ? `#/${next}/${targetId}` : `#/${next}`);
+    if (options.replace) window.history.replaceState(null, '', nextHash);
+    else window.location.hash = nextHash;
+    setRoute({ screen: next, id: targetId });
+  }, []);
 
   const handleBasketAdded = (item) => {
     setBasketState((current) => ({ items: mergeBasketItem(current.items, item), status: 'success' }));
@@ -3575,8 +3570,11 @@ export default function ProductFlow() {
     else go('map');
   };
 
+  const isImmersiveCameraRoute = screen === 'camera' || screen === 'shot-result';
   const pageMotion = reduceMotion
     ? { initial: false, animate: { opacity: 1 }, transition: { duration: 0 } }
+    : isImmersiveCameraRoute
+      ? sceneRouteMotion(screen, false)
     : {
         initial: { opacity: 0, transform: 'perspective(1300px) translateY(18px) rotateX(3deg) rotateY(-1.5deg) translateZ(-22px) scale(.985)' },
         animate: { opacity: 1, transform: 'perspective(1300px) translateY(0px) rotateX(0deg) rotateY(0deg) translateZ(0px) scale(1)' },
@@ -3592,5 +3590,5 @@ export default function ProductFlow() {
     submit: submitCoursePreview,
   };
 
-  return <main className="app-shell"><motion.div className="screen-transition" data-screen={screen} key={screen} {...pageMotion}><RenderScreen screen={screen} id={id} go={go} basketState={basketState} courseFlow={courseFlow} onBasketAdded={handleBasketAdded} onBasketRetry={() => setBasketRefreshKey((key) => key + 1)} onAuthRequired={handleAuthRequired} onLoginSuccess={handleLoginSuccess} /></motion.div></main>;
+  return <main className="app-shell"><SceneCameraProvider screen={screen} routeId={id}><motion.div className="screen-transition" data-screen={screen} key={screen} {...pageMotion}><RenderScreen screen={screen} id={id} go={go} basketState={basketState} courseFlow={courseFlow} onBasketAdded={handleBasketAdded} onBasketRetry={() => setBasketRefreshKey((key) => key + 1)} onAuthRequired={handleAuthRequired} onLoginSuccess={handleLoginSuccess} /></motion.div></SceneCameraProvider></main>;
 }

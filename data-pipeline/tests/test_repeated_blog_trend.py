@@ -116,7 +116,7 @@ class RepeatedBlogTrendTest(unittest.TestCase):
         )
         self.assertEqual(len({row["region"] for row in queries}), 9)
 
-    def test_query_plan_uses_only_cafe_and_food_intents(self) -> None:
+    def test_query_plan_keeps_one_food_evidence_category(self) -> None:
         queries = generate_queries(self.config, AS_OF)
 
         self.assertEqual({row["intent"] for row in queries}, {"카페", "맛집"})
@@ -135,6 +135,36 @@ class RepeatedBlogTrendTest(unittest.TestCase):
         following = generate_queries(self.config, date(2026, 8, 14))
         self.assertEqual(first, repeated)
         self.assertEqual(first, following)
+
+    def test_place_category_uses_distinct_post_counts_per_intent(self) -> None:
+        rows = [
+            {**observation(place_id="NAVER_MAP:1", query="안국 카페"), "intent": "카페"},
+            {
+                **observation(place_id="NAVER_MAP:1", query="안국 카페"),
+                "intent": "카페",
+            },
+            {
+                **observation(
+                    place_id="NAVER_MAP:1",
+                    query="안국 맛집",
+                    url="https://blog.naver.com/b/2",
+                ),
+                "intent": "맛집",
+            },
+            {
+                **observation(
+                    place_id="NAVER_MAP:1",
+                    query="서촌 카페",
+                    url="https://blog.naver.com/c/3",
+                ),
+                "intent": "카페",
+            },
+        ]
+
+        evidence = aggregate_place_evidence(rows, as_of=AS_OF, config=self.config)[0]
+
+        self.assertEqual(evidence["uniquePostCountsByIntent"], {"카페": 2, "맛집": 1})
+        self.assertEqual(evidence["categoryCode"], "CAFE")
 
     def test_region_aliases_are_metadata_without_alias_queries(self) -> None:
         queries = generate_queries(self.config, AS_OF)

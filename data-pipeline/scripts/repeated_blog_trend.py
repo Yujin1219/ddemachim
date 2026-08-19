@@ -33,7 +33,11 @@ from naver_search_trend import (
 )
 from src.cleaners.common import extract_district
 from src.db.connection import get_connection
-from src.loaders.blog_trend_loader import persist_blog_trend_run
+from src.loaders.blog_trend_loader import (
+    classify_trend_place_category,
+    persist_blog_trend_run,
+    trend_intent_phrase,
+)
 
 
 DEFAULT_CONFIG_PATH = ROOT / "config" / "blog_trend_discovery.json"
@@ -650,6 +654,17 @@ def aggregate_place_evidence(
             if row.get("isAdSuspected") and normalize_blog_url(row.get("postUrl"))
         }
         trend = trend_signal((trends or {}).get(place_id), config)
+        post_urls_by_intent: dict[str, set[str]] = {"카페": set(), "맛집": set()}
+        for row in rows:
+            post_url = normalize_blog_url(row.get("postUrl"))
+            intent = trend_intent_phrase(row)
+            if post_url and intent:
+                post_urls_by_intent[intent].add(post_url)
+        unique_post_counts_by_intent = {
+            intent: len(urls)
+            for intent, urls in post_urls_by_intent.items()
+            if urls
+        }
         canonical_name = next(
             (_text(row.get("canonicalPlaceName")) for row in rows if _text(row.get("canonicalPlaceName"))),
             "",
@@ -703,6 +718,7 @@ def aggregate_place_evidence(
             "uniqueAuthors": len(authors),
             "uniqueQueries": len(queries),
             "uniqueIntentCategories": len(intent_categories),
+            "uniquePostCountsByIntent": unique_post_counts_by_intent,
             "collectionDays": len(days),
             "recentObservedPosts": recent_posts,
             "averageObservedRank": round(sum(ranks) / len(ranks), 2) if ranks else None,
@@ -723,6 +739,7 @@ def aggregate_place_evidence(
             "trend": {**trend, "trendCheckedAt": _utc_now()} if trend.get("available") else trend,
             "evidence": [dict(row) for row in rows],
         }
+        evidence["categoryCode"], _category_name = classify_trend_place_category(evidence)
         evidence["classification"] = classify_place(evidence, config)
         output.append(evidence)
     return output
