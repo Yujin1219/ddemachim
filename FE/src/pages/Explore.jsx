@@ -1,47 +1,9 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import BottomNav from '../components/BottomNav';
 import SearchBar from '../components/SearchBar';
+import { fetchPlaceTrends } from '../api/client';
 
-const sections = [
-  {
-    id: 'trending',
-    title: '요즘 이곳에서는',
-    action: '전체보기',
-    subtitle: '최근 메뉴·사진·공간이 주목받는 장소',
-    badge: '요즘 핫한 장소',
-    places: [
-      {
-        name: '도토리가든',
-        description: '소금빵 · 정원 사진이 요즘 인기',
-        image: '/assets/cafe-garden.png',
-      },
-      {
-        name: '아베베 베이커리',
-        description: '막 구운 도넛 · 줄 서는 오전',
-        image: '/assets/cafe-garden.png',
-      },
-    ],
-  },
-  {
-    id: 'scene',
-    title: '장면 속으로',
-    action: '전체보기',
-    subtitle: '최근 메뉴·사진·공간이 주목받는 장소',
-    badge: '도깨비 촬영지',
-    places: [
-      {
-        name: '창덕궁 후원',
-        description: '1회에서 이곳은 지은탁(김고은)이 머물던 곳',
-        image: '/assets/palace-garden.png',
-      },
-      {
-        name: '덕수궁 돌담길',
-        description: '드라마 도깨비 촬영지',
-        image: '/assets/palace-garden.png',
-      },
-    ],
-  },
-];
+const sections = [{ id: 'trending', title: '요즘 이곳에서는', action: '전체보기', subtitle: '최근 메뉴·사진·공간이 주목받는 장소', badge: '요즘 핫한 장소' }];
 
 const popups = [
   {
@@ -58,15 +20,22 @@ const popups = [
 
 export default function Explore({ onNavigate }) {
   const [query, setQuery] = useState('');
+  const [trendPlaces, setTrendPlaces] = useState([]);
+  useEffect(() => {
+    const controller = new AbortController();
+    fetchPlaceTrends({ limit: 6, signal: controller.signal })
+      .then((items) => setTrendPlaces(Array.isArray(items) ? items : []))
+      .catch((error) => { if (error?.name !== 'AbortError') setTrendPlaces([]); });
+    return () => controller.abort();
+  }, []);
   const normalizedQuery = query.trim();
   const visibleSections = useMemo(
-    () => sections.map((section) => ({
-      ...section,
-      places: section.places.filter((place) => (
-        `${place.name} ${place.description}`.includes(normalizedQuery)
+    () => sections.map((section) => ({ ...section,
+      places: trendPlaces.filter((place) => (
+        `${place.name || ''} ${place.description || place.trend?.reason || ''}`.includes(normalizedQuery)
       )),
     })),
-    [normalizedQuery],
+    [normalizedQuery, trendPlaces],
   );
   const visiblePopups = popups.filter((popup) => (
     `${popup.title} ${popup.meta}`.includes(normalizedQuery)
@@ -98,11 +67,11 @@ export default function Explore({ onNavigate }) {
                   {section.places.map((place) => (
                     <article className="place-card" key={place.name}>
                       <div className="place-image">
-                        <img src={place.image} alt={`${place.name} 모습`} />
+                        <img src={place.imageUrl || '/assets/cafe-garden.png'} alt={`${place.name} 모습`} />
                         <span>{section.badge}</span>
                       </div>
                       <h3>{place.name}</h3>
-                      <p>{place.description}</p>
+                      <p>{place.description || place.trend?.reason || '최근 주목받는 장소'}</p>
                     </article>
                   ))}
                 </div>
