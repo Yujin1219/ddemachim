@@ -1,5 +1,4 @@
 const TIME_STEP_MINUTES = 10;
-const DEFAULT_DURATION_MINUTES = 5 * 60;
 
 function pad(value) {
   return String(value).padStart(2, '0');
@@ -20,12 +19,7 @@ export function createCourseConditionDefaults(now = new Date()) {
   return {
     serviceDate: formatDate(now),
     desiredStartTime: formatMinutes(roundedStartMinutes),
-    desiredEndTime: formatMinutes(roundedStartMinutes + DEFAULT_DURATION_MINUTES),
   };
-}
-
-export function isCourseTimeRangeValid(startTime, endTime) {
-  return Boolean(startTime && endTime && endTime > startTime);
 }
 
 export function formatCourseDateLabel(value) {

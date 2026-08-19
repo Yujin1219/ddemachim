@@ -46,6 +46,27 @@ public record RouteComparisonResponse(Instant generatedAt, List<RouteOption> rou
             String routeName,
             Integer durationSeconds,
             Integer distanceMeters,
+            LineStringGeometry geometry,
+            List<RouteStep> steps) {
+
+        public RouteLeg(
+                RouteMode mode,
+                String routeName,
+                Integer durationSeconds,
+                Integer distanceMeters,
+                LineStringGeometry geometry) {
+            this(mode, routeName, durationSeconds, distanceMeters, geometry, List.of());
+        }
+
+        public RouteLeg {
+            steps = steps == null ? List.of() : List.copyOf(steps);
+        }
+    }
+
+    public record RouteStep(
+            String streetName,
+            Integer distanceMeters,
+            String description,
             LineStringGeometry geometry) {
     }
 

@@ -147,7 +147,8 @@
             "geometry": {
               "type": "LineString",
               "coordinates": [[126.9780, 37.5665], [126.9723, 37.5559]]
-            }
+            },
+            "steps": []
           }
         ]
       }
@@ -163,6 +164,7 @@
 - `fareWon`: 대중교통 요금 또는 TMAP 자동차 경로의 택시 예상 요금. 제공되지 않으면 `null`
 - `transferCount`, `walkDistanceMeters`: 대중교통에서만 의미가 있으며 다른 모드는 `null` 가능
 - `legs`: 공급자 응답을 서비스 공통 형식으로 정규화한 구간 목록
+- `legs[].steps`: 대중교통 경로의 `WALK` 구간은 TMAP이 반환한 도보 단계를 순서대로 담고, 그 외 구간은 빈 배열을 반환한다. 각 단계는 도로명, 거리, 안내 문구, GeoJSON 선형 좌표를 포함할 수 있다.
 - 경로 좌표는 GeoJSON 순서인 `[longitude, latitude]`를 사용한다.
 - 한 모드만 성공해도 HTTP 200과 전체 세 모드 상태를 반환한다.
 - 모든 모드가 실패하면 공통 오류 응답과 HTTP 502를 반환한다.
@@ -182,7 +184,7 @@ RouteController
 ```
 
 - 도보: `POST /tmap/routes/pedestrian?version=1`
-- 대중교통: `POST /transit/routes`, `count=1` 요청. 응답이 여러 개면 `totalTime` 최솟값을 최종 경로로 선택한다.
+- 대중교통: `POST /transit/routes`, `count=10` 요청. 응답이 여러 개면 `totalTime` 최솟값을 최종 경로로 선택하고, 선택한 경로의 `WALK` 구간 도보 단계를 공통 응답으로 정규화한다.
 - 택시: `POST /tmap/routes?version=1`, 교통정보 기반 기본 최적 경로의 `totalTime`, `totalDistance`, `taxiFare`를 사용한다.
 - 세 외부 요청은 전용 제한된 실행기에서 병렬 수행한다. 한 요청의 예외가 다른 모드 결과를 폐기하지 않도록 각각 오류 상태로 변환한다.
 - 연결/응답 시간 제한을 두고, 공급자 원문 오류나 키를 클라이언트와 로그에 노출하지 않는다.

@@ -43,6 +43,9 @@ CREATE TABLE IF NOT EXISTS place (
     phone               varchar(50),
     website             text,
     description         text,
+    image_url           text,
+    image_source        varchar(30),
+    image_attribution   text,
     -- 아래 4개는 구조화 파싱이 어려운 원문을 그대로 보존하는 용도(예: 서울시 관광명소의
     -- 운영시간/휴무일 자유서식 텍스트). 요일별 구조화 값은 place_operating_hours에 별도로 둔다.
     operating_hours_raw text,
@@ -84,17 +87,6 @@ CREATE TABLE IF NOT EXISTS place_operating_hours (
 );
 
 CREATE INDEX IF NOT EXISTS idx_place_operating_hours_place_id ON place_operating_hours (place_id);
-
--- 장소 이미지
-CREATE TABLE IF NOT EXISTS place_image (
-    id              bigserial PRIMARY KEY,
-    place_id        bigint NOT NULL REFERENCES place(id) ON DELETE CASCADE,
-    source          varchar(30) NOT NULL,
-    source_url      text NOT NULL,
-    attribution     text
-);
-
-CREATE INDEX IF NOT EXISTS idx_place_image_place_id ON place_image (place_id);
 
 -- 로그인 회원
 CREATE TABLE IF NOT EXISTS member (

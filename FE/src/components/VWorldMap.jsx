@@ -30,6 +30,7 @@ import { routeFitPointCoordinates, routeLegFeatureSpecs } from '../utils/routeGe
 import { resolveRouteFitDuration } from '../utils/routeComparison.js'
 
 const DEFAULT_CENTER = [126.978, 37.5665]
+const DEFAULT_ROUTE_FIT_PADDING = [120, 36, 380, 36]
 const CLUSTER_ZOOM_MAX = 14.5
 const CLUSTER_PIXEL_RADIUS = 44
 const CROWDING_GRID_COLORS = {
@@ -128,6 +129,7 @@ export default function VWorldMap({
   routeLegs = [],
   routeMode = 'WALK',
   routeFitKey = '',
+  routeFitPadding = DEFAULT_ROUTE_FIT_PADDING,
 }) {
   const targetRef = useRef(null)
   const mapRef = useRef(null)
@@ -601,11 +603,11 @@ export default function VWorldMap({
     ], extents[0])
     fittedRouteKeyRef.current = routeFitKey
     map.getView().fit(extent, {
-      padding: [120, 36, 380, 36],
+      padding: routeFitPadding,
       maxZoom: 17,
       duration: 220,
     })
-  }, [routeFitKey, routeLegs])
+  }, [routeFitKey, routeLegs, routeFitPadding])
 
   useEffect(() => {
     congestionAreaLayerRef.current?.setVisible(showCongestionAreas)

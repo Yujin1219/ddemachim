@@ -9,6 +9,8 @@ import com.ddemachim.server.domain.route.enums.RouteStatus;
 import com.ddemachim.server.domain.route.enums.RouteUnavailableReason;
 import com.ddemachim.server.domain.route.exception.RouteProviderException;
 import com.ddemachim.server.global.properties.TmapProperties;
+import com.github.benmanes.caffeine.cache.Cache;
+import com.github.benmanes.caffeine.cache.Caffeine;
 import java.io.IOException;
 import java.net.SocketTimeoutException;
 import java.net.http.HttpClient;
@@ -19,6 +21,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Objects;
 import java.util.concurrent.TimeoutException;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.MediaType;
@@ -36,10 +39,13 @@ public class TmapRouteClient implements RouteProviderClient {
     private static final String WALKING_PATH = "/tmap/routes/pedestrian?version=1";
     private static final String TRANSIT_PATH = "/transit/routes";
     private static final String TAXI_PATH = "/tmap/routes?version=1";
+    private static final Duration DEFAULT_CACHE_TTL = Duration.ofMinutes(2);
+    private static final long DEFAULT_CACHE_MAXIMUM_SIZE = 1_000L;
 
     private final TmapProperties properties;
     private final ObjectMapper objectMapper;
     private final RestClient restClient;
+    private final Cache<TransitCacheKey, SelectedTransitRoute> transitCache;
 
     @Autowired
     public TmapRouteClient(TmapProperties properties, ObjectMapper objectMapper) {
@@ -58,6 +64,10 @@ public class TmapRouteClient implements RouteProviderClient {
         this.properties = properties;
         this.objectMapper = objectMapper;
         this.restClient = restClientBuilder.baseUrl(properties.getBaseUrl()).build();
+        this.transitCache = Caffeine.newBuilder()
+                .maximumSize(cacheMaximumSize(properties))
+                .expireAfterWrite(cacheTtl(properties))
+                .build();
     }
 
     private static RestClient.Builder productionRestClientBuilder(TmapProperties properties) {
@@ -79,10 +89,28 @@ public class TmapRouteClient implements RouteProviderClient {
 
     @Override
     public RouteOption findWalking(Coordinate origin, Coordinate destination) {
+        return findWalking(origin, destination, null);
+    }
+
+    @Override
+    public RouteOption findWalkingVariant(
+            Coordinate origin,
+            Coordinate destination,
+            PedestrianSearchOption searchOption) {
+        return findWalking(origin, destination, Objects.requireNonNull(searchOption));
+    }
+
+    private RouteOption findWalking(
+            Coordinate origin,
+            Coordinate destination,
+            PedestrianSearchOption searchOption) {
         ensureConfigured();
         ensureCoordinates(origin, destination);
 
         Map<String, Object> body = baseRequestBody(origin, destination);
+        if (searchOption != null) {
+            body.put("searchOption", searchOption.providerValue());
+        }
         JsonNode response = post(WALKING_PATH, body);
         try {
             List<LineFeature> lines = lineFeatures(response);
@@ -112,11 +140,21 @@ public class TmapRouteClient implements RouteProviderClient {
 
     @Override
     public RouteOption findTransit(Coordinate origin, Coordinate destination) {
+        return findSelectedTransit(origin, destination).option();
+    }
+
+    @Override
+    public SelectedTransitRoute findSelectedTransit(Coordinate origin, Coordinate destination) {
         ensureConfigured();
         ensureCoordinates(origin, destination);
 
+        TransitCacheKey cacheKey = TransitCacheKey.from(origin, destination);
+        return transitCache.get(cacheKey, ignored -> loadSelectedTransit(origin, destination));
+    }
+
+    private SelectedTransitRoute loadSelectedTransit(Coordinate origin, Coordinate destination) {
         Map<String, Object> body = baseRequestBody(origin, destination);
-        body.put("count", 1);
+        body.put("count", 10);
         body.put("lang", 0);
         body.put("format", "json");
         JsonNode response = post(TRANSIT_PATH, body);
@@ -160,7 +198,7 @@ public class TmapRouteClient implements RouteProviderClient {
             }
             Integer transferCount = integer(fastest, "transferCount");
             Integer fare = fare(fastest);
-            return new RouteOption(
+            RouteOption option = new RouteOption(
                     RouteMode.TRANSIT,
                     RouteStatus.AVAILABLE,
                     fastestTime,
@@ -170,11 +208,31 @@ public class TmapRouteClient implements RouteProviderClient {
                     walkDistance,
                     null,
                     legs);
+            return new SelectedTransitRoute(
+                    option,
+                    TransitWalkSegmentExtractor.extract(fastest));
         } catch (RouteProviderException exception) {
             throw exception;
         } catch (RuntimeException exception) {
             throw unavailable();
         }
+    }
+
+    private static long cacheMaximumSize(TmapProperties properties) {
+        if (properties == null || properties.getCacheMaximumSize() <= 0) {
+            return DEFAULT_CACHE_MAXIMUM_SIZE;
+        }
+        return properties.getCacheMaximumSize();
+    }
+
+    private static Duration cacheTtl(TmapProperties properties) {
+        if (properties == null
+                || properties.getCacheTtl() == null
+                || properties.getCacheTtl().isNegative()
+                || properties.getCacheTtl().isZero()) {
+            return DEFAULT_CACHE_TTL;
+        }
+        return properties.getCacheTtl();
     }
 
     @Override
@@ -539,5 +597,20 @@ public class TmapRouteClient implements RouteProviderClient {
             Integer totalDistance,
             Integer distance,
             Integer taxiFare) {
+    }
+
+    private record TransitCacheKey(
+            double originLatitude,
+            double originLongitude,
+            double destinationLatitude,
+            double destinationLongitude) {
+
+        private static TransitCacheKey from(Coordinate origin, Coordinate destination) {
+            return new TransitCacheKey(
+                    origin.latitude(),
+                    origin.longitude(),
+                    destination.latitude(),
+                    destination.longitude());
+        }
     }
 }

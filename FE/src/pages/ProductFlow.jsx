@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from 'react';
 import { motion, useDragControls, useReducedMotion } from 'motion/react';
-import { CalendarDays, ChevronLeft, ChevronRight, CircleDollarSign, CircleHelp, Clapperboard, Clock3, Coffee, ExternalLink, Flame, Heart, Image as ImageIcon, LocateFixed, MapPin, MoreHorizontal, RefreshCw, Search, SearchX, SendHorizontal, ShoppingBasket, Store, UserRound, Utensils, X } from 'lucide-react';
+import { CalendarDays, ChevronLeft, ChevronRight, CircleDollarSign, CircleHelp, Clapperboard, Clock3, Coffee, ExternalLink, Flame, Heart, Image as ImageIcon, LocateFixed, MapPin, Minus, MoreHorizontal, Plus, RefreshCw, Search, SearchX, SendHorizontal, ShoppingBasket, Store, UserRound, Utensils, X } from 'lucide-react';
 import AppHeader from '../components/AppHeader';
 import BottomNav from '../components/BottomNav';
 import PlaceReviewPreview from '../components/PlaceReviewPreview';
@@ -51,17 +51,19 @@ import {
   RouteMotion,
 } from '../components/MotionAssets';
 import CourseHome from '../components/CourseHome';
+import CoursePreviewResults from '../components/CoursePreviewResults.js';
 import {
   createCourseConditionDefaults,
   formatCourseDateLabel,
   formatCourseTimeLabel,
-  isCourseTimeRangeValid,
   normalizeCourseStartPlace,
 } from '../components/courseConditionsModel.js';
 import {
-  createCourseStopSettings,
+  buildCoursePreviewPlaces,
+  reconcileCourseStopSettings,
   updateCourseStopSetting,
 } from '../components/courseStopSettings.js';
+import { buildCoursePreviewRequest } from '../components/coursePreviewModel.js';
 import { CongestionBadge, CongestionPointBadge, getMockCongestionAccessibleLabel } from '../components/CongestionInfo';
 import ScrollOnboarding from '../components/ScrollOnboarding';
 import { useMockCrowdingAtPoint } from '../utils/mockCrowdingStore.js';
@@ -75,6 +77,7 @@ import {
 } from '../utils/routeComparison.js';
 import { useCurrentLocation } from '../hooks/useCurrentLocation.js';
 import { useRouteComparison } from '../hooks/useRouteComparison.js';
+import { useCoursePreview } from '../hooks/useCoursePreview.js';
 import {
   createInitialMapHomeInteraction,
   mapHomeInteractionReducer,
@@ -99,7 +102,7 @@ import { guardSceneRouteHash } from '../sceneCamera/routes.js';
 const routeGroups = {
   auth: ['splash', 'intro', 'login', 'signup', 'onboarding', 'onboarding-schedule', 'onboarding-permissions'],
   discovery: ['map', 'explore', 'place', 'event-detail', 'search', 'search-empty', 'saved', 'trending', 'filming-locations', 'popups', 'live-talk'],
-  course: ['course-home', 'course-conditions', 'basket', 'basket-natural', 'basket-glass', 'compare', 'route-map'],
+  course: ['course-home', 'course-conditions', 'course-place-times', 'basket', 'basket-natural', 'basket-glass', 'compare', 'route-map'],
   travel: ['progress', 'arrival', 'navigation', 'reroute', 'reroute-applied', 'transit', 'taxi', 'nearby', 'nearby-added', 'nearby-arrival', 'active-course', 'next-stop', 'gps-error', 'taxi-handoff', 'offline', 'closed-place', 'stop-course'],
   filming: ['onsite', 'filming-work', 'filming-content', 'camera', 'scene-list', 'scene-detail', 'shot-result', 'photo-saved', 'image-missing', 'filming-restricted', 'report'],
   record: ['complete', 'record', 'saved-courses', 'record-detail', 'write-review', 'reviews', 'review-detail'],
@@ -658,7 +661,7 @@ function PlaceBasketAction({ placeId, basketItems, onAdded, onAuthRequired, onRe
   );
 }
 
-function KakaoPlaceActions({ place, basketItems, onAdded, onAuthRequired, onRefresh }) {
+function KakaoPlaceActions({ place, basketItems, onAdded, onAuthRequired, onRefresh, hideMapLink = false }) {
   const [status, setStatus] = useState('idle');
   const requestControllerRef = useRef(null);
   const isAdded = status === 'success' || basketHasKakaoPlace(basketItems, place?.providerPlaceId);
@@ -716,7 +719,7 @@ function KakaoPlaceActions({ place, basketItems, onAdded, onAuthRequired, onRefr
 
   return (
     <div className="kakao-place-actions">
-      <div className="kakao-place-action-row">
+      <div className={`kakao-place-action-row${hideMapLink ? ' is-single' : ''}`}>
         <ActionButton
           aria-busy={status === 'loading' || undefined}
           aria-describedby={status === 'error' ? 'kakao-basket-error' : undefined}
@@ -725,10 +728,10 @@ function KakaoPlaceActions({ place, basketItems, onAdded, onAuthRequired, onRefr
         >
           {buttonLabel}
         </ActionButton>
-        <a className="ui-button secondary kakao-map-link" href={placeUrl} target="_blank" rel="noopener noreferrer">
+        {!hideMapLink && <a className="ui-button secondary kakao-map-link" href={placeUrl} target="_blank" rel="noopener noreferrer">
           <span>카카오맵에서 보기</span>
           <ExternalLink aria-hidden="true" size={17} strokeWidth={2} />
-        </a>
+        </a>}
       </div>
       <p className="kakao-place-feedback" id="kakao-basket-error" aria-live="polite">
         {status === 'error' ? '코스에 담지 못했어요. 다시 시도해주세요.' : ''}
@@ -1117,6 +1120,7 @@ function normalizeMapTags(tags) {
 
 function MapHome({ go, basketState, onBasketAdded, onBasketRefresh, onAuthRequired }) {
   const [selectedPlace, setSelectedPlace] = useState(readKakaoMapTarget);
+  const [isRouteRequested, setIsRouteRequested] = useState(false);
   const [routeModeSelection, dispatchRouteModeSelection] = useReducer(routeModeSelectionReducer, {
     activeMode: 'WALK',
     manuallySelected: false,
@@ -1141,9 +1145,10 @@ function MapHome({ go, basketState, onBasketAdded, onBasketRefresh, onAuthRequir
   const [nearbyPlace, setNearbyPlace] = useState(null);
   const nearbySheetDragControls = useDragControls();
   const didDragNearbySheetRef = useRef(false);
-  const routeDestination = normalizeRouteCoordinate(selectedPlace
+  const selectedDestination = normalizeRouteCoordinate(selectedPlace
     ? { latitude: selectedPlace.latitude, longitude: selectedPlace.longitude }
     : null);
+  const routeDestination = isRouteRequested ? selectedDestination : null;
   const {
     location,
     status: locationStatus,
@@ -1155,7 +1160,7 @@ function MapHome({ go, basketState, onBasketAdded, onBasketRefresh, onAuthRequir
     status: routeStatus,
     retry: retryRoute,
   } = useRouteComparison({ origin: location, destination: routeDestination });
-  const routeSelectionKey = selectedPlace
+  const routeSelectionKey = selectedPlace && isRouteRequested
     ? `${selectedPlace.externalSource || 'INTERNAL'}:${selectedPlace.id}`
     : '';
   const routeSelectionKeyRef = useRef(routeSelectionKey);
@@ -1239,6 +1244,7 @@ function MapHome({ go, basketState, onBasketAdded, onBasketRefresh, onAuthRequir
   const selectMapFilter = (option) => {
     setActiveMapFilterKeys((current) => toggleMapFilterSelection(current, option.key));
     setSelectedPlace(null);
+    setIsRouteRequested(false);
     setLoadedMapFilterKey(null);
   };
   const settleNearbySheet = (_, info) => {
@@ -1250,6 +1256,7 @@ function MapHome({ go, basketState, onBasketAdded, onBasketRefresh, onAuthRequir
   };
   const selectPlace = (place) => {
     setSelectedPlace(place);
+    setIsRouteRequested(false);
     dispatchRouteModeSelection({ type: 'PLACE_CHANGED' });
     dispatchMapHomeInteraction({ type: 'PLACE_SELECTED' });
   };
@@ -1459,12 +1466,25 @@ function MapHome({ go, basketState, onBasketAdded, onBasketRefresh, onAuthRequir
             </dl>
           </aside>
         )}
-        <motion.section className={`bottom-sheet map-nearby-sheet motion-depth-sheet${selectedPlace ? ' has-selected-route' : ''}`} data-collapsed={isNearbySheetCollapsed || undefined} initial={{ opacity: 0, y: 42 }} animate={{ opacity: 1, y: isNearbySheetCollapsed ? collapsedSheetOffset : 0 }} transition={{ opacity: { duration: 0.28, delay: 0.08 }, y: { type: 'spring', stiffness: 420, damping: 38 } }} drag="y" dragControls={nearbySheetDragControls} dragListener={false} dragConstraints={{ top: 0, bottom: collapsedSheetOffset }} dragElastic={0.06} dragMomentum={false} onDrag={(_, info) => { if (Math.abs(info.offset.y) > 6) didDragNearbySheetRef.current = true; }} onDragEnd={settleNearbySheet}>
+        <motion.section className={`bottom-sheet map-nearby-sheet motion-depth-sheet${isRouteRequested ? ' has-selected-route' : ''}`} data-collapsed={isNearbySheetCollapsed || undefined} initial={{ opacity: 0, y: 42 }} animate={{ opacity: 1, y: isNearbySheetCollapsed ? collapsedSheetOffset : 0 }} transition={{ opacity: { duration: 0.28, delay: 0.08 }, y: { type: 'spring', stiffness: 420, damping: 38 } }} drag="y" dragControls={nearbySheetDragControls} dragListener={false} dragConstraints={{ top: 0, bottom: collapsedSheetOffset }} dragElastic={0.06} dragMomentum={false} onDrag={(_, info) => { if (Math.abs(info.offset.y) > 6) didDragNearbySheetRef.current = true; }} onDragEnd={settleNearbySheet}>
           <button className="map-sheet-handle-button" type="button" aria-label={isNearbySheetCollapsed ? '주변 장소 패널 펼치기' : '주변 장소 패널 접기'} aria-expanded={!isNearbySheetCollapsed} onPointerDown={(event) => { didDragNearbySheetRef.current = false; nearbySheetDragControls.start(event); }} onClick={() => { if (didDragNearbySheetRef.current) { didDragNearbySheetRef.current = false; return; } dispatchMapHomeInteraction({ type: 'SHEET_TOGGLED' }); }}><span className="sheet-handle" /></button>
           <div className="map-sheet-content" aria-hidden={isNearbySheetCollapsed || undefined} inert={isNearbySheetCollapsed ? true : undefined}>
             {!selectedPlace && <ScreenSection title={nearby.title} action="전체보기" onAction={() => go('explore')}><PlaceRow place={nearby.place} onClick={() => go(nearby.next, nearby.place.id)} /></ScreenSection>}
-            {selectedPlace
-              ? <SelectedPlaceRoutePanel
+            {selectedPlace && <PlaceRow place={selectedPlaceCard} onClick={selectedPlaceDetail ? () => go(selectedPlaceDetail.screen, selectedPlaceDetail.id) : undefined} />}
+            {selectedPlace && !isRouteRequested && <section className="map-place-choice" aria-label="선택한 장소 작업">
+              <h2>이 장소에서 무엇을 할까요?</h2>
+              <div className="map-place-choice-actions">
+                {selectedPlace.externalSource === 'KAKAO'
+                  ? <KakaoPlaceActions place={selectedPlace} basketItems={basketState?.items} onAdded={onBasketAdded} onAuthRequired={onAuthRequired} onRefresh={onBasketRefresh} hideMapLink />
+                  : selectedPlace.externalSource === 'EVENT'
+                    ? <ActionButton onClick={() => go('event-detail', selectedPlace.eventId ?? selectedPlace.id)}>행사 상세 보기</ActionButton>
+                    : <PlaceBasketAction placeId={selectedPlace.id} basketItems={basketState?.items} onAdded={onBasketAdded} onAuthRequired={onAuthRequired} onRefresh={onBasketRefresh} />}
+                <ActionButton tone="secondary" onClick={() => setIsRouteRequested(true)}>현재 위치에서 길찾기</ActionButton>
+              </div>
+            </section>}
+            {selectedPlace && isRouteRequested && <>
+                <button className="map-route-back" type="button" onClick={() => setIsRouteRequested(false)}>‹ 장소 선택으로 돌아가기</button>
+                <SelectedPlaceRoutePanel
                   selectedPlace={selectedPlace}
                   location={location}
                   locationStatus={locationStatus}
@@ -1473,14 +1493,13 @@ function MapHome({ go, basketState, onBasketAdded, onBasketRefresh, onAuthRequir
                   routeData={effectiveRouteData}
                   activeMode={activeRouteMode}
                   originLabel="현재 위치"
-                  placeCard={<PlaceRow place={selectedPlaceCard} onClick={selectedPlaceDetail ? () => go(selectedPlaceDetail.screen, selectedPlaceDetail.id) : undefined} />}
                   onModeChange={(mode) => dispatchRouteModeSelection({ type: 'MODE_SELECTED', mode })}
                   onResolvedModeChange={(mode) => dispatchRouteModeSelection({ type: 'MODE_RESOLVED', mode })}
                   onRetryLocation={locate}
                   onRetryRoute={retryRoute}
                   taxiHref={activeRouteMode === 'TAXI' ? buildKakaoTaxiHref(routeDestination) : null}
-                />
-              : <button type="button" className="map-live-link" onClick={() => go('live-talk')}><span>내 주변 지금톡</span><small>현장 소식 6개&nbsp; ›</small></button>}
+                /></>}
+            {!selectedPlace && <button type="button" className="map-live-link" onClick={() => go('live-talk')}><span>내 주변 지금톡</span><small>현장 소식 6개&nbsp; ›</small></button>}
           </div>
         </motion.section>
       </MapStage>
@@ -2561,11 +2580,197 @@ function LiveTalk({ go }) {
   return <section className="phone standard-screen live-talk-screen"><BackHeader title="내 주변 지금톡" onBack={() => go('map')} /><main className="page-scroll"><div className="talk-hero"><CrowdMotion /><div><span>안국동 · 실시간</span><h2>지금 근처가 어떤가요?</h2><p>현장에 있는 사람들이 남긴 짧은 소식이에요.</p></div></div><div className="talk-presence"><i />지금 안국동에 6명이 있어요</div><div className="chat-list">{messages.map((message, index) => <p className={`chat-bubble ${message.mine ? 'mine' : 'other'}`} key={`${message.text}-${index}`}>{message.text}</p>)}</div></main><form className="talk-input" onSubmit={submit}><input value={draft} onChange={(event) => setDraft(event.target.value)} placeholder="지금 상황을 남겨보세요" /><button type="submit" aria-label="보내기" disabled={!draft.trim()}><SendHorizontal aria-hidden="true" size={19} strokeWidth={2} /></button></form></section>;
 }
 
-function CourseConditions({ go }) {
-  const [duration, setDuration] = useState('5시간');
-  const [pace, setPace] = useState('여유롭게');
-  const [budget, setBudget] = useState('1만원');
-  return <section className="phone standard-screen course-condition-screen"><main className="page-scroll"><BackHeader title="코스 만들기" onBack={() => go('map')} /><span className="progress-pill">1 / 3</span><div className="course-hero"><p>오늘의 코스</p><h1>어떤 하루를 보내고 싶어요?</h1><span>시간과 일정 밀도만 알려주세요.</span></div><ScreenSection title="출발 정보"><div className="setting-card"><button type="button"><span className="setting-card-label"><MapPin aria-hidden="true" size={16} />출발 위치</span><strong>현재 위치 · 안국동</strong><ChevronRight aria-hidden="true" size={16} /></button><button type="button"><span className="setting-card-label"><Clock3 aria-hidden="true" size={16} />출발 시간</span><strong>오늘 13:40</strong><ChevronRight aria-hidden="true" size={16} /></button></div></ScreenSection><ScreenSection title="얼마나 함께 걸을까요?"><div className="three-choice-row">{['3시간', '5시간', '하루 종일'].map((item) => <button key={item} type="button" onClick={() => setDuration(item)} className={duration === item ? 'selected' : ''}>{item}</button>)}</div></ScreenSection><ScreenSection title="일정은 어떤 느낌이 좋아요?"><div className="pace-choice-grid">{[['여유롭게', '머무는 시간을 넉넉히'], ['촘촘하게', '더 많은 장소를 방문']].map(([name, copy]) => <button type="button" className={pace === name ? 'selected' : ''} key={name} onClick={() => setPace(name)}><strong>{name}</strong><span>{copy}</span></button>)}</div></ScreenSection><ScreenSection title="이동비 예산"><div className="three-choice-row">{['0원', '1만원', '2만원 이상'].map((item) => <button key={item} type="button" onClick={() => setBudget(item)} className={budget === item ? 'selected' : ''}>{item}</button>)}</div></ScreenSection><StatusBanner tone="blue" title="예약 · 마감 시간을 먼저 고려해요" copy="가능한 장소만 골라 이동 순서를 맞춰드려요." /></main><div className="sticky-actions"><ActionButton onClick={() => go('basket')}>이 조건으로 코스 만들기</ActionButton></div></section>;
+function CourseConditions({ go, draft, onContinue }) {
+  const initialSchedule = useMemo(() => draft || createCourseConditionDefaults(), [draft]);
+  const [serviceDate, setServiceDate] = useState(initialSchedule.serviceDate);
+  const [desiredStartTime, setDesiredStartTime] = useState(initialSchedule.desiredStartTime);
+  const [startMode, setStartMode] = useState(draft?.start?.type === 'SEARCHED_PLACE' ? 'search' : 'current');
+  const [selectedStart, setSelectedStart] = useState(draft?.start || null);
+  const [locationQuery, setLocationQuery] = useState('');
+  const [locationResults, setLocationResults] = useState([]);
+  const [searchStatus, setSearchStatus] = useState('idle');
+  const [activeSheet, setActiveSheet] = useState(null);
+  const searchControllerRef = useRef(null);
+  const { status: locationStatus, locate } = useCurrentLocation();
+  const canContinue = Boolean(selectedStart && serviceDate && desiredStartTime);
+  const selectedStartLabel = selectedStart?.name || '출발 위치를 설정해주세요';
+  const selectedStartMeta = selectedStart?.address || '현재 위치 또는 검색한 장소';
+  const sheetTitle = {
+    location: '출발 위치',
+    date: '여행 날짜',
+    startTime: '출발 시각',
+  }[activeSheet];
+
+  useEffect(() => () => searchControllerRef.current?.abort(), []);
+
+  const changeStartMode = (mode) => {
+    setStartMode(mode);
+    if (selectedStart?.type !== (mode === 'current' ? 'CURRENT_LOCATION' : 'SEARCHED_PLACE')) {
+      setSelectedStart(null);
+    }
+  };
+
+  const useCurrentPosition = async () => {
+    const current = await locate();
+    if (!current) return;
+    setSelectedStart({
+      type: 'CURRENT_LOCATION',
+      name: '현재 위치',
+      address: 'GPS 좌표를 출발점으로 사용해요',
+      latitude: current.latitude,
+      longitude: current.longitude,
+    });
+  };
+
+  const searchStartPlaces = async () => {
+    const query = locationQuery.trim();
+    if (!query || searchStatus === 'loading') return;
+    setSelectedStart(null);
+    searchControllerRef.current?.abort();
+    const controller = new AbortController();
+    searchControllerRef.current = controller;
+    setSearchStatus('loading');
+    setLocationResults([]);
+    try {
+      const places = await fetchKakaoPlaces(query, { signal: controller.signal });
+      if (controller.signal.aborted) return;
+      setLocationResults((Array.isArray(places) ? places : [])
+        .map(normalizeCourseStartPlace)
+        .filter(Boolean)
+        .slice(0, 5));
+      setSearchStatus('success');
+    } catch (error) {
+      if (error?.name !== 'AbortError' && !controller.signal.aborted) setSearchStatus('error');
+    } finally {
+      if (searchControllerRef.current === controller) searchControllerRef.current = null;
+    }
+  };
+
+  const continueToStopSettings = () => {
+    if (!canContinue) return;
+    onContinue?.({ serviceDate, desiredStartTime, start: selectedStart });
+  };
+
+  return (
+    <section className="phone standard-screen course-condition-screen course-condition-sheet-v2">
+      <main className="page-scroll">
+        <BackHeader title="코스 만들기" onBack={() => go('map')} />
+        <span className="progress-pill">1 / 3</span>
+        <div className="course-hero">
+          <p>출발 정보</p>
+          <h1>여행의 시작을 정해주세요</h1>
+          <span>출발 위치와 시간을 기준으로 하루 코스를 계산해요.</span>
+        </div>
+
+        <ScreenSection title="어디에서 출발할까요?">
+          <button className={`course-summary-row course-summary-location ${selectedStart ? 'is-complete' : ''}`} onClick={() => setActiveSheet('location')} type="button">
+            <span className="course-summary-icon"><MapPin aria-hidden="true" size={20} strokeWidth={2} /></span>
+            <span><small>출발 위치</small><strong>{selectedStartLabel}</strong><em>{selectedStartMeta}</em></span>
+            <ChevronRight aria-hidden="true" size={19} strokeWidth={2} />
+          </button>
+        </ScreenSection>
+
+        <ScreenSection title="언제 여행할까요?">
+          <div className="course-schedule-card">
+            <button onClick={() => setActiveSheet('date')} type="button">
+              <span className="course-summary-icon"><CalendarDays aria-hidden="true" size={19} strokeWidth={2} /></span>
+              <span><small>날짜</small><strong>{formatCourseDateLabel(serviceDate)}</strong></span>
+              <ChevronRight aria-hidden="true" size={18} strokeWidth={2} />
+            </button>
+            <div className="course-schedule-times">
+              <button onClick={() => setActiveSheet('startTime')} type="button">
+                <span><small>출발 시각</small><strong>{formatCourseTimeLabel(desiredStartTime)}</strong></span>
+                <ChevronRight aria-hidden="true" size={17} strokeWidth={2} />
+              </button>
+            </div>
+          </div>
+        </ScreenSection>
+
+        <StatusBanner tone="blue" title="다음에는 장소별 시간을 설정해요" copy="기본 체류시간과 예약 또는 도착 제한 시각을 확인할 수 있어요." />
+      </main>
+
+      <div className="sticky-actions">
+        <ActionButton disabled={!canContinue} onClick={continueToStopSettings}>다음</ActionButton>
+        {!selectedStart && <p className="course-action-hint">출발 위치를 설정하면 다음으로 갈 수 있어요.</p>}
+      </div>
+
+      {activeSheet && (
+        <div className="course-sheet-backdrop" onClick={() => setActiveSheet(null)} role="presentation">
+          <section aria-labelledby="course-sheet-title" aria-modal="true" className="course-option-sheet" onClick={(event) => event.stopPropagation()} role="dialog">
+            <span className="course-sheet-handle" aria-hidden="true" />
+            <header>
+              <div><small>코스 만들기</small><h2 id="course-sheet-title">{sheetTitle}</h2></div>
+              <button aria-label="닫기" onClick={() => setActiveSheet(null)} type="button"><X aria-hidden="true" size={20} strokeWidth={2} /></button>
+            </header>
+
+            {activeSheet === 'location' && (
+              <div className="course-sheet-body">
+                <div className="course-start-mode" role="group" aria-label="출발 위치 설정 방식">
+                  <button aria-pressed={startMode === 'current'} className={startMode === 'current' ? 'selected' : ''} onClick={() => changeStartMode('current')} type="button">
+                    <LocateFixed aria-hidden="true" size={17} strokeWidth={2} />현재 위치
+                  </button>
+                  <button aria-pressed={startMode === 'search'} className={startMode === 'search' ? 'selected' : ''} onClick={() => changeStartMode('search')} type="button">
+                    <Search aria-hidden="true" size={17} strokeWidth={2} />장소 검색
+                  </button>
+                </div>
+
+                {startMode === 'current' ? (
+                  <div className={`course-location-card ${selectedStart?.type === 'CURRENT_LOCATION' ? 'is-selected' : ''}`}>
+                    <span className="course-location-icon"><LocateFixed aria-hidden="true" size={21} strokeWidth={2} /></span>
+                    <div><strong>내 위치에서 바로 출발</strong><small>위치 권한은 지금 한 번만 요청해요.</small></div>
+                    <button aria-busy={locationStatus === 'locating' || undefined} disabled={locationStatus === 'locating'} onClick={useCurrentPosition} type="button">
+                      {locationStatus === 'locating' ? '확인 중' : selectedStart?.type === 'CURRENT_LOCATION' ? '다시 설정' : '설정'}
+                    </button>
+                    {locationStatus === 'error' && <p className="course-field-error" role="alert">현재 위치를 확인하지 못했어요. 위치 권한을 확인해주세요.</p>}
+                  </div>
+                ) : (
+                  <div className="course-location-search">
+                    <div className="course-search-input">
+                      <Search aria-hidden="true" size={18} strokeWidth={2} />
+                      <input aria-label="출발 장소 검색" onChange={(event) => setLocationQuery(event.target.value)} onKeyDown={(event) => { if (event.key === 'Enter') { event.preventDefault(); searchStartPlaces(); } }} placeholder="역, 건물, 주소를 검색하세요" type="search" value={locationQuery} />
+                      <button disabled={!locationQuery.trim() || searchStatus === 'loading'} onClick={searchStartPlaces} type="button">{searchStatus === 'loading' ? '검색 중' : '검색'}</button>
+                    </div>
+                    {searchStatus === 'error' && <p className="course-field-error" role="alert">장소를 불러오지 못했어요. 다시 검색해주세요.</p>}
+                    {searchStatus === 'success' && locationResults.length === 0 && <p className="course-search-empty">검색 결과가 없어요. 다른 검색어를 입력해주세요.</p>}
+                    {selectedStart?.type === 'SEARCHED_PLACE' && <div className="course-selected-place"><MapPin aria-hidden="true" size={19} strokeWidth={2} /><span><strong>{selectedStart.name}</strong><small>{selectedStart.address}</small></span><button onClick={() => setSelectedStart(null)} type="button">변경</button></div>}
+                    {locationResults.length > 0 && selectedStart?.type !== 'SEARCHED_PLACE' && (
+                      <div className="course-location-results" aria-label="출발 장소 검색 결과">
+                        {locationResults.map((place) => <button key={`${place.name}-${place.latitude}-${place.longitude}`} onClick={() => setSelectedStart(place)} type="button"><MapPin aria-hidden="true" size={18} strokeWidth={2} /><span><strong>{place.name}</strong><small>{place.address}</small></span><i>선택</i></button>)}
+                      </div>
+                    )}
+                  </div>
+                )}
+                <ActionButton disabled={!selectedStart} onClick={() => setActiveSheet(null)}>출발 위치 선택</ActionButton>
+              </div>
+            )}
+
+            {activeSheet === 'date' && (
+              <div className="course-sheet-body course-picker-sheet">
+                <label htmlFor="course-service-date"><span>여행할 날짜</span><input id="course-service-date" min={initialSchedule.serviceDate} onChange={(event) => setServiceDate(event.target.value)} type="date" value={serviceDate} /></label>
+                <p>선택한 날짜와 출발 시각을 기준으로 일정을 계산해요.</p>
+                <ActionButton disabled={!serviceDate} onClick={() => setActiveSheet(null)}>날짜 선택</ActionButton>
+              </div>
+            )}
+
+            {activeSheet === 'startTime' && (
+              <div className="course-sheet-body course-picker-sheet">
+                <label htmlFor="course-time-picker">
+                  <span>몇 시에 출발할까요?</span>
+                  <input id="course-time-picker" onChange={(event) => setDesiredStartTime(event.target.value)} step="600" type="time" value={desiredStartTime} />
+                </label>
+                <div className="course-time-presets">
+                  {['09:00', '12:00', '15:00', '18:00'].map((time) => {
+                    return <button aria-pressed={desiredStartTime === time} className={desiredStartTime === time ? 'selected' : ''} key={time} onClick={() => setDesiredStartTime(time)} type="button">{formatCourseTimeLabel(time)}</button>;
+                  })}
+                </div>
+                <ActionButton disabled={!desiredStartTime} onClick={() => setActiveSheet(null)}>시간 선택</ActionButton>
+              </div>
+            )}
+          </section>
+        </div>
+      )}
+    </section>
+  );
 }
 
 function RouteOverview({ go, active = false }) {
@@ -2593,6 +2798,103 @@ function NavigationRouteState({ go, data }) {
 
 function GuidanceMapState({ go, data }) {
   return <section className="phone travel-screen navigation-v3 guidance-map-state"><MapStage variant="navigation"><RouteMotion /><NavigationMapHeader go={go} subtitle={data.subtitle || '블루 모먼트 전시 팝업으로 이동'} count={data.count || '2 / 4'} back={data.back || 'progress'} /><NavigationDirections title={data.instructionTitle} copy={data.instructionCopy} /><section className="guidance-alert-card"><span>{data.kicker}</span><h1>{data.title}</h1><p>{data.copy}</p>{data.place && <article><img src={data.place.image} alt="" /><div><strong>{data.place.name}</strong><small>{data.place.meta}</small></div></article>}{data.detail && <div className="guidance-alert-detail"><strong>{data.detail}</strong><small>{data.source}</small></div>}{data.status && <div className="guidance-alert-detail"><strong>{data.status}</strong><small>{data.source}</small></div>}<ActionButton onClick={() => go(data.next)}>{data.button}</ActionButton></section></MapStage></section>;
+}
+
+function CoursePlaceTimes({ go, basketState, settings = [], onSettingsChange, onSubmit, previewStatus, onRetry, onAuthRequired }) {
+  const { items = [], status = 'loading' } = basketState || {};
+  const isReady = status === 'success';
+  const count = items.length;
+
+  const updateSetting = (basketItemId, patch) => {
+    onSettingsChange?.(basketItemId, patch);
+  };
+
+  const canContinue = isReady
+    && count > 0
+    && count <= 5
+    && settings.length === count
+    && settings.every((setting) => !setting.hasArrivalDeadline || Boolean(setting.arrivalDeadline))
+    && previewStatus !== 'loading';
+
+  const stateContent = status === 'logged-out'
+    ? <div className="basket-state"><ShoppingBasket aria-hidden="true" size={28} /><h2>로그인이 필요해요</h2><p>로그인하면 담아둔 장소의 체류시간을 설정할 수 있어요.</p><ActionButton onClick={() => onAuthRequired?.({ screen: 'course-place-times' })}>로그인하기</ActionButton></div>
+    : status === 'error'
+      ? <div className="basket-state" role="alert"><RefreshCw aria-hidden="true" size={26} /><h2>장소를 불러오지 못했어요</h2><p>연결 상태를 확인하고 다시 시도해주세요.</p><ActionButton tone="secondary" onClick={onRetry}>다시 시도</ActionButton></div>
+      : status === 'loading'
+        ? <div className="basket-state basket-state-loading" role="status"><BrandLoading /><p>장소별 기본 시간을 불러오고 있어요.</p></div>
+        : count === 0
+          ? <div className="basket-state"><ShoppingBasket aria-hidden="true" size={28} /><h2>설정할 장소가 없어요</h2><p>가고 싶은 장소를 먼저 코스 장바구니에 담아주세요.</p><ActionButton tone="secondary" onClick={() => go('explore')}>장소 둘러보기</ActionButton></div>
+          : null;
+
+  return (
+    <section className="phone standard-screen course-stop-settings-screen">
+      <main className="page-scroll course-stop-settings-scroll">
+        <BackHeader title="코스 만들기" onBack={() => go('course-conditions')} />
+        <span className="progress-pill">2 / 3</span>
+        <div className="course-hero">
+          <p>장소별 시간</p>
+          <h1>각 장소에서 얼마나 머물까요?</h1>
+          <span>기본 체류시간을 바꾸거나 꼭 맞춰야 할 시각을 설정하세요.</span>
+        </div>
+
+        {stateContent}
+
+        {isReady && count > 5 && <p className="course-field-error course-stop-limit-error" role="alert">코스에는 장소를 최대 5개까지 담을 수 있어요. 장바구니에서 장소 수를 줄여주세요.</p>}
+
+        {isReady && count > 0 && (
+          <div className="course-stop-settings-list">
+            {items.map((item, index) => {
+              const setting = settings.find((candidate) => candidate.basketItemId === item.id);
+              if (!setting) return null;
+              const hasActualHours = Boolean(item.operatingHoursRaw?.trim());
+              return (
+                <article className="course-stop-setting-card" key={item.id}>
+                  <header>
+                    <span className="course-stop-order">{index + 1}</span>
+                    <div>
+                      <h2>{item.placeName}</h2>
+                      <p>{item.roadAddress || item.lotAddress || '주소 정보 없음'}</p>
+                    </div>
+                  </header>
+
+                  <div className="course-hours-row">
+                    <span className={hasActualHours ? 'is-real' : ''}>{hasActualHours ? '실제 운영시간' : 'DEMO_DEFAULT'}</span>
+                    <strong>{hasActualHours ? item.operatingHoursRaw : '코스 생성 시 기본시간 적용'}</strong>
+                  </div>
+
+                  <div className="course-dwell-setting">
+                    <div><span>체류시간</span><small>기본 {setting.defaultDwellMinutes}분</small></div>
+                    <div className="course-dwell-stepper" role="group" aria-label={`${item.placeName} 체류시간`}>
+                      <button aria-label="체류시간 10분 줄이기" disabled={setting.dwellMinutes <= 10} onClick={() => updateSetting(item.id, { dwellMinutes: setting.dwellMinutes - 10 })} type="button"><Minus aria-hidden="true" size={17} strokeWidth={2} /></button>
+                      <strong>{setting.dwellMinutes}<small>분</small></strong>
+                      <button aria-label="체류시간 10분 늘리기" disabled={setting.dwellMinutes >= 1440} onClick={() => updateSetting(item.id, { dwellMinutes: setting.dwellMinutes + 10 })} type="button"><Plus aria-hidden="true" size={17} strokeWidth={2} /></button>
+                    </div>
+                  </div>
+
+                  <div className="course-fixed-time-setting">
+                    <div><span>예약·고정 방문시간</span><small>꼭 맞춰야 하는 도착 시각이 있나요?</small></div>
+                    <button aria-checked={setting.hasArrivalDeadline} aria-label={`${item.placeName} 예약 또는 고정 방문시간`} className={setting.hasArrivalDeadline ? 'selected' : ''} onClick={() => updateSetting(item.id, { hasArrivalDeadline: !setting.hasArrivalDeadline })} role="switch" type="button"><i /></button>
+                  </div>
+
+                  {setting.hasArrivalDeadline && (
+                    <div className="course-arrival-deadline">
+                      <label htmlFor={`arrival-deadline-${item.id}`}><Clock3 aria-hidden="true" size={18} strokeWidth={2} /><span>도착해야 하는 시각</span></label>
+                      <input aria-invalid={!setting.arrivalDeadline} id={`arrival-deadline-${item.id}`} onChange={(event) => updateSetting(item.id, { arrivalDeadline: event.target.value })} step="600" type="time" value={setting.arrivalDeadline} />
+                      <p>입력한 시각보다 10분 전에 도착하도록 코스를 계산해요.</p>
+                    </div>
+                  )}
+                </article>
+              );
+            })}
+          </div>
+        )}
+      </main>
+      <div className="sticky-actions course-stop-settings-actions">
+        <ActionButton aria-busy={previewStatus === 'loading' || undefined} disabled={!canContinue} onClick={onSubmit}>{previewStatus === 'loading' ? '코스 계산 중' : '빠른 코스 계산하기'}</ActionButton>
+        {isReady && count > 0 && count <= 5 && !canContinue && previewStatus !== 'loading' && <p className="course-action-hint">켜둔 고정 방문시간을 모두 입력해주세요.</p>}
+      </div>
+    </section>
+  );
 }
 
 function CourseBasket({ screen, go, basketState, onRetry, onAuthRequired }) {
@@ -2630,15 +2932,16 @@ function CourseBasket({ screen, go, basketState, onRetry, onAuthRequired }) {
     return isKakao
       ? <a className="basket-item-row" href={getKakaoPlaceUrl(item)} key={item.id} target="_blank" rel="noopener noreferrer">{content}</a>
       : <button className="basket-item-row" key={item.id} type="button" onClick={() => go('place', item.placeId)}>{content}</button>;
-  })}</div></section>}</main><div className="sticky-actions basket-actions"><ActionButton disabled={!isReady || count === 0} onClick={() => go('compare')}>{count > 0 ? `${count}개 장소로 코스 만들기` : '장소를 먼저 담아주세요'}</ActionButton></div><BottomNav active="course" onNavigate={(tab) => go(rootRoutes[tab])} /></section>;
+  })}</div></section>}</main><div className="sticky-actions basket-actions"><ActionButton disabled={!isReady || count === 0} onClick={() => go('course-conditions')}>{count > 0 ? `${count}개 장소로 코스 만들기` : '장소를 먼저 담아주세요'}</ActionButton></div><BottomNav active="course" onNavigate={(tab) => go(rootRoutes[tab])} /></section>;
 }
 
-function CourseCompare({ screen, go }) {
+function CourseCompare({ screen, go, coursePreview }) {
   if (screen === 'route-map') return <RouteOverview go={go} />;
-  const [selected, setSelected] = useState('fast');
-  const courses = [{ id: 'fast', badge: '추천 · 이동 최소', title: '빠른 코스', time: '4시간 20분', detail: '도보 43분 · 3.8km · 환승 1회', copy: '팝업 마감 전에 먼저 방문하도록 배치했어요' }, { id: 'easy', badge: '걷기 부담 최소', title: '편한 코스', time: '5시간 10분', detail: '도보 28분 · 2.4km · 환승 2회', copy: '긴 도보 구간을 나눠 중간에 이동을 넣었어요' }];
-  const selectedCourse = courses.find((course) => course.id === selected);
-  return <section className="phone standard-screen compare-screen compare-screen-v3"><main className="page-scroll compare-scroll"><header className="compare-heading"><h1>코스 비교</h1><p>같은 장소도 순서에 따라 하루가 달라져요</p></header><div className="compare-cards">{courses.map((course) => <article className={`compare-card ${selected === course.id ? 'selected' : ''}`} key={course.id} role="button" tabIndex="0" aria-pressed={selected === course.id} onClick={() => setSelected(course.id)} onKeyDown={(event) => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); setSelected(course.id); } }}><span>{course.badge}</span><h2>{course.title}</h2><strong>{course.time}</strong><p>{course.detail}</p><small>{course.copy}</small></article>)}</div><button type="button" className="compare-map-preview" onClick={() => go('route-map')}><VWorldMap ariaLabel="안국과 성수를 잇는 코스 지도" interactive={false} style={{ width: '100%', height: '100%' }} /><span>안국 → 성수 · 4곳</span></button></main><div className="sticky-actions compare-actions"><ActionButton onClick={() => go('route-map')}>{selectedCourse.title}로 시작하기</ActionButton></div><BottomNav active="course" onNavigate={(tab) => go(rootRoutes[tab])} /></section>;
+  const status = coursePreview?.status === 'idle' ? 'validation' : coursePreview?.status;
+  const message = coursePreview?.status === 'idle'
+    ? '출발 위치와 날짜, 장소별 시간을 순서대로 설정해주세요.'
+    : coursePreview?.message;
+  return <CoursePreviewResults preview={coursePreview?.preview} status={status} message={message} MapComponent={VWorldMap} onBack={() => go('course-place-times')} onRetry={status === 'error' ? coursePreview?.retry : undefined} onEditConditions={() => go('course-conditions')} onEditStops={() => go('course-place-times')} />;
 }
 
 const navStates = {
@@ -3155,7 +3458,7 @@ function AppScreenFrame({ basketCount, children, go, hideHeader = false }) {
   );
 }
 
-function RenderScreen({ screen, id, go, basketState, onBasketAdded, onBasketRetry, onAuthRequired, onLoginSuccess }) {
+function RenderScreen({ screen, id, go, basketState, courseFlow, onBasketAdded, onBasketRetry, onAuthRequired, onLoginSuccess }) {
   let renderedScreen;
   if (routeGroups.auth.includes(screen)) renderedScreen = <AuthScreen screen={screen} go={go} onLoginSuccess={onLoginSuccess} />;
   else if (screen === 'map') renderedScreen = <MapHome go={go} basketState={basketState} onBasketAdded={onBasketAdded} onBasketRefresh={onBasketRetry} onAuthRequired={onAuthRequired} />;
@@ -3167,9 +3470,10 @@ function RenderScreen({ screen, id, go, basketState, onBasketAdded, onBasketRetr
   else if (screen === 'trending' || screen === 'filming-locations' || screen === 'popups') renderedScreen = <CollectionScreen screen={screen} go={go} />;
   else if (screen === 'live-talk') renderedScreen = <LiveTalk go={go} />;
   else if (screen === 'course-home') renderedScreen = <CourseHome go={go} onNavigate={(tab) => go(rootRoutes[tab])} />;
-  else if (screen === 'course-conditions') renderedScreen = <CourseConditions go={go} />;
+  else if (screen === 'course-conditions') renderedScreen = <CourseConditions go={go} draft={courseFlow.draft} onContinue={courseFlow.continueFromConditions} />;
+  else if (screen === 'course-place-times') renderedScreen = <CoursePlaceTimes go={go} basketState={basketState} settings={courseFlow.settings} onSettingsChange={courseFlow.updateStopSetting} onSubmit={courseFlow.submit} previewStatus={courseFlow.preview.status} onRetry={onBasketRetry} onAuthRequired={onAuthRequired} />;
   else if (screen === 'basket' || screen === 'basket-natural' || screen === 'basket-glass') renderedScreen = <CourseBasket screen={screen} go={go} basketState={basketState} onRetry={onBasketRetry} onAuthRequired={onAuthRequired} />;
-  else if (screen === 'compare' || screen === 'route-map') renderedScreen = <CourseCompare screen={screen} go={go} />;
+  else if (screen === 'compare' || screen === 'route-map') renderedScreen = <CourseCompare screen={screen} go={go} coursePreview={courseFlow.preview} />;
   else if (routeGroups.travel.includes(screen)) renderedScreen = <TravelScreen screen={screen} go={go} />;
   else if (routeGroups.filming.includes(screen)) renderedScreen = <FilmingScreen screen={screen} go={go} id={id} />;
   else if (routeGroups.record.includes(screen)) renderedScreen = <RecordScreen screen={screen} go={go} />;
@@ -3182,7 +3486,13 @@ export default function ProductFlow() {
   const [{ screen, id }, setRoute] = useState(readHash);
   const [basketState, setBasketState] = useState({ items: [], status: getAccessToken() ? 'loading' : 'logged-out' });
   const [basketRefreshKey, setBasketRefreshKey] = useState(0);
+  const [courseDraft, setCourseDraft] = useState(null);
+  const [courseStopSettings, setCourseStopSettings] = useState([]);
   const reduceMotion = useReducedMotion();
+  const coursePreview = useCoursePreview({
+    onAuthRequired: () => handleAuthRequired({ screen: 'course-place-times' }),
+  });
+  const basketItemKey = basketState.items.map((item) => item.id).join('|');
 
   useEffect(() => {
     const handleHashChange = () => setRoute(readHash());
@@ -3207,6 +3517,12 @@ export default function ProductFlow() {
     return () => controller.abort();
   }, [screen, basketRefreshKey]);
 
+  useEffect(() => {
+    if (basketState.status !== 'success') return;
+    setCourseStopSettings((current) => reconcileCourseStopSettings(basketState.items, current));
+    coursePreview.reset();
+  }, [basketItemKey]);
+
   const go = useCallback((next, nextId, options = {}) => {
     if (!routes.has(next)) return;
     const sceneTarget = createSceneNavigationTarget(next, nextId);
@@ -3220,6 +3536,23 @@ export default function ProductFlow() {
 
   const handleBasketAdded = (item) => {
     setBasketState((current) => ({ items: mergeBasketItem(current.items, item), status: 'success' }));
+  };
+
+  const continueFromConditions = (draft) => {
+    setCourseDraft(draft);
+    coursePreview.reset();
+    go('course-place-times');
+  };
+
+  const updateStopSetting = (basketItemId, patch) => {
+    setCourseStopSettings((current) => updateCourseStopSetting(current, basketItemId, patch));
+    coursePreview.reset();
+  };
+
+  const submitCoursePreview = () => {
+    const payload = buildCoursePreviewRequest(courseDraft, buildCoursePreviewPlaces(courseStopSettings));
+    coursePreview.submit(payload);
+    go('compare');
   };
 
   const handleAuthRequired = (returnRoute = { screen, id }) => {
@@ -3248,5 +3581,14 @@ export default function ProductFlow() {
         transition: { duration: 0.28, ease: [0.23, 1, 0.32, 1] },
       };
 
-  return <main className="app-shell"><SceneCameraProvider screen={screen} routeId={id}><motion.div className="screen-transition" data-screen={screen} key={screen} {...pageMotion}><RenderScreen screen={screen} id={id} go={go} basketState={basketState} onBasketAdded={handleBasketAdded} onBasketRetry={() => setBasketRefreshKey((key) => key + 1)} onAuthRequired={handleAuthRequired} onLoginSuccess={handleLoginSuccess} /></motion.div></SceneCameraProvider></main>;
+  const courseFlow = {
+    draft: courseDraft,
+    settings: courseStopSettings,
+    preview: coursePreview,
+    continueFromConditions,
+    updateStopSetting,
+    submit: submitCoursePreview,
+  };
+
+  return <main className="app-shell"><SceneCameraProvider screen={screen} routeId={id}><motion.div className="screen-transition" data-screen={screen} key={screen} {...pageMotion}><RenderScreen screen={screen} id={id} go={go} basketState={basketState} courseFlow={courseFlow} onBasketAdded={handleBasketAdded} onBasketRetry={() => setBasketRefreshKey((key) => key + 1)} onAuthRequired={handleAuthRequired} onLoginSuccess={handleLoginSuccess} /></motion.div></SceneCameraProvider></main>;
 }

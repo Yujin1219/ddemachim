@@ -7,4 +7,6 @@ import org.springframework.data.jpa.repository.JpaRepository;
 public interface PlaceOperatingHoursRepository extends JpaRepository<PlaceOperatingHours, Long> {
 
     List<PlaceOperatingHours> findByPlaceIdOrderByDayOfWeek(Long placeId);
+
+    List<PlaceOperatingHours> findByPlaceIdInAndDayOfWeek(List<Long> placeIds, short dayOfWeek);
 }
