@@ -79,6 +79,7 @@ import {
 } from '../utils/routeComparison.js';
 import { useRouteComparison } from '../hooks/useRouteComparison.js';
 import { useCoursePreview } from '../hooks/useCoursePreview.js';
+import { useCurrentLocation } from '../hooks/useCurrentLocation.js';
 import {
   createInitialMapHomeInteraction,
   mapHomeInteractionReducer,
