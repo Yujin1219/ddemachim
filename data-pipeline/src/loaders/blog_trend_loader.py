@@ -12,6 +12,8 @@ from src.models.place_dto import PlaceDTO
 
 NAVER_MAP_SOURCE = "NAVER_MAP"
 SEARCH_TREND_SOURCE = "NAVER_API_HUB_SEARCH_TREND"
+KAKAO_CATEGORY_CODES = {"CE7": "CAFE", "FD6": "RESTAURANT"}
+INTENT_CATEGORY_CODES = {"카페": "CAFE", "맛집": "RESTAURANT"}
 CANONICAL_METADATA_FIELDS = (
     "canonicalSource",
     "canonicalRoadAddress",
@@ -148,6 +150,152 @@ def _string_array(value: Any) -> list[str]:
     return output
 
 
+def _first_present(mapping: Mapping[str, Any], keys: Sequence[str]) -> Any:
+    for key in keys:
+        value = mapping.get(key)
+        if value not in (None, ""):
+            return value
+    return None
+
+
+def trend_intent_phrase(row: Mapping[str, Any]) -> str | None:
+    """Return the fixed cafe/restaurant query intent for one observation."""
+
+    for value in (
+        row.get("query"),
+        row.get("intent"),
+        row.get("intentCategory"),
+        row.get("intent_category"),
+    ):
+        text = _text(value)
+        if not text:
+            continue
+        matches = [phrase for phrase in INTENT_CATEGORY_CODES if phrase in text]
+        if len(matches) == 1:
+            return matches[0]
+        category = text.upper()
+        if category == "CAFE":
+            return "카페"
+        if category == "RESTAURANT":
+            return "맛집"
+    return None
+
+
+_KAKAO_MATCH_CONTAINER_KEYS = frozenset(
+    {
+        "matched_place",
+        "matchedPlace",
+        "matched_places",
+        "matchedPlaces",
+        "matched_kakao_place",
+        "matchedKakaoPlace",
+        "matched_kakao_places",
+        "matchedKakaoPlaces",
+        "local_validation",
+        "localValidation",
+        "kakao_validation",
+        "kakaoValidation",
+    }
+)
+_KAKAO_CATEGORY_CODE_KEYS = (
+    "category_group_code",
+    "categoryGroupCode",
+    "kakaoCategoryGroupCode",
+    "matchedCategoryGroupCode",
+)
+_KAKAO_CATEGORY_NAME_KEYS = (
+    "category_name",
+    "categoryName",
+    "kakaoCategoryName",
+    "matchedCategoryName",
+)
+
+
+def _matched_kakao_categories(
+    value: Any,
+    *,
+    matched_context: bool = False,
+) -> list[tuple[str, str | None]]:
+    found: list[tuple[str, str | None]] = []
+    if isinstance(value, Mapping):
+        context = matched_context or any(
+            key in value for key in ("matched_place_id", "matchedPlaceId")
+        )
+        if context:
+            raw_code = _text(_first_present(value, _KAKAO_CATEGORY_CODE_KEYS)).upper()
+            raw_name = _optional_text(_first_present(value, _KAKAO_CATEGORY_NAME_KEYS))
+            category = KAKAO_CATEGORY_CODES.get(raw_code)
+            if category is None and raw_name:
+                if "카페" in raw_name:
+                    category = "CAFE"
+                elif "음식점" in raw_name:
+                    category = "RESTAURANT"
+            if category:
+                found.append((category, raw_name))
+        for key, child in value.items():
+            found.extend(
+                _matched_kakao_categories(
+                    child,
+                    matched_context=context or key in _KAKAO_MATCH_CONTAINER_KEYS,
+                )
+            )
+    elif isinstance(value, Sequence) and not isinstance(value, (str, bytes)):
+        for child in value:
+            found.extend(_matched_kakao_categories(child, matched_context=matched_context))
+    return found
+
+
+def _unique_post_intent_counts(evidence: Mapping[str, Any]) -> dict[str, int]:
+    configured = evidence.get("uniquePostCountsByIntent")
+    if isinstance(configured, Mapping):
+        counts = {"카페": 0, "맛집": 0}
+        for raw_intent, raw_count in configured.items():
+            intent = trend_intent_phrase({"intent": raw_intent})
+            if intent is None:
+                continue
+            try:
+                counts[intent] += max(0, int(raw_count))
+            except (TypeError, ValueError):
+                continue
+        if any(counts.values()):
+            return counts
+
+    rows = evidence.get("evidence", [])
+    if not isinstance(rows, Sequence) or isinstance(rows, (str, bytes)):
+        return {}
+    urls_by_intent: dict[str, set[str]] = {"카페": set(), "맛집": set()}
+    for row in rows:
+        if not isinstance(row, Mapping):
+            continue
+        post_url = _text(_first_present(row, ("postUrl", "post_url", "link")))
+        intent = trend_intent_phrase(row)
+        if post_url and intent:
+            urls_by_intent[intent].add(post_url)
+    return {intent: len(urls) for intent, urls in urls_by_intent.items() if urls}
+
+
+def classify_trend_place_category(evidence: Mapping[str, Any]) -> tuple[str | None, str | None]:
+    """Classify a trend place conservatively as CAFE or RESTAURANT."""
+
+    matched_categories = list(dict.fromkeys(_matched_kakao_categories(evidence)))
+    matched_codes = {category for category, _raw_name in matched_categories}
+    if len(matched_codes) > 1:
+        return None, None
+    if matched_categories:
+        return matched_categories[0]
+
+    direct_category = _text(evidence.get("categoryCode")).upper()
+    if direct_category in KAKAO_CATEGORY_CODES.values():
+        return direct_category, _optional_text(evidence.get("categoryName"))
+
+    counts = _unique_post_intent_counts(evidence)
+    cafe_count = counts.get("카페", 0)
+    restaurant_count = counts.get("맛집", 0)
+    if cafe_count == restaurant_count or max(cafe_count, restaurant_count) <= 0:
+        return None, None
+    return ("CAFE", None) if cafe_count > restaurant_count else ("RESTAURANT", None)
+
+
 def _canonical_metadata(evidence: Mapping[str, Any]) -> Mapping[str, Any]:
     canonical_id = _text(evidence.get("canonicalPlaceId"))
     rows = evidence.get("evidence", [])
@@ -183,6 +331,7 @@ def naver_map_place_dto_from_evidence(evidence: Mapping[str, Any]) -> PlaceDTO |
     if not has_coordinates:
         latitude = None
         longitude = None
+    category_code, raw_category = classify_trend_place_category(evidence)
     return PlaceDTO(
         name=name,
         road_address=road_address,
@@ -190,13 +339,13 @@ def naver_map_place_dto_from_evidence(evidence: Mapping[str, Any]) -> PlaceDTO |
         latitude=latitude,
         longitude=longitude,
         phone=_optional_text(metadata.get("canonicalPhone")),
-        raw_category=None,
+        raw_category=raw_category,
         description=None,
         source=NAVER_MAP_SOURCE,
         source_id=source_id,
         district=extract_district(road_address),
         normalized_name=normalize_place_name(name),
-        category_code=None,
+        category_code=category_code,
         tags=["BLOG_TREND"],
         has_coordinates=has_coordinates,
     )
@@ -212,6 +361,7 @@ def _resolve_place_id(connection: Any, evidence: Mapping[str, Any]) -> int:
         LoadStats(),
         allow_blog_trend_naver_map_without_coordinates=True,
         allow_blog_trend_naver_map_address_match=True,
+        preserve_existing_category=True,
     )
     if place_id is None:
         raise BlogTrendPlaceResolutionError(

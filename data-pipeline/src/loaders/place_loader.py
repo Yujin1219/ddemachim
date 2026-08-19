@@ -82,12 +82,19 @@ def _insert_place(conn: psycopg.Connection, dto: PlaceDTO) -> int:
     return place_id
 
 
-def _update_place(conn: psycopg.Connection, place_id: int, dto: PlaceDTO, refresh_category: bool = False) -> None:
+def _update_place(
+    conn: psycopg.Connection,
+    place_id: int,
+    dto: PlaceDTO,
+    refresh_category: bool = False,
+    preserve_existing_category: bool = False,
+) -> None:
     """기존 값이 비어있는 필드만 채우는 보수적 업데이트(다른 소스가 이미 채운 값을 덮어쓰지 않음).
 
     category_id는 refresh_category=True(같은 소스 재동기화)일 때만 최신 매핑으로 덮어쓴다.
     AUTO_MATCH(다른 소스가 준 값으로 병합)일 때는 다른 소스의 분류를 함부로 덮어쓰지 않기 위해
-    COALESCE로만 채운다.
+    COALESCE로만 채운다. preserve_existing_category=True이면 같은 소스 재동기화에서도
+    기존 분류를 보존하고 비어 있을 때만 채운다.
     """
     category_id = _get_category_id(conn, dto.category_code) if dto.category_code else None
     tags = _dto_tags(dto)
@@ -99,7 +106,11 @@ def _update_place(conn: psycopg.Connection, place_id: int, dto: PlaceDTO, refres
                 road_address = COALESCE(road_address, %s),
                 lot_address = COALESCE(lot_address, %s),
                 description = COALESCE(description, %s),
-                category_id = CASE WHEN %s THEN COALESCE(%s, category_id) ELSE COALESCE(category_id, %s) END,
+                category_id = CASE
+                    WHEN %s THEN COALESCE(category_id, %s)
+                    WHEN %s THEN COALESCE(%s, category_id)
+                    ELSE COALESCE(category_id, %s)
+                END,
                 tags = CASE
                     WHEN %s::text[] IS NULL THEN tags
                     ELSE ARRAY(
@@ -113,6 +124,7 @@ def _update_place(conn: psycopg.Connection, place_id: int, dto: PlaceDTO, refres
             """,
             (
                 dto.phone, dto.road_address, dto.lot_address, dto.description,
+                preserve_existing_category, category_id,
                 refresh_category, category_id, category_id,
                 tags, tags,
                 place_id,
@@ -206,6 +218,7 @@ def load_place(
     *,
     allow_blog_trend_naver_map_without_coordinates: bool = False,
     allow_blog_trend_naver_map_address_match: bool = False,
+    preserve_existing_category: bool = False,
 ) -> int | None:
     """DTO 1건을 idempotent하게 적재한다. 같은 (source, source_id) 재실행 시 update만 한다.
 
@@ -215,7 +228,13 @@ def load_place(
     """
     existing_place_id = _find_existing_source(conn, dto.source, dto.source_id)
     if existing_place_id is not None:
-        _update_place(conn, existing_place_id, dto, refresh_category=True)
+        _update_place(
+            conn,
+            existing_place_id,
+            dto,
+            refresh_category=True,
+            preserve_existing_category=preserve_existing_category,
+        )
         _upsert_place_source(conn, existing_place_id, dto)
         stats.updated += 1
         return existing_place_id
