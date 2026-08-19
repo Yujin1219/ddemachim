@@ -18,8 +18,7 @@ public record PlaceSummaryResponse(
         List<String> filmingContentTypes,
         String thumbnailUrl) {
 
-    public static PlaceSummaryResponse of(
-            Place place, List<String> filmingContentTypes, String thumbnailUrl) {
+    public static PlaceSummaryResponse of(Place place, List<String> filmingContentTypes) {
         Double latitude = place.getLocation() != null ? place.getLocation().getY() : null;
         Double longitude = place.getLocation() != null ? place.getLocation().getX() : null;
 
@@ -35,6 +34,6 @@ public record PlaceSummaryResponse(
                 place.getPhone(),
                 place.getTags(),
                 filmingContentTypes,
-                thumbnailUrl);
+                place.getImageUrl());
     }
 }

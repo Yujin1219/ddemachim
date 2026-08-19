@@ -64,6 +64,15 @@ public class Place {
     @Column(columnDefinition = "text")
     private String description;
 
+    @Column(name = "image_url", columnDefinition = "text")
+    private String imageUrl;
+
+    @Column(name = "image_source", length = 30)
+    private String imageSource;
+
+    @Column(name = "image_attribution", columnDefinition = "text")
+    private String imageAttribution;
+
     /** 요일별로 구조화하기 애매한 원문 운영시간(구조화된 값은 PlaceOperatingHours 참고). */
     @Column(name = "operating_hours_raw", columnDefinition = "text")
     private String operatingHoursRaw;

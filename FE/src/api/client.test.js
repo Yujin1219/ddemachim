@@ -208,3 +208,47 @@ test('fetchRouteComparison sends only origin and destination and preserves abort
     globalThis.fetch = originalFetch;
   }
 });
+
+test('fetchCoursePreview posts the exact authenticated draft and preserves abort', async () => {
+  const client = await import('./client.js');
+  assert.equal(typeof client.fetchCoursePreview, 'function', 'course preview API function must exist');
+
+  const originalFetch = globalThis.fetch;
+  const originalWindow = globalThis.window;
+  const localStorage = createStorage({ accessToken: 'course-token' });
+  const controller = new AbortController();
+  const payload = {
+    serviceDate: '2026-08-18',
+    desiredStartTime: '10:00',
+    desiredEndTime: '18:00',
+    start: {
+      type: 'SEARCHED_PLACE',
+      name: '안국역 1번 출구',
+      latitude: 37.5763,
+      longitude: 126.9854,
+    },
+    places: [
+      { basketItemId: 11, dwellMinutes: 45, arrivalDeadline: '15:00' },
+      { basketItemId: 12, dwellMinutes: 60, arrivalDeadline: null },
+    ],
+  };
+  let request;
+  globalThis.window = { localStorage };
+  globalThis.fetch = async (url, options) => {
+    request = { url, options };
+    return successResponse({ options: [] });
+  };
+
+  try {
+    await client.fetchCoursePreview(payload, { signal: controller.signal });
+
+    assert.equal(request.url, '/api/courses/preview');
+    assert.equal(request.options.method, 'POST');
+    assert.equal(request.options.headers.get('Authorization'), 'Bearer course-token');
+    assert.deepEqual(JSON.parse(request.options.body), payload);
+    assert.equal(request.options.signal, controller.signal);
+  } finally {
+    globalThis.fetch = originalFetch;
+    globalThis.window = originalWindow;
+  }
+});

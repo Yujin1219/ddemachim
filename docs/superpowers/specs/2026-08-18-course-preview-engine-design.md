@@ -1,14 +1,15 @@
 # 코스 미리보기 계산 엔진 설계
 
-- 상태: 사용자 방향 승인 완료, 구현 전 최종 검토
+- 상태: FAST 미리보기 기준선 구현 완료, EASY/PLEASANT 및 DEM 연동은 후속 범위
 - 작성일: 2026-08-18
 - 적용 범위: `data-pipeline/**`, `BE/**`, `FE/**`
 
 ## 1. 목표
 
-사용자가 코스 장바구니 장소, 출발 위치, 진행 날짜, 희망 시작·종료 시각,
-장소별 체류시간과 도착 마감 시각을 제출하면 서버가 `FAST`, `EASY`,
-`PLEASANT` 세 방문 순서 후보를 계산해 반환한다.
+현재 구현된 기준선은 사용자가 코스 장바구니 장소, 출발 위치, 진행 날짜,
+희망 시작·종료 시각, 장소별 체류시간과 도착 마감 시각을 제출하면 서버가
+`FAST` 방문 순서 후보 하나를 계산해 반환한다. 아래 `EASY`, `PLEASANT`, DEM 및
+혼잡도 설계는 후속 구현 목표다.
 
 - `FAST`: 전체 이동시간을 우선 최소화한다.
 - `EASY`: 이동시간에 도보거리, 환승, DEM 기반 누적 오르막과 급경사 구간
@@ -22,7 +23,7 @@
 - 코스 입력 계약: `CoursePreviewRequest`
 - 코스 응답 계약: `CoursePreviewResponse`
 - 장바구니 장소 검증: `CoursePreviewInputResolver`
-- 구간 경로: 기존 TMAP 기반 `RouteComparisonService`
+- 구간 경로: 기존 TMAP 기반 `RouteProviderClient`
 - 장소 운영시간: `place_operating_hours`
 - 장소 혼잡도: 기존 Redis 기반 mock 혼잡도 서비스의 좌표 일괄 조회
 - DEM 원본: `/Users/yujin/Project/jongro_gu.tif`
@@ -36,16 +37,68 @@
 
 ### 3.1 엔드포인트
 
-`POST /api/v1/courses/previews`
+`POST /api/courses/preview`
 
 - 인증 회원 ID는 `@AuthenticationPrincipal Long memberId`에서 가져온다.
-- 요청 본문은 기존 `CoursePreviewRequest`를 사용한다.
+- `/api/courses/**`는 인증이 필요하다. Authorization 헤더가 없으면 `401
+  COMMON401` 공통 오류 응답을 반환하며, 유효하지 않거나 만료된 액세스 토큰은
+  인증 도메인의 세부 코드를 반환한다.
+- 요청 본문은 `CoursePreviewRequest`를 사용한다. `serviceDate`는 ISO 날짜
+  (`yyyy-MM-dd`), 시각은 ISO 로컬 시각(`HH:mm` 또는 초 포함 형식)이다.
+- `places`는 1개 이상 5개 이하이며 `basketItemId`는 중복할 수 없다. 각 항목의
+  `dwellMinutes`는 1~1440분이다. 종료 희망 시각은 출발 희망 시각보다 늦어야 한다.
+- `start.type`이 `SEARCHED_PLACE`이면 비어 있지 않은 `name`이 필요하다. 위도는
+  -90~90, 경도는 -180~180 범위여야 한다.
 - 응답은 `ApiResponse<CoursePreviewResponse>`로 감싼다.
-- 한 요청에 허용할 장소 수는 설정값으로 제한하며 기본값은 10개다.
+- HTTP 200 성공 응답은 현재 `options`에 `strategy: FAST`인 항목 하나만 담는다.
+- 이 API는 코스, 선택 전략 또는 공급자 응답을 영속화하지 않는다. 선택 코스 저장은
+  별도 후속 API 범위다.
+
+요청 예시:
+
+```json
+{
+  "serviceDate": "2026-08-18",
+  "desiredStartTime": "10:00",
+  "desiredEndTime": "18:00",
+  "start": {
+    "type": "CURRENT_LOCATION",
+    "name": "현재 위치",
+    "latitude": 37.5665,
+    "longitude": 126.9780
+  },
+  "places": [
+    {
+      "basketItemId": 10,
+      "dwellMinutes": 60,
+      "arrivalDeadline": "11:00"
+    }
+  ]
+}
+```
 
 ### 3.2 응답 보강
 
-각 `Option`은 계산 성공 여부와 불가능 사유를 명시한다.
+현재 FAST 기준선의 `Option`은 합계와 방문 순서가 정해진 `stops`를 반환한다.
+
+- `totalDurationMinutes`, `totalTravelMinutes`, `travelMinutesFromPrevious`는 초 단위
+  공급자 값을 분으로 올림한다.
+- 각 stop의 `incomingRoute`는 해당 장소를 선택할 때 TMAP이 반환한 `RouteOption`을
+  다시 조회하거나 축약하지 않고 그대로 포함한다.
+- `incomingRoute`는 `mode`, `status`, `durationSeconds`, `distanceMeters`, `fareWon`,
+  `transferCount`, `walkDistanceMeters`, `unavailableReason`, `legs`를 포함한다.
+- 각 leg는 `mode`, `routeName`, `durationSeconds`, `distanceMeters`, GeoJSON
+  `LineString` geometry와 `steps`를 포함한다. TMAP 대중교통의 `WALK` leg는 원래
+  순서의 도보 step을 보존하며, 각 step은 `streetName`, `distanceMeters`,
+  `description`, geometry를 포함할 수 있다. 좌표 순서는 `[longitude, latitude]`다.
+- 경로 거리는 우선 `incomingRoute.distanceMeters`를 사용하고, 값이 없을 때 모든
+  leg 거리가 있으면 그 합을 사용한다. 한 구간의 거리를 알 수 없으면 코스 전체
+  `totalDistanceMeters`도 `null`이다.
+- 현재 미구현인 `totalAscentMeters`, `averageCongestionScore`, stop의
+  `ascentMeters`, `congestionScore`, `eventId`, `eventEndTime`은 `null`이다.
+
+후속 다중 전략 구현에서는 각 `Option`에 계산 성공 여부와 불가능 사유를 명시하는
+아래 계약을 별도로 도입한다. 현재 응답에는 이 필드가 없다.
 
 - `status`: `AVAILABLE`, `UNAVAILABLE`
 - `unavailableReasons`: 종료 희망 시각 초과, 운영시간 위반, 도착 마감 위반,
@@ -111,7 +164,24 @@ fallback한다. 응답 설명에는 DEM 미지원 구간이 있음을 표시한�
 
 ### 6.1 호출량 제한
 
-모든 순열이나 모든 장소 쌍에 대해 TMAP을 호출하지 않는다.
+현재 FAST 기준선은 매 방문 순서에서 남은 장소까지의 대중교통 경로를 순차 조회하고,
+가용 후보 중 이동시간이 가장 짧은 장소를 선택하는 greedy nearest-neighbor 방식이다.
+따라서 장소 수가 `n`이면 공급자 호출은 최악의 경우 `n(n+1)/2`회이며, 5개 제한에서
+최대 15회다. 호출은 순차적이고 기본 TMAP read timeout이 4초이므로 공급자 지연 시
+최악 응답 시간이 약 60초에 접근할 수 있다.
+
+이 greedy 방식은 현재 위치에서 선택 가능한 최단 후보를 확정한 뒤 되돌리지 않는다.
+따라서 다른 방문 순서는 전체 제약을 만족하더라도 greedy로 선택한 순서의 후속 장소가
+운영시간, 도착 마감 또는 희망 종료 시각을 만족하지 못하면 `COURSE4222`가 발생할 수
+있다. 아래 후보 생성과 2-opt는 이 한계를 완화할 후속 설계다.
+
+현재 알려진 공급자 숫자 경계 동작은 다음과 같다.
+
+- `durationSeconds`가 0 이하인 경로는 사용할 수 없는 후보로 처리한다.
+- 공급자의 top-level `distanceMeters`가 음수이면 현재 별도 정규화 없이 stop 및 코스
+  합계에 반영될 수 있다. 운영 모니터링과 후속 입력 강화가 필요하다.
+
+후속 다중 전략에서는 모든 순열이나 모든 장소 쌍에 대해 TMAP을 호출하지 않는다.
 
 1. 출발점과 장소 좌표로 직선거리 행렬을 만든다.
 2. 전략별 greedy insertion으로 초기 순서를 만든다.
@@ -155,10 +225,10 @@ fallback한다. 응답 설명에는 DEM 미지원 구간이 있음을 표시한�
 5. 체류시간을 더해 예정 출발 시각을 계산한다.
 6. 실제 또는 데모 운영 종료 시각과 희망 종료 시각을 넘는지 검증한다.
 
-실제 장소는 요청 날짜의 `place_operating_hours`를 사용한다. 해당 날짜의 구조화된
-운영시간이 없거나 사용자 장소라면 설정의 `DEMO_DEFAULT`를 적용한다. 초기 기본값은
-`09:00~22:00`이며 환경별로 재정의 가능하다. 휴무 데이터가 명시된 장소는 해당
-후보에서 방문 불가다.
+실제 장소는 요청 날짜의 `place_operating_hours`를 사용한다. 해당 요일의 구조화된
+운영시간이 없거나 사용자 장소라면 현재 고정된 `DEMO_DEFAULT` 09:00~22:00을
+적용한다. 휴무 데이터가 명시된 장소는 해당 후보에서 방문 불가다. 환경별 설정 전환은
+후속 범위다.
 
 사용자가 입력한 도착 마감보다 일찍 도착하는 것은 허용한다. 정확히 10분 전까지
 기다리게 만들지는 않으며, 10분 전은 늦어도 도착해야 하는 상한이다.
@@ -175,8 +245,17 @@ fallback한다. 응답 설명에는 DEM 미지원 구간이 있음을 표시한�
 
 ## 9. 컴포넌트 경계
 
-- `CoursePreviewController`: 인증, 검증, 응답 래핑
-- `CoursePreviewService`: 전체 유스케이스 조율
+- `CoursePreviewController`: 인증 principal, `@Valid` 요청 검증, 응답 래핑
+- `CoursePreviewService`: 입력 해석 → FAST 계획 → 응답 매핑을 조율하며 추가 공급자
+  호출이나 영속화를 하지 않는다.
+- `CoursePreviewInputResolver`: 인증 회원 소유 장바구니 항목, 좌표, 체류시간과
+  요청 날짜의 운영시간을 해석한다. 운영시간이 없거나 사용자 장소이면
+  `DEMO_DEFAULT` 09:00~22:00을 적용한다.
+- `CourseFastPlanner`: TMAP 대중교통 경로로 FAST greedy 순서를 계산하고 운영시간,
+  도착 마감 10분 버퍼, 체류시간과 희망 종료 시각을 검증한다.
+
+아래 컴포넌트는 EASY/PLEASANT 및 DEM 후속 범위다.
+
 - `CourseRouteCandidateGenerator`: 좌표 기반 후보 순서 생성
 - `CourseScheduleEvaluator`: 이동·운영시간·마감·체류시간 일정 계산
 - `CourseStrategyScorer`: 세 전략별 점수 계산
@@ -192,7 +271,9 @@ PostgreSQL 또는 Redis 없이 결정론적으로 검증한다.
 
 `#/course-conditions`에서 출발 위치·날짜·시간을 확정하고
 `#/course-place-times`에서 체류시간·도착 마감을 확정한 뒤
-`POST /api/v1/courses/previews`를 호출한다.
+호출할 현재 백엔드 연동 경로는 `POST /api/courses/preview`다.
+
+아래 다중 전략 UI 연결은 후속 범위다.
 
 - 입력 상태는 두 화면 사이에서 상위 코스 흐름 상태로 보존한다.
 - 로딩 중 중복 요청을 막는다.
@@ -202,7 +283,29 @@ PostgreSQL 또는 Redis 없이 결정론적으로 검증한다.
 
 ## 11. 오류 처리
 
-- 장바구니 소유권/누락: 기존 course error 사용
+- 인증 누락: HTTP 401, `COMMON401`
+- Bean Validation 실패: HTTP 400, `COMMON400`, `result`에 필드별 안전한 메시지
+- 잘못된 JSON 또는 날짜·시각 역직렬화 실패: HTTP 400, `COMMON400`, `result` 생략
+- 서비스 계층의 잘못된 미리보기 입력: HTTP 400, `COURSE4001`
+- 인증 회원 소유 장바구니 항목 누락: HTTP 404, `COURSE4041`
+- 장소 좌표 누락: HTTP 422, `COURSE4221`
+- FAST 경로 제공 실패 또는 현재 greedy 순서에서 제약을 만족하는 다음 장소가 없음:
+  HTTP 422, `COURSE4222`
+
+모든 오류는 다음 공통 envelope를 사용하고 내부 예외나 공급자 원문은 노출하지 않는다.
+`result`가 `null`이면 JSON에서 생략되며, Bean Validation 실패일 때만 필드별 메시지
+객체가 포함될 수 있다.
+
+```json
+{
+  "isSuccess": false,
+  "code": "COMMON400",
+  "message": "잘못된 요청입니다."
+}
+```
+
+다음 항목은 후속 다중 전략 및 DEM 구현 범위다.
+
 - DEM 테이블 미적재: `EASY`만 fallback하고 경고 설명 제공
 - TMAP 전체 실패: 해당 후보 `UNAVAILABLE`
 - 운영시간/도착 마감/종료 희망 위반: 안전한 불가능 사유 코드 제공

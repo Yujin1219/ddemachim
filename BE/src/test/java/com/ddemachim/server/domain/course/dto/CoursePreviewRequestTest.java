@@ -73,6 +73,41 @@ class CoursePreviewRequestTest {
     }
 
     @Test
+    void rejectsMoreThanFivePlaces() {
+        CoursePreviewRequest request = new CoursePreviewRequest(
+                LocalDate.of(2026, 8, 18),
+                LocalTime.of(10, 0),
+                LocalTime.of(18, 0),
+                currentLocation(),
+                List.of(
+                        place(1L, 30, null),
+                        place(2L, 30, null),
+                        place(3L, 30, null),
+                        place(4L, 30, null),
+                        place(5L, 30, null),
+                        place(6L, 30, null)));
+
+        assertThat(paths(validator.validate(request))).contains("places");
+    }
+
+    @Test
+    void acceptsExactlyFivePlaces() {
+        CoursePreviewRequest request = new CoursePreviewRequest(
+                LocalDate.of(2026, 8, 18),
+                LocalTime.of(10, 0),
+                LocalTime.of(18, 0),
+                currentLocation(),
+                List.of(
+                        place(1L, 30, null),
+                        place(2L, 30, null),
+                        place(3L, 30, null),
+                        place(4L, 30, null),
+                        place(5L, 30, null)));
+
+        assertThat(validator.validate(request)).isEmpty();
+    }
+
+    @Test
     void searchedPlaceRequiresNameAndCoordinatesMustBeBounded() {
         CoursePreviewRequest.Start searchedWithoutName = new CoursePreviewRequest.Start(
                 CourseStartType.SEARCHED_PLACE, " ", 91.0, 181.0);

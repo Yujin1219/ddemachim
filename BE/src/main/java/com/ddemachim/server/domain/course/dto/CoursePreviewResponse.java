@@ -3,6 +3,7 @@ package com.ddemachim.server.domain.course.dto;
 import com.ddemachim.server.domain.course.enums.CourseDwellSource;
 import com.ddemachim.server.domain.course.enums.CourseHoursSourceType;
 import com.ddemachim.server.domain.course.enums.CourseRouteStrategy;
+import com.ddemachim.server.domain.route.dto.RouteComparisonResponse.RouteOption;
 import io.swagger.v3.oas.annotations.media.Schema;
 import java.math.BigDecimal;
 import java.time.Instant;
@@ -67,6 +68,7 @@ public record CoursePreviewResponse(
             @Schema(description = "적용한 운영 시작 시각", example = "09:00") LocalTime openTime,
             @Schema(description = "적용한 운영 종료 시각", example = "18:00") LocalTime closeTime,
             @Schema(description = "연결된 팝업·행사 ID. 없으면 null", example = "20") Long eventId,
-            @Schema(description = "팝업·행사 종료 시각 스냅샷. 없으면 null", example = "17:30") LocalTime eventEndTime) {
+            @Schema(description = "팝업·행사 종료 시각 스냅샷. 없으면 null", example = "17:30") LocalTime eventEndTime,
+            @Schema(description = "직전 지점에서 현재 장소까지의 원본 TMAP 경로") RouteOption incomingRoute) {
     }
 }

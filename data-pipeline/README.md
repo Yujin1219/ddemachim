@@ -92,6 +92,67 @@ PostgreSQL + PostGIS(`geometry(Point, 4326)`). 스키마는 [`src/db/schema.sql`
 | `filming_location` | place ↔ media_content N:M(촬영지-작품, 매칭 신뢰도 포함) |
 | `source_raw_data` | 모든 API/CSV 원본 응답 보존(raw → staging 단계 추적, 재현/디버깅용) |
 
+### 종로구 1m DEM 적재
+
+`scripts/load_dem_postgis.py`는 `/Users/yujin/Project/jongro_gu.tif`의 고도 밴드를
+검증·정제해 고정 대상 `public.dem_jongno`만 교체한다. 원본은 6576×7388,
+EPSG:5186과 의미상 동일한 CRS, 1m north-up grid, Float32 고도 band 1과 alpha
+band 2여야 한다. alpha가 0인 픽셀은 `-9999` NoData로 바꾸고 고도 band 하나만
+in-db 256×256 tile로 적재한다. 유효 픽셀에 이미 `-9999`가 있으면 DB 작업 전에
+중단한다. 대상 schema/table을 CLI로 바꿀 수 없으며 `.env`를 읽지 않는다.
+
+PostgreSQL 18/PostGIS 3.6과 맞춘 임시 도구 이미지를 빌드한다.
+
+```bash
+docker build --platform linux/amd64 \
+  -f data-pipeline/docker/dem-loader.Dockerfile \
+  -t ddemachim-dem-loader:pg18-postgis36 \
+  data-pipeline
+```
+
+DB 값은 현재 프로세스의 명시적 `PG*` 변수만 전달한다. 비밀번호 인증을 쓰는
+환경에서만 `-e PGPASSWORD`를 추가한다. 원본 mount는 read-only이고 정제본은
+컨테이너 종료 시 사라지는 `/work` tmpfs에만 존재한다.
+
+```bash
+docker run --rm --platform linux/amd64 \
+  --network ddemachim_default \
+  --mount type=bind,source=/Users/yujin/Project/jongro_gu.tif,target=/input/jongro_gu.tif,readonly \
+  --mount type=tmpfs,destination=/work,tmpfs-size=1073741824 \
+  -e DEM_WORK_DIR=/work \
+  -e PGHOST=ddemachim-db \
+  -e PGPORT=5432 \
+  -e PGDATABASE=ddemachim \
+  -e PGUSER=postgres \
+  ddemachim-dem-loader:pg18-postgis36 \
+  /input/jongro_gu.tif
+```
+
+로컬 `ddemachim-db`가 TCP password 인증을 요구하지만 비밀번호를 프로세스에
+전달하지 않는 경우에는 DB container 내부의 `psql`을 사용하는 고정 executor를
+사용한다. 이 경로는 `-h`를 지정하지 않으므로 DB container에 `PGHOST`가 설정되어
+있다면 실행 전에 그 값이 다른 server로 연결을 전환하지 않는지 확인한다. 이 모드는 image,
+network, DB container(`ddemachim-db`), DB(`ddemachim`), user(`postgres`)를 바꿀
+수 없고, loader container의 검증된 SQL stdout을 `docker exec -i ... psql` stdin으로
+직접 연결한다. 두 프로세스는 `shell=False`로 실행되며 각각의 종료 코드를 확인한다.
+
+```bash
+python3 data-pipeline/scripts/load_dem_postgis.py \
+  --local-docker-exec \
+  /Users/yujin/Project/jongro_gu.tif
+```
+
+스크립트는 `raster2pgsql -s 5186 -b 1 -t 256x256 -d -I -C -M -k`의 SQL을
+`psql -X -v ON_ERROR_STOP=1`로 전달하며 `-R`과 `-e`를 사용하지 않는다. 재실행은
+같은 table을 drop/create transaction으로 교체한다. `-M`의 vacuum은 transaction
+commit 뒤 실행되므로 vacuum 단계만 실패한 경우에도 table 교체는 완료됐을 수 있다.
+이때 오류가 그대로 보고되며 동일 명령을 다시 실행해 안전하게 수렴할 수 있다.
+`-k`는 완전히 NoData인 tile도 보존해 원본 6576×7388 grid가 754개 row와
+48,583,488개 저장 pixel로 재현되도록 한다. 이를 빼면 raster2pgsql 기본 동작이
+완전한 NoData tile을 생략하므로 Jongno 경계 형태에서는 row 수가 더 적어진다.
+현재 검증된 결과는 327개 all-NoData tile, extent
+`BOX(195488 551809,202064 559197)`, raster GiST index, 13개 raster constraint를 갖는다.
+
 ## 중복 장소 판별(매칭) 로직
 
 [`src/matchers/place_matcher.py`](src/matchers/place_matcher.py). 이름만으로 절대 병합하지 않는다.

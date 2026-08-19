@@ -6,6 +6,12 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import com.ddemachim.server.domain.course.enums.CourseDwellSource;
 import com.ddemachim.server.domain.course.enums.CourseHoursSourceType;
 import com.ddemachim.server.domain.course.enums.CourseRouteStrategy;
+import com.ddemachim.server.domain.route.dto.RouteComparisonResponse.LineStringGeometry;
+import com.ddemachim.server.domain.route.dto.RouteComparisonResponse.RouteLeg;
+import com.ddemachim.server.domain.route.dto.RouteComparisonResponse.RouteOption;
+import com.ddemachim.server.domain.route.dto.RouteComparisonResponse.RouteStep;
+import com.ddemachim.server.domain.route.enums.RouteMode;
+import com.ddemachim.server.domain.route.enums.RouteStatus;
 import java.math.BigDecimal;
 import java.time.Instant;
 import java.time.LocalDate;
@@ -74,6 +80,19 @@ class CoursePreviewResponseTest {
                 .isEmpty();
     }
 
+    @Test
+    void exposesTheExactIncomingRouteWithWalkStepsAndGeometry() {
+        RouteOption incomingRoute = incomingRoute();
+
+        CoursePreviewResponse.Stop stop = stop(incomingRoute);
+
+        assertThat(stop.incomingRoute()).isSameAs(incomingRoute);
+        assertThat(stop.incomingRoute().legs().getFirst().steps().getFirst().description())
+                .isEqualTo("횡단보도를 건너 직진");
+        assertThat(stop.incomingRoute().legs().getFirst().steps().getFirst().geometry().coordinates())
+                .containsExactly(List.of(126.9780, 37.5665), List.of(126.9790, 37.5675));
+    }
+
     private static CoursePreviewResponse.Option option(CourseRouteStrategy strategy) {
         return new CoursePreviewResponse.Option(
                 strategy,
@@ -89,6 +108,10 @@ class CoursePreviewResponseTest {
     }
 
     private static CoursePreviewResponse.Stop stop() {
+        return stop(incomingRoute());
+    }
+
+    private static CoursePreviewResponse.Stop stop(RouteOption incomingRoute) {
         return new CoursePreviewResponse.Stop(
                 1,
                 10L,
@@ -111,6 +134,25 @@ class CoursePreviewResponseTest {
                 LocalTime.of(9, 0),
                 LocalTime.of(18, 0),
                 20L,
-                LocalTime.of(17, 30));
+                LocalTime.of(17, 30),
+                incomingRoute);
+    }
+
+    private static RouteOption incomingRoute() {
+        LineStringGeometry geometry = new LineStringGeometry(List.of(
+                List.of(126.9780, 37.5665),
+                List.of(126.9790, 37.5675)));
+        RouteStep step = new RouteStep("세종대로", 180, "횡단보도를 건너 직진", geometry);
+        RouteLeg leg = new RouteLeg(RouteMode.WALK, "도보", 120, 180, geometry, List.of(step));
+        return new RouteOption(
+                RouteMode.TRANSIT,
+                RouteStatus.AVAILABLE,
+                120,
+                180,
+                0,
+                0,
+                180,
+                null,
+                List.of(leg));
     }
 }

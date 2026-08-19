@@ -1,6 +1,7 @@
 package com.ddemachim.server.global.config;
 
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
@@ -14,6 +15,7 @@ import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc;
+import org.springframework.http.MediaType;
 import org.springframework.test.web.servlet.MockMvc;
 
 @SpringBootTest
@@ -70,6 +72,67 @@ class SecurityConfigTest {
                         .header("Authorization", "Bearer " + expiredToken()))
                 .andExpect(status().isUnauthorized())
                 .andExpect(jsonPath("$.code").value("AUTH4013"));
+    }
+
+    @Test
+    void 토큰이_없으면_코스_미리보기_API는_인증_오류를_반환한다() throws Exception {
+        mockMvc.perform(post("/api/courses/preview")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{}"))
+                .andExpect(status().isUnauthorized())
+                .andExpect(jsonPath("$.isSuccess").value(false))
+                .andExpect(jsonPath("$.code").value("COMMON401"));
+    }
+
+    @Test
+    void 코스_장바구니_API의_기존_인증_보호를_유지한다() throws Exception {
+        mockMvc.perform(get("/api/course-basket/places"))
+                .andExpect(status().isUnauthorized())
+                .andExpect(jsonPath("$.code").value("COMMON401"));
+    }
+
+    @Test
+    void 유효한_토큰은_코스_미리보기의_요청_검증까지_도달한다() throws Exception {
+        mockMvc.perform(post("/api/courses/preview")
+                        .header("Authorization", "Bearer " + validToken())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{}"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.isSuccess").value(false))
+                .andExpect(jsonPath("$.code").value("COMMON400"));
+    }
+
+    @Test
+    void 잘못된_토큰으로_코스_미리보기를_호출하면_기존_오류를_유지한다() throws Exception {
+        mockMvc.perform(post("/api/courses/preview")
+                        .header("Authorization", "Bearer malformed-token")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{}"))
+                .andExpect(status().isUnauthorized())
+                .andExpect(jsonPath("$.code").value("AUTH4012"));
+    }
+
+    @Test
+    void 만료된_토큰으로_코스_미리보기를_호출하면_기존_오류를_유지한다() throws Exception {
+        mockMvc.perform(post("/api/courses/preview")
+                        .header("Authorization", "Bearer " + expiredToken())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{}"))
+                .andExpect(status().isUnauthorized())
+                .andExpect(jsonPath("$.code").value("AUTH4013"));
+    }
+
+    private String validToken() {
+        SecretKey signingKey = Keys.hmacShaKeyFor(TEST_SECRET.getBytes(StandardCharsets.UTF_8));
+        Instant issuedAt = Instant.now();
+        return Jwts.builder()
+                .setSubject("42")
+                .claim("memberId", 42L)
+                .claim("role", "ROLE_USER")
+                .setIssuedAt(Date.from(issuedAt))
+                .setExpiration(Date.from(issuedAt.plusSeconds(60)))
+                .signWith(signingKey)
+                .compact();
     }
 
     private String expiredToken() {

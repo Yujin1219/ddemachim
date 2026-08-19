@@ -29,8 +29,7 @@ public record PlaceDetailResponse(
 
     public static PlaceDetailResponse of(
             Place place,
-            List<PlaceOperatingHoursResponse> operatingHours,
-            List<PlaceImageResponse> images) {
+            List<PlaceOperatingHoursResponse> operatingHours) {
         Double latitude = place.getLocation() != null ? place.getLocation().getY() : null;
         Double longitude = place.getLocation() != null ? place.getLocation().getX() : null;
 
@@ -55,6 +54,6 @@ public record PlaceDetailResponse(
                 place.getAccessibility(),
                 place.getTags(),
                 operatingHours,
-                images);
+                PlaceImageResponse.from(place));
     }
 }

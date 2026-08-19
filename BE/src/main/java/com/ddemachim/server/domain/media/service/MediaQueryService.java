@@ -13,11 +13,8 @@ import com.ddemachim.server.domain.media.exception.InvalidMediaContentTypeExcept
 import com.ddemachim.server.domain.media.repository.FilmingLocationRepository;
 import com.ddemachim.server.domain.media.repository.MediaCreditRepository;
 import com.ddemachim.server.domain.media.repository.MediaContentRepository;
-import com.ddemachim.server.domain.place.entity.PlaceImage;
-import com.ddemachim.server.domain.place.repository.PlaceImageRepository;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
-import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -43,7 +40,6 @@ public class MediaQueryService {
     private final MediaContentRepository mediaContentRepository;
     private final MediaCreditRepository mediaCreditRepository;
     private final FilmingLocationRepository filmingLocationRepository;
-    private final PlaceImageRepository placeImageRepository;
 
     public Page<MediaContentSummaryResponse> search(Pageable pageable) {
         return mediaContentRepository.findAll(pageable).map(MediaContentSummaryResponse::from);
@@ -73,23 +69,13 @@ public class MediaQueryService {
                 mediaIds, PUBLIC_MATCH_STATUS, normalizedContentType);
 
         Map<Long, List<FilmingLocation>> rowsByMediaId = new LinkedHashMap<>();
-        Set<Long> placeIds = new LinkedHashSet<>();
         for (FilmingLocation row : filmingRows) {
             rowsByMediaId.computeIfAbsent(row.getMediaContent().getId(), ignored -> new ArrayList<>()).add(row);
-            placeIds.add(row.getPlace().getId());
-        }
-
-        Map<Long, String> thumbnailByPlaceId = new LinkedHashMap<>();
-        if (!placeIds.isEmpty()) {
-            for (PlaceImage image : placeImageRepository.findByPlaceIdInOrderByPlaceIdAscIdAsc(List.copyOf(placeIds))) {
-                thumbnailByPlaceId.putIfAbsent(image.getPlace().getId(), image.getSourceUrl());
-            }
         }
 
         return mediaPage.map(mediaContent -> toFilmingWorkSummary(
                 mediaContent,
-                rowsByMediaId.getOrDefault(mediaContent.getId(), List.of()),
-                thumbnailByPlaceId));
+                rowsByMediaId.getOrDefault(mediaContent.getId(), List.of())));
     }
 
     public List<FilmingLocationResponse> getFilmingLocationsByPlace(Long placeId) {
@@ -110,8 +96,7 @@ public class MediaQueryService {
 
     private FilmingWorkSummaryResponse toFilmingWorkSummary(
             MediaContent mediaContent,
-            List<FilmingLocation> rows,
-            Map<Long, String> thumbnailByPlaceId) {
+            List<FilmingLocation> rows) {
         List<String> contentTypes = rows.stream()
                 .map(FilmingLocation::getContentType)
                 .filter(value -> value != null && !value.isBlank())
@@ -123,7 +108,7 @@ public class MediaQueryService {
             Long placeId = row.getPlace().getId();
             distinctPlaces.putIfAbsent(
                     placeId,
-                    new RepresentativePlace(placeId, row.getPlace().getName(), thumbnailByPlaceId.get(placeId)));
+                    new RepresentativePlace(placeId, row.getPlace().getName(), row.getPlace().getImageUrl()));
         }
 
         return FilmingWorkSummaryResponse.of(

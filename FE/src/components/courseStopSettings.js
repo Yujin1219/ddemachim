@@ -21,6 +21,17 @@ export function createCourseStopSettings(items) {
   });
 }
 
+export function reconcileCourseStopSettings(items, currentSettings) {
+  const existingById = new Map(
+    (Array.isArray(currentSettings) ? currentSettings : [])
+      .map((setting) => [String(setting.basketItemId), setting]),
+  );
+  return createCourseStopSettings(items).map((created) => {
+    const existing = existingById.get(String(created.basketItemId));
+    return existing ? { ...existing, defaultDwellMinutes: created.defaultDwellMinutes } : created;
+  });
+}
+
 export function updateCourseStopSetting(settings, basketItemId, patch) {
   return (Array.isArray(settings) ? settings : []).map((setting) => {
     if (setting.basketItemId !== basketItemId) return setting;

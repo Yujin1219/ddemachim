@@ -13,6 +13,7 @@ public enum CourseErrorStatus implements BaseErrorCode {
     INVALID_PREVIEW_INPUT(HttpStatus.BAD_REQUEST, "COURSE4001", "코스 생성 요청값이 올바르지 않습니다."),
     BASKET_ITEM_NOT_FOUND(HttpStatus.NOT_FOUND, "COURSE4041", "코스 장바구니에서 장소를 찾을 수 없습니다."),
     PLACE_LOCATION_MISSING(HttpStatus.UNPROCESSABLE_CONTENT, "COURSE4221", "좌표가 없는 장소는 코스에 포함할 수 없습니다."),
+    FAST_PLAN_UNAVAILABLE(HttpStatus.UNPROCESSABLE_CONTENT, "COURSE4222", "조건에 맞는 빠른 코스를 생성할 수 없습니다."),
     ;
 
     private final HttpStatus httpStatus;

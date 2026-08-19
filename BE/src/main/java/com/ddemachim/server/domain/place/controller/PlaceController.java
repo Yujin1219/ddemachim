@@ -69,7 +69,7 @@ public class PlaceController {
 
     @Operation(
             summary = "장소 상세 조회",
-            description = "장소 id로 상세 정보(주소, 연락처, 설명, 운영시간, 이미지 목록 등)를 조회합니다. "
+            description = "장소 id로 상세 정보(주소, 연락처, 설명, 운영시간, 대표 이미지 정보 등)를 조회합니다. "
                     + "존재하지 않는 id면 404를 반환합니다.")
     @GetMapping("/{id}")
     public ApiResponse<PlaceDetailResponse> getDetail(

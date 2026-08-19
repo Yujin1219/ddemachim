@@ -35,6 +35,7 @@ public record CoursePreviewRequest(
                 Start start,
         @Schema(description = "코스에 포함할 장바구니 장소와 사용자 설정", requiredMode = Schema.RequiredMode.REQUIRED)
                 @NotEmpty(message = "코스에 포함할 장소가 한 개 이상 필요합니다.")
+                @Size(max = 5, message = "코스에 포함할 장소는 최대 5개입니다.")
                 List<@NotNull @Valid Place> places) {
 
     @AssertTrue(message = "종료 희망 시각은 출발 희망 시각보다 늦어야 합니다.")

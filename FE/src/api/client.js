@@ -179,6 +179,10 @@ export function fetchCourseBasketPlaces({ signal } = {}) {
   return request('/course-basket/places', { signal, auth: true });
 }
 
+export function fetchCoursePreview(payload, { signal } = {}) {
+  return post('/courses/preview', payload, { signal, auth: true });
+}
+
 export function fetchPlaceFilmingLocations(placeId) {
   return request(`/places/${placeId}/filming-locations`);
 }

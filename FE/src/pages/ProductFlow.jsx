@@ -51,6 +51,7 @@ import {
   RouteMotion,
 } from '../components/MotionAssets';
 import CourseHome from '../components/CourseHome';
+import CoursePreviewResults from '../components/CoursePreviewResults.js';
 import {
   createCourseConditionDefaults,
   formatCourseDateLabel,
@@ -59,9 +60,11 @@ import {
   normalizeCourseStartPlace,
 } from '../components/courseConditionsModel.js';
 import {
-  createCourseStopSettings,
+  buildCoursePreviewPlaces,
+  reconcileCourseStopSettings,
   updateCourseStopSetting,
 } from '../components/courseStopSettings.js';
+import { buildCoursePreviewRequest } from '../components/coursePreviewModel.js';
 import { CongestionBadge, CongestionPointBadge } from '../components/CongestionInfo';
 import ScrollOnboarding from '../components/ScrollOnboarding';
 import {
@@ -79,6 +82,7 @@ import {
 } from '../utils/routeComparison.js';
 import { useCurrentLocation } from '../hooks/useCurrentLocation.js';
 import { useRouteComparison } from '../hooks/useRouteComparison.js';
+import { useCoursePreview } from '../hooks/useCoursePreview.js';
 
 const routeGroups = {
   auth: ['splash', 'intro', 'login', 'signup', 'onboarding', 'onboarding-schedule', 'onboarding-permissions'],
@@ -2466,13 +2470,13 @@ function LiveTalk({ go }) {
   return <section className="phone standard-screen live-talk-screen"><BackHeader title="내 주변 지금톡" onBack={() => go('map')} /><main className="page-scroll"><div className="talk-hero"><CrowdMotion /><div><span>안국동 · 실시간</span><h2>지금 근처가 어떤가요?</h2><p>현장에 있는 사람들이 남긴 짧은 소식이에요.</p></div></div><div className="talk-presence"><i />지금 안국동에 6명이 있어요</div><div className="chat-list">{messages.map((message, index) => <p className={`chat-bubble ${message.mine ? 'mine' : 'other'}`} key={`${message.text}-${index}`}>{message.text}</p>)}</div></main><form className="talk-input" onSubmit={submit}><input value={draft} onChange={(event) => setDraft(event.target.value)} placeholder="지금 상황을 남겨보세요" /><button type="submit" aria-label="보내기" disabled={!draft.trim()}><SendHorizontal aria-hidden="true" size={19} strokeWidth={2} /></button></form></section>;
 }
 
-function CourseConditions({ go }) {
-  const initialSchedule = useMemo(() => createCourseConditionDefaults(), []);
+function CourseConditions({ go, draft, onContinue }) {
+  const initialSchedule = useMemo(() => draft || createCourseConditionDefaults(), [draft]);
   const [serviceDate, setServiceDate] = useState(initialSchedule.serviceDate);
   const [desiredStartTime, setDesiredStartTime] = useState(initialSchedule.desiredStartTime);
   const [desiredEndTime, setDesiredEndTime] = useState(initialSchedule.desiredEndTime);
-  const [startMode, setStartMode] = useState('current');
-  const [selectedStart, setSelectedStart] = useState(null);
+  const [startMode, setStartMode] = useState(draft?.start?.type === 'SEARCHED_PLACE' ? 'search' : 'current');
+  const [selectedStart, setSelectedStart] = useState(draft?.start || null);
   const [locationQuery, setLocationQuery] = useState('');
   const [locationResults, setLocationResults] = useState([]);
   const [searchStatus, setSearchStatus] = useState('idle');
@@ -2535,6 +2539,11 @@ function CourseConditions({ go }) {
     }
   };
 
+  const continueToStopSettings = () => {
+    if (!canContinue) return;
+    onContinue?.({ serviceDate, desiredStartTime, desiredEndTime, start: selectedStart });
+  };
+
   return (
     <section className="phone standard-screen course-condition-screen course-condition-sheet-v2">
       <main className="page-scroll">
@@ -2579,7 +2588,7 @@ function CourseConditions({ go }) {
       </main>
 
       <div className="sticky-actions">
-        <ActionButton disabled={!canContinue} onClick={() => go('course-place-times')}>다음</ActionButton>
+        <ActionButton disabled={!canContinue} onClick={continueToStopSettings}>다음</ActionButton>
         {!selectedStart && <p className="course-action-hint">출발 위치를 설정하면 다음으로 갈 수 있어요.</p>}
       </div>
 
@@ -2691,24 +2700,21 @@ function GuidanceMapState({ go, data }) {
   return <section className="phone travel-screen navigation-v3 guidance-map-state"><MapStage variant="navigation"><RouteMotion /><NavigationMapHeader go={go} subtitle={data.subtitle || '블루 모먼트 전시 팝업으로 이동'} count={data.count || '2 / 4'} back={data.back || 'progress'} /><NavigationDirections title={data.instructionTitle} copy={data.instructionCopy} /><section className="guidance-alert-card"><span>{data.kicker}</span><h1>{data.title}</h1><p>{data.copy}</p>{data.place && <article><img src={data.place.image} alt="" /><div><strong>{data.place.name}</strong><small>{data.place.meta}</small></div></article>}{data.detail && <div className="guidance-alert-detail"><strong>{data.detail}</strong><small>{data.source}</small></div>}{data.status && <div className="guidance-alert-detail"><strong>{data.status}</strong><small>{data.source}</small></div>}<ActionButton onClick={() => go(data.next)}>{data.button}</ActionButton></section></MapStage></section>;
 }
 
-function CoursePlaceTimes({ go, basketState, onRetry, onAuthRequired }) {
+function CoursePlaceTimes({ go, basketState, settings = [], onSettingsChange, onSubmit, previewStatus, onRetry, onAuthRequired }) {
   const { items = [], status = 'loading' } = basketState || {};
-  const [settings, setSettings] = useState(() => createCourseStopSettings(items));
   const isReady = status === 'success';
   const count = items.length;
 
-  useEffect(() => {
-    setSettings(createCourseStopSettings(items));
-  }, [items]);
-
   const updateSetting = (basketItemId, patch) => {
-    setSettings((current) => updateCourseStopSetting(current, basketItemId, patch));
+    onSettingsChange?.(basketItemId, patch);
   };
 
   const canContinue = isReady
     && count > 0
+    && count <= 5
     && settings.length === count
-    && settings.every((setting) => !setting.hasArrivalDeadline || Boolean(setting.arrivalDeadline));
+    && settings.every((setting) => !setting.hasArrivalDeadline || Boolean(setting.arrivalDeadline))
+    && previewStatus !== 'loading';
 
   const stateContent = status === 'logged-out'
     ? <div className="basket-state"><ShoppingBasket aria-hidden="true" size={28} /><h2>로그인이 필요해요</h2><p>로그인하면 담아둔 장소의 체류시간을 설정할 수 있어요.</p><ActionButton onClick={() => onAuthRequired?.({ screen: 'course-place-times' })}>로그인하기</ActionButton></div>
@@ -2732,6 +2738,8 @@ function CoursePlaceTimes({ go, basketState, onRetry, onAuthRequired }) {
         </div>
 
         {stateContent}
+
+        {isReady && count > 5 && <p className="course-field-error course-stop-limit-error" role="alert">코스에는 장소를 최대 5개까지 담을 수 있어요. 장바구니에서 장소 수를 줄여주세요.</p>}
 
         {isReady && count > 0 && (
           <div className="course-stop-settings-list">
@@ -2782,8 +2790,8 @@ function CoursePlaceTimes({ go, basketState, onRetry, onAuthRequired }) {
         )}
       </main>
       <div className="sticky-actions course-stop-settings-actions">
-        <ActionButton disabled={!canContinue} onClick={() => go('compare')}>코스 경로 비교하기</ActionButton>
-        {isReady && count > 0 && !canContinue && <p className="course-action-hint">켜둔 고정 방문시간을 모두 입력해주세요.</p>}
+        <ActionButton aria-busy={previewStatus === 'loading' || undefined} disabled={!canContinue} onClick={onSubmit}>{previewStatus === 'loading' ? '코스 계산 중' : '빠른 코스 계산하기'}</ActionButton>
+        {isReady && count > 0 && count <= 5 && !canContinue && previewStatus !== 'loading' && <p className="course-action-hint">켜둔 고정 방문시간을 모두 입력해주세요.</p>}
       </div>
     </section>
   );
@@ -2824,15 +2832,16 @@ function CourseBasket({ screen, go, basketState, onRetry, onAuthRequired }) {
     return isKakao
       ? <a className="basket-item-row" href={getKakaoPlaceUrl(item)} key={item.id} target="_blank" rel="noopener noreferrer">{content}</a>
       : <button className="basket-item-row" key={item.id} type="button" onClick={() => go('place', item.placeId)}>{content}</button>;
-  })}</div></section>}</main><div className="sticky-actions basket-actions"><ActionButton disabled={!isReady || count === 0} onClick={() => go('compare')}>{count > 0 ? `${count}개 장소로 코스 만들기` : '장소를 먼저 담아주세요'}</ActionButton></div><BottomNav active="course" onNavigate={(tab) => go(rootRoutes[tab])} /></section>;
+  })}</div></section>}</main><div className="sticky-actions basket-actions"><ActionButton disabled={!isReady || count === 0} onClick={() => go('course-conditions')}>{count > 0 ? `${count}개 장소로 코스 만들기` : '장소를 먼저 담아주세요'}</ActionButton></div><BottomNav active="course" onNavigate={(tab) => go(rootRoutes[tab])} /></section>;
 }
 
-function CourseCompare({ screen, go }) {
+function CourseCompare({ screen, go, coursePreview }) {
   if (screen === 'route-map') return <RouteOverview go={go} />;
-  const [selected, setSelected] = useState('fast');
-  const courses = [{ id: 'fast', badge: '추천 · 이동 최소', title: '빠른 코스', time: '4시간 20분', detail: '도보 43분 · 3.8km · 환승 1회', copy: '팝업 마감 전에 먼저 방문하도록 배치했어요' }, { id: 'easy', badge: '걷기 부담 최소', title: '편한 코스', time: '5시간 10분', detail: '도보 28분 · 2.4km · 환승 2회', copy: '긴 도보 구간을 나눠 중간에 이동을 넣었어요' }];
-  const selectedCourse = courses.find((course) => course.id === selected);
-  return <section className="phone standard-screen compare-screen compare-screen-v3"><main className="page-scroll compare-scroll"><header className="compare-heading"><h1>코스 비교</h1><p>같은 장소도 순서에 따라 하루가 달라져요</p></header><div className="compare-cards">{courses.map((course) => <article className={`compare-card ${selected === course.id ? 'selected' : ''}`} key={course.id} role="button" tabIndex="0" aria-pressed={selected === course.id} onClick={() => setSelected(course.id)} onKeyDown={(event) => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); setSelected(course.id); } }}><span>{course.badge}</span><h2>{course.title}</h2><strong>{course.time}</strong><p>{course.detail}</p><small>{course.copy}</small></article>)}</div><button type="button" className="compare-map-preview" onClick={() => go('route-map')}><VWorldMap ariaLabel="안국과 성수를 잇는 코스 지도" interactive={false} style={{ width: '100%', height: '100%' }} /><span>안국 → 성수 · 4곳</span></button></main><div className="sticky-actions compare-actions"><ActionButton onClick={() => go('route-map')}>{selectedCourse.title}로 시작하기</ActionButton></div><BottomNav active="course" onNavigate={(tab) => go(rootRoutes[tab])} /></section>;
+  const status = coursePreview?.status === 'idle' ? 'validation' : coursePreview?.status;
+  const message = coursePreview?.status === 'idle'
+    ? '출발 위치와 날짜, 장소별 시간을 순서대로 설정해주세요.'
+    : coursePreview?.message;
+  return <CoursePreviewResults preview={coursePreview?.preview} status={status} message={message} MapComponent={VWorldMap} onBack={() => go('course-place-times')} onRetry={status === 'error' ? coursePreview?.retry : undefined} onEditConditions={() => go('course-conditions')} onEditStops={() => go('course-place-times')} />;
 }
 
 const navStates = {
@@ -3369,7 +3378,7 @@ function AppScreenFrame({ basketCount, children, go, hideHeader = false }) {
   );
 }
 
-function RenderScreen({ screen, id, go, basketState, onBasketAdded, onBasketRetry, onAuthRequired, onLoginSuccess }) {
+function RenderScreen({ screen, id, go, basketState, courseFlow, onBasketAdded, onBasketRetry, onAuthRequired, onLoginSuccess }) {
   let renderedScreen;
   if (routeGroups.auth.includes(screen)) renderedScreen = <AuthScreen screen={screen} go={go} onLoginSuccess={onLoginSuccess} />;
   else if (screen === 'map') renderedScreen = <MapHome go={go} basketState={basketState} onBasketAdded={onBasketAdded} onBasketRefresh={onBasketRetry} onAuthRequired={onAuthRequired} />;
@@ -3381,10 +3390,10 @@ function RenderScreen({ screen, id, go, basketState, onBasketAdded, onBasketRetr
   else if (screen === 'trending' || screen === 'filming-locations' || screen === 'popups') renderedScreen = <CollectionScreen screen={screen} go={go} />;
   else if (screen === 'live-talk') renderedScreen = <LiveTalk go={go} />;
   else if (screen === 'course-home') renderedScreen = <CourseHome go={go} onNavigate={(tab) => go(rootRoutes[tab])} />;
-  else if (screen === 'course-conditions') renderedScreen = <CourseConditions go={go} />;
-  else if (screen === 'course-place-times') renderedScreen = <CoursePlaceTimes go={go} basketState={basketState} onRetry={onBasketRetry} onAuthRequired={onAuthRequired} />;
+  else if (screen === 'course-conditions') renderedScreen = <CourseConditions go={go} draft={courseFlow.draft} onContinue={courseFlow.continueFromConditions} />;
+  else if (screen === 'course-place-times') renderedScreen = <CoursePlaceTimes go={go} basketState={basketState} settings={courseFlow.settings} onSettingsChange={courseFlow.updateStopSetting} onSubmit={courseFlow.submit} previewStatus={courseFlow.preview.status} onRetry={onBasketRetry} onAuthRequired={onAuthRequired} />;
   else if (screen === 'basket' || screen === 'basket-natural' || screen === 'basket-glass') renderedScreen = <CourseBasket screen={screen} go={go} basketState={basketState} onRetry={onBasketRetry} onAuthRequired={onAuthRequired} />;
-  else if (screen === 'compare' || screen === 'route-map') renderedScreen = <CourseCompare screen={screen} go={go} />;
+  else if (screen === 'compare' || screen === 'route-map') renderedScreen = <CourseCompare screen={screen} go={go} coursePreview={courseFlow.preview} />;
   else if (routeGroups.travel.includes(screen)) renderedScreen = <TravelScreen screen={screen} go={go} />;
   else if (routeGroups.filming.includes(screen)) renderedScreen = <FilmingScreen screen={screen} go={go} id={id} />;
   else if (routeGroups.record.includes(screen)) renderedScreen = <RecordScreen screen={screen} go={go} />;
@@ -3397,7 +3406,13 @@ export default function ProductFlow() {
   const [{ screen, id }, setRoute] = useState(readHash);
   const [basketState, setBasketState] = useState({ items: [], status: getAccessToken() ? 'loading' : 'logged-out' });
   const [basketRefreshKey, setBasketRefreshKey] = useState(0);
+  const [courseDraft, setCourseDraft] = useState(null);
+  const [courseStopSettings, setCourseStopSettings] = useState([]);
   const reduceMotion = useReducedMotion();
+  const coursePreview = useCoursePreview({
+    onAuthRequired: () => handleAuthRequired({ screen: 'course-place-times' }),
+  });
+  const basketItemKey = basketState.items.map((item) => item.id).join('|');
 
   useEffect(() => {
     const handleHashChange = () => setRoute(readHash());
@@ -3422,6 +3437,12 @@ export default function ProductFlow() {
     return () => controller.abort();
   }, [screen, basketRefreshKey]);
 
+  useEffect(() => {
+    if (basketState.status !== 'success') return;
+    setCourseStopSettings((current) => reconcileCourseStopSettings(basketState.items, current));
+    coursePreview.reset();
+  }, [basketItemKey]);
+
   const go = (next, nextId) => {
     if (!routes.has(next)) return;
     window.location.hash = nextId ? `/${next}/${nextId}` : `/${next}`;
@@ -3430,6 +3451,23 @@ export default function ProductFlow() {
 
   const handleBasketAdded = (item) => {
     setBasketState((current) => ({ items: mergeBasketItem(current.items, item), status: 'success' }));
+  };
+
+  const continueFromConditions = (draft) => {
+    setCourseDraft(draft);
+    coursePreview.reset();
+    go('course-place-times');
+  };
+
+  const updateStopSetting = (basketItemId, patch) => {
+    setCourseStopSettings((current) => updateCourseStopSetting(current, basketItemId, patch));
+    coursePreview.reset();
+  };
+
+  const submitCoursePreview = () => {
+    const payload = buildCoursePreviewRequest(courseDraft, buildCoursePreviewPlaces(courseStopSettings));
+    coursePreview.submit(payload);
+    go('compare');
   };
 
   const handleAuthRequired = (returnRoute = { screen, id }) => {
@@ -3455,5 +3493,14 @@ export default function ProductFlow() {
         transition: { duration: 0.28, ease: [0.23, 1, 0.32, 1] },
       };
 
-  return <main className="app-shell"><motion.div className="screen-transition" data-screen={screen} key={screen} {...pageMotion}><RenderScreen screen={screen} id={id} go={go} basketState={basketState} onBasketAdded={handleBasketAdded} onBasketRetry={() => setBasketRefreshKey((key) => key + 1)} onAuthRequired={handleAuthRequired} onLoginSuccess={handleLoginSuccess} /></motion.div></main>;
+  const courseFlow = {
+    draft: courseDraft,
+    settings: courseStopSettings,
+    preview: coursePreview,
+    continueFromConditions,
+    updateStopSetting,
+    submit: submitCoursePreview,
+  };
+
+  return <main className="app-shell"><motion.div className="screen-transition" data-screen={screen} key={screen} {...pageMotion}><RenderScreen screen={screen} id={id} go={go} basketState={basketState} courseFlow={courseFlow} onBasketAdded={handleBasketAdded} onBasketRetry={() => setBasketRefreshKey((key) => key + 1)} onAuthRequired={handleAuthRequired} onLoginSuccess={handleLoginSuccess} /></motion.div></main>;
 }

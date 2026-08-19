@@ -15,6 +15,7 @@ import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.HttpStatusCode;
 import org.springframework.http.ResponseEntity;
+import org.springframework.http.converter.HttpMessageNotReadableException;
 import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestController;
@@ -55,6 +56,20 @@ public class ExceptionAdvice extends ResponseEntityExceptionHandler {
                         });
 
         return handleExceptionInternalArgs(e, HttpHeaders.EMPTY, ErrorStatus._BAD_REQUEST, request, errors);
+    }
+
+    @Override
+    protected ResponseEntity<Object> handleHttpMessageNotReadable(
+            HttpMessageNotReadableException e,
+            HttpHeaders headers,
+            HttpStatusCode status,
+            WebRequest request) {
+        return handleExceptionInternalFalse(
+                e,
+                ErrorStatus._BAD_REQUEST,
+                HttpHeaders.EMPTY,
+                ErrorStatus._BAD_REQUEST.getHttpStatus(),
+                request);
     }
 
     @ExceptionHandler

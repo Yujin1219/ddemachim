@@ -2,6 +2,7 @@ package com.ddemachim.server.domain.route.service;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.assertj.core.api.Assertions.tuple;
 import static org.springframework.test.web.client.match.MockRestRequestMatchers.content;
 import static org.springframework.test.web.client.match.MockRestRequestMatchers.header;
 import static org.springframework.test.web.client.match.MockRestRequestMatchers.requestTo;
@@ -59,6 +60,31 @@ class TmapRouteClientTest {
     }
 
     @Test
+    void walkingVariant_sendsEachApprovedSearchOptionToThePedestrianEndpoint() {
+        // Mutation caught: omitting, substituting, or inventing a TMAP pedestrian searchOption.
+        TestClient testClient = testClient("test-key");
+        expectWalkingVariant(testClient, "0");
+        expectWalkingVariant(testClient, "4");
+        expectWalkingVariant(testClient, "10");
+        expectWalkingVariant(testClient, "30");
+
+        RouteOption recommended = testClient.client().findWalkingVariant(
+                ORIGIN, DESTINATION, PedestrianSearchOption.RECOMMENDED);
+        RouteOption mainRoad = testClient.client().findWalkingVariant(
+                ORIGIN, DESTINATION, PedestrianSearchOption.RECOMMENDED_MAIN_ROAD);
+        RouteOption shortest = testClient.client().findWalkingVariant(
+                ORIGIN, DESTINATION, PedestrianSearchOption.SHORTEST);
+        RouteOption withoutStairs = testClient.client().findWalkingVariant(
+                ORIGIN, DESTINATION, PedestrianSearchOption.SHORTEST_WITHOUT_STAIRS);
+
+        assertThat(recommended.legs().getFirst().geometry().coordinates())
+                .isEqualTo(mainRoad.legs().getFirst().geometry().coordinates())
+                .isEqualTo(shortest.legs().getFirst().geometry().coordinates())
+                .isEqualTo(withoutStairs.legs().getFirst().geometry().coordinates());
+        testClient.server().verify();
+    }
+
+    @Test
     void transit_selectsFastestItineraryAndMapsTransferFareAndLegs() {
         TestClient testClient = testClient("test-key");
         testClient.server().expect(requestTo(org.hamcrest.Matchers.containsString("/transit/routes")))
@@ -71,15 +97,21 @@ class TmapRouteClientTest {
                           "endY": 37.5559,
                           "startName": "현재 위치",
                           "endName": "선택 장소",
-                          "count": 1,
+                          "count": 10,
                           "lang": 0,
                           "format": "json"
                         }
                         """))
                 .andRespond(withSuccess(TRANSIT_RESPONSE, MediaType.APPLICATION_JSON));
+        testClient.server().expect(requestTo(org.hamcrest.Matchers.containsString("/transit/routes")))
+                .andRespond(withSuccess(TRANSIT_RESPONSE, MediaType.APPLICATION_JSON));
 
-        RouteOption route = testClient.client().findTransit(ORIGIN, DESTINATION);
+        SelectedTransitRoute selected = testClient.client()
+                .findSelectedTransit(ORIGIN, DESTINATION);
+        RouteOption route = selected.option();
+        RouteOption publicRoute = testClient.client().findTransit(ORIGIN, DESTINATION);
 
+        assertThat(publicRoute).isEqualTo(route);
         assertThat(route.mode()).isEqualTo(RouteMode.TRANSIT);
         assertThat(route.durationSeconds()).isEqualTo(1_320);
         assertThat(route.transferCount()).isEqualTo(1);
@@ -89,6 +121,46 @@ class TmapRouteClientTest {
         assertThat(route.legs().get(1).routeName()).isEqualTo("종로01");
         assertThat(route.legs().get(1).geometry().coordinates().getFirst())
                 .containsExactly(126.9775, 37.5655);
+        assertThat(route.legs()).allSatisfy(leg -> assertThat(leg.steps()).isEmpty());
+        assertThat(selected.walkSegments())
+                .extracting(TransitWalkSegment::walkOrdinal, TransitWalkSegment::legIndex)
+                .containsExactly(tuple(1, 0), tuple(2, 2));
+        assertThat(selected.walkSegments().getFirst().geometry()).containsExactly(
+                new Coordinate(37.5665, 126.9780),
+                new Coordinate(37.5660, 126.9777));
+        assertThatThrownBy(() -> selected.walkSegments().add(
+                        selected.walkSegments().getFirst()))
+                .isInstanceOf(UnsupportedOperationException.class);
+        testClient.server().verify();
+    }
+
+    @Test
+    void transit_walkLegWithoutSteps_isNormalizedToEmptyImmutableList() {
+        TestClient testClient = testClient("test-key");
+        testClient.server().expect(requestTo(org.hamcrest.Matchers.containsString("/transit/routes")))
+                .andRespond(withSuccess("""
+                        {
+                          "metaData": {"plan": {"itineraries": [{
+                            "totalTime": 300,
+                            "legs": [{
+                            "mode": "WALK",
+                            "sectionTime": 300,
+                            "distance": 250,
+                            "start": {"lon": 126.9780, "lat": 37.5665},
+                            "end": {"lon": 126.9723, "lat": 37.5559},
+                            "passShape": {"linestring": "126.9780,37.5665 126.9723,37.5559"}
+                            }]
+                          }]}}
+                        }
+                        """, MediaType.APPLICATION_JSON));
+
+        RouteOption route = testClient.client().findTransit(ORIGIN, DESTINATION);
+
+        assertThat(route.legs().getFirst().steps()).isEmpty();
+        assertThatThrownBy(() -> route.legs().add(route.legs().getFirst()))
+                .isInstanceOf(UnsupportedOperationException.class);
+        assertThatThrownBy(() -> route.legs().getFirst().steps().add(null))
+                .isInstanceOf(UnsupportedOperationException.class);
         testClient.server().verify();
     }
 
@@ -294,6 +366,24 @@ class TmapRouteClientTest {
         return new TestClient(client, server);
     }
 
+    private void expectWalkingVariant(TestClient testClient, String searchOption) {
+        testClient.server().expect(requestTo(org.hamcrest.Matchers.containsString(
+                        "/tmap/routes/pedestrian?version=1")))
+                .andExpect(header("appKey", "test-key"))
+                .andExpect(content().json("""
+                        {
+                          "startX": 126.978,
+                          "startY": 37.5665,
+                          "endX": 126.9723,
+                          "endY": 37.5559,
+                          "startName": "현재 위치",
+                          "endName": "선택 장소",
+                          "searchOption": "%s"
+                        }
+                        """.formatted(searchOption)))
+                .andRespond(withSuccess(WALKING_RESPONSE, MediaType.APPLICATION_JSON));
+    }
+
     private record TestClient(TmapRouteClient client, MockRestServiceServer server) {
     }
 
@@ -345,6 +435,14 @@ class TmapRouteClientTest {
                           "mode": "WALK",
                           "sectionTime": 180,
                           "distance": 180,
+                          "start": {"lon": 126.9780, "lat": 37.5665},
+                          "end": {"lon": 126.9775, "lat": 37.5655},
+                          "steps": [{
+                            "streetName": "세종대로23길",
+                            "distance": 80,
+                            "description": "광화문 방향으로 직진",
+                            "linestring": "126.9780,37.5665 126.9777,37.5660"
+                          }],
                           "passShape": {"linestring": "126.9780,37.5665 126.9775,37.5655"}
                         },
                         {
@@ -358,6 +456,8 @@ class TmapRouteClientTest {
                           "mode": "WALK",
                           "sectionTime": 180,
                           "distance": 820,
+                          "start": {"lon": 126.9740, "lat": 37.5600},
+                          "end": {"lon": 126.9723, "lat": 37.5559},
                           "passShape": {"linestring": "126.9740,37.5600 126.9723,37.5559"}
                         }
                       ]

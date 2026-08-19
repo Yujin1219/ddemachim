@@ -19,6 +19,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Objects;
 import java.util.concurrent.TimeoutException;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.MediaType;
@@ -79,10 +80,28 @@ public class TmapRouteClient implements RouteProviderClient {
 
     @Override
     public RouteOption findWalking(Coordinate origin, Coordinate destination) {
+        return findWalking(origin, destination, null);
+    }
+
+    @Override
+    public RouteOption findWalkingVariant(
+            Coordinate origin,
+            Coordinate destination,
+            PedestrianSearchOption searchOption) {
+        return findWalking(origin, destination, Objects.requireNonNull(searchOption));
+    }
+
+    private RouteOption findWalking(
+            Coordinate origin,
+            Coordinate destination,
+            PedestrianSearchOption searchOption) {
         ensureConfigured();
         ensureCoordinates(origin, destination);
 
         Map<String, Object> body = baseRequestBody(origin, destination);
+        if (searchOption != null) {
+            body.put("searchOption", searchOption.providerValue());
+        }
         JsonNode response = post(WALKING_PATH, body);
         try {
             List<LineFeature> lines = lineFeatures(response);
@@ -112,11 +131,16 @@ public class TmapRouteClient implements RouteProviderClient {
 
     @Override
     public RouteOption findTransit(Coordinate origin, Coordinate destination) {
+        return findSelectedTransit(origin, destination).option();
+    }
+
+    @Override
+    public SelectedTransitRoute findSelectedTransit(Coordinate origin, Coordinate destination) {
         ensureConfigured();
         ensureCoordinates(origin, destination);
 
         Map<String, Object> body = baseRequestBody(origin, destination);
-        body.put("count", 1);
+        body.put("count", 10);
         body.put("lang", 0);
         body.put("format", "json");
         JsonNode response = post(TRANSIT_PATH, body);
@@ -160,7 +184,7 @@ public class TmapRouteClient implements RouteProviderClient {
             }
             Integer transferCount = integer(fastest, "transferCount");
             Integer fare = fare(fastest);
-            return new RouteOption(
+            RouteOption option = new RouteOption(
                     RouteMode.TRANSIT,
                     RouteStatus.AVAILABLE,
                     fastestTime,
@@ -170,6 +194,9 @@ public class TmapRouteClient implements RouteProviderClient {
                     walkDistance,
                     null,
                     legs);
+            return new SelectedTransitRoute(
+                    option,
+                    TransitWalkSegmentExtractor.extract(fastest));
         } catch (RouteProviderException exception) {
             throw exception;
         } catch (RuntimeException exception) {

@@ -1,5 +1,5 @@
-"""이미 수집된 TourAPI raw 파일(areaBasedList2)에서 firstimage/firstimage2를 꺼내
-place_image에 채운다. 추가 API 호출 없음 - 기존 raw 데이터 재사용.
+"""이미 수집된 TourAPI raw 파일(areaBasedList2)에서 대표 이미지를 꺼내
+place에 채운다. 추가 API 호출 없음 - 기존 raw 데이터 재사용.
 """
 from __future__ import annotations
 
@@ -43,7 +43,7 @@ def main() -> int:
     images_by_content_id = collect_images()
     logger.info(f"raw 파일에서 이미지 있는 contentid {len(images_by_content_id)}건 확인")
 
-    inserted = 0
+    updated = 0
     no_place = 0
     with get_connection() as conn:
         with conn.cursor() as cur:
@@ -57,22 +57,24 @@ def main() -> int:
                     no_place += 1
                     continue
                 place_id = row[0]
-                for url in urls:
-                    cur.execute(
-                        """
-                        INSERT INTO place_image (place_id, source, source_url, attribution)
-                        SELECT %s, 'TOURAPI', %s, '한국관광공사 TourAPI'
-                        WHERE NOT EXISTS (
-                            SELECT 1 FROM place_image WHERE place_id=%s AND source_url=%s
-                        )
-                        """,
-                        (place_id, url, place_id, url),
-                    )
-                    if cur.rowcount:
-                        inserted += 1
+                if not urls:
+                    continue
+                cur.execute(
+                    """
+                    UPDATE place
+                    SET image_url = %s,
+                        image_source = %s,
+                        image_attribution = %s
+                    WHERE id = %s
+                      AND image_url IS NULL
+                    """,
+                    (urls[0], "TOURAPI", "한국관광공사 TourAPI", place_id),
+                )
+                if cur.rowcount:
+                    updated += 1
         conn.commit()
 
-    logger.info(f"place_image 신규 insert: {inserted}건, place_source 매칭 안 됨(스킵): {no_place}건")
+    logger.info(f"place 대표 이미지 update: {updated}건, place_source 매칭 안 됨(스킵): {no_place}건")
     return 0
 
 
