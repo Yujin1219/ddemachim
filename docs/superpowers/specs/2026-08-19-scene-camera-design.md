@@ -1,18 +1,21 @@
-# 장면 구도 카메라 PWA 설계
+# 장면 구도 카메라 모바일 웹 설계
 
 - 상태: 사용자 UX·기술 방향 승인 완료
 - 작성일: 2026-08-19
 - 적용 범위: `FE/**` 및 향후 참고 스틸 응답 계약
+- 현재 전달물: iOS Safari와 Android Chrome의 브라우저 모드에서 동작하는 HTTPS 모바일 웹 MVP
 
 ## 1. 목표
 
-촬영지의 특정 장면을 선택한 사용자가 모바일 브라우저 또는 설치형 PWA에서 참고 스틸을 실제 후면 카메라 위에 겹쳐 구도를 맞추고, 촬영 직후 원본과 참고 장면을 비교한 뒤 기기에 공유하거나 내려받을 수 있게 한다.
+촬영지의 특정 장면을 선택한 사용자가 모바일 브라우저에서 참고 스틸을 실제 후면 카메라 위에 겹쳐 구도를 맞추고, 촬영 직후 원본과 참고 장면을 비교한 뒤 기기에 공유하거나 내려받을 수 있게 한다.
 
 핵심 경험은 다음 한 문장으로 정의한다.
 
-> 장면 선택 → 실제 카메라 위에서 구도 맞춤 → 촬영 → 전후 비교 → 50/50 결과 공유 또는 다운로드
+> 장면 선택 → 실제 카메라 위에서 구도 맞춤 → 촬영 → 전후 비교 → 기본 50/50 결과 공유 또는 다운로드
 
-이 설계는 자동 AR 정합이나 점수 산정이 아니라, 사용자가 직접 참고 스틸과 카메라 프레임을 맞추는 신뢰 가능한 수동 도구를 목표로 한다. 촬영 데이터는 메모리에만 두며 다운로드는 사용자 기기에서 수행되는 동작이지 서비스 기록 생성이 아니다.
+이 MVP는 자동 AR 정합이나 점수 산정이 아니라, 사용자가 직접 참고 스틸과 카메라 프레임을 맞추는 신뢰 가능한 수동 도구를 목표로 한다. secure context가 필수이므로 배포와 실기기 검증은 HTTPS에서 수행한다. `localhost`는 로컬 개발 예외이지만 휴대폰에서 여는 HTTP LAN IP는 유효한 실기기 테스트 환경이 아니다.
+
+촬영 데이터는 앱 메모리에만 두며 다운로드는 사용자가 시작하는 기기 파일 생성이지 서비스 기록 생성이나 앱 영속화가 아니다.
 
 ## 2. 현재 저장소 기준과 문제 정의
 
@@ -27,15 +30,13 @@
 - `AppScreenFrame`은 카메라와 결과에도 전역 `AppHeader`를 남긴다.
 - 현재 카메라 CSS의 고정 목업 치수는 새 기능의 좌표계나 반응형 템플릿으로 사용하지 않는다.
 - `FE/src/api/client.js`가 API 호출을 중앙화하지만, 현재 백엔드 `FilmingLocationResponse`에는 `id`, `sceneDescription` 등만 있고 참고 스틸 필드는 없다.
-- Vite 설정에는 React 플러그인과 `/api` 개발 프록시만 있으며 manifest나 service worker는 없다.
 
-따라서 기존 화면을 꾸미는 수준이 아니라, 라우트 전환에도 살아 있는 카메라 세션, 실제 스트림 수명주기, DOM·canvas 공통 기하, 메모리 전용 촬영 결과, 제한적인 PWA 캐시 정책을 하나의 경계로 도입한다.
+따라서 기존 화면을 꾸미는 수준이 아니라, 라우트 전환에도 살아 있는 메모리 카메라 세션, 실제 스트림 수명주기, DOM·canvas 공통 기하, 메모리 전용 촬영 결과를 하나의 브라우저 기능 경계로 도입한다.
 
-## 3. 범위와 비범위
+## 3. 현재 범위와 비범위
 
-### 포함
+### MVP 포함
 
-- Vite 기반 설치형 PWA foundation과 카메라에 안전한 service worker 정책
 - 기존 `filmingLocationId`를 장면 상세, 카메라, 결과 라우트 전체에서 보존
 - 사용자 제스처로 시작하는 실제 후면 카메라 권한·스트림 획득
 - 같은 출처의 참고 스틸을 라이브 영상 위에 겹치고 위치·크기·불투명도를 수동 조절
@@ -44,10 +45,10 @@
 - 고정 50/50 분할 PNG 기본 내보내기와 선택 가능한 overlay PNG 내보내기
 - Web Share 지원 시 공유, 그 외 다운로드 폴백
 - 안전 영역, 작은 화면, 가로 모드, 줌, 보조기술, reduced motion 대응
-- 자동·수동·실기기 검증과 명확한 복구 경로
+- 자동·빌드·HTTPS runtime·브라우저 실기기 검증과 명확한 복구 경로
 - 향후 백엔드의 additive nullable 참고 스틸 계약 설계
 
-### 제외
+### MVP 제외
 
 - 자동 AR 정렬, 컴퓨터 비전, 구도 추천·정합 분석, 일치율 또는 점수
 - 촬영 이미지 업로드, 서버 저장, 갤러리·방문 인증·코스 기록 연결
@@ -55,9 +56,9 @@
 - 앨범 가져오기, 전·후면 카메라 전환, 렌즈 선택, 디지털 줌, `1×` 제어
 - 사용자 계정 또는 backend photo persistence 변경
 - 사용자 이미지나 프레임을 대상으로 한 분석 이벤트·analytics
-- 범용 API 오프라인화, background sync, 사진 업로드 큐
+- 범용 네트워크 불가 모드, background sync, 사진 업로드 큐
 
-위 항목은 별도 요청과 개인정보·권리 검토 없이 확장하지 않는다.
+설치형 앱과 애플리케이션 관리형 네트워크 불가 동작은 현재 범위가 아니다. 관련 항목은 10장의 별도 승인 대상에만 정의한다. 현재 MVP에는 이를 위한 패키지, 산출물, 등록, UI, 저장소 또는 자리표시자 hook을 추가하지 않는다.
 
 ## 4. 사용자 흐름과 라우팅
 
@@ -105,6 +106,8 @@
 
 실제 파일명은 구현 시 저장소 관례에 맞출 수 있으나 책임을 다시 하나의 거대 `ProductFlow.jsx` 분기로 합치지 않는다.
 
+이 경계가 향후 확장을 막지 않는다는 뜻은 안정적인 해시 라우트, 격리된 기능 모듈, same-origin asset/data seam, 메모리 전용 카메라 상태를 유지한다는 뜻뿐이다. 미래 설치형 작업을 위한 빈 hook, 의존성, 등록 코드 또는 설정을 MVP에 미리 두지 않는다.
+
 ### 세션 상태
 
 `SceneCameraSession`은 `ProductFlow` 내부이되 `key={screen}`인 routed motion subtree 위에 위치한다. reducer가 소유하는 값은 다음과 같다.
@@ -118,7 +121,7 @@
 - flow state: `idle`, `preparing`, `camera-ready`, `capturing`, `result-ready`, `exporting`, `error`
 - operation token과 정규화된 오류 정보
 
-`MediaStream`, `HTMLVideoElement`, `HTMLImageElement`, canvas, AbortController는 직렬화 가능한 reducer 상태에 넣지 않는다. 스트림은 provider에 결합된 controller/ref가 소유하며 UI는 준비 상태와 명령만 주고받는다. object URL은 교체·retake·닫기·새 세션·unmount 때 반드시 revoke한다. 카메라 데이터는 localStorage, sessionStorage, IndexedDB, Cache Storage에 기록하지 않는다.
+`MediaStream`, `HTMLVideoElement`, `HTMLImageElement`, canvas, AbortController는 직렬화 가능한 reducer 상태에 넣지 않는다. 스트림은 provider에 결합된 controller/ref가 소유하며 UI는 준비 상태와 명령만 주고받는다. object URL은 교체·retake·닫기·새 세션·unmount 때 반드시 revoke한다. 카메라 데이터는 localStorage, sessionStorage, IndexedDB에 기록하지 않는다.
 
 ## 6. 참고 스틸 데이터 계약
 
@@ -172,7 +175,7 @@ MVP는 기존 `filmingLocationId`를 키로 하는 정적 map을 프런트엔드
 ### 획득
 
 - 카메라 권한은 `구도 맞추기` 버튼의 실제 사용자 제스처에서 `navigator.mediaDevices.getUserMedia`를 호출해 요청한다. Permissions API 결과를 선행 조건으로 삼지 않는다.
-- secure context와 `mediaDevices.getUserMedia` 지원 여부를 먼저 확인한다. 개발 localhost는 허용되지만 실제 휴대폰에서 LAN IP의 HTTP 주소는 유효한 카메라 테스트 환경이 아니다.
+- secure context와 `mediaDevices.getUserMedia` 지원 여부를 먼저 확인한다. 개발 `localhost`는 허용되지만 실제 휴대폰에서 LAN IP의 HTTP 주소는 유효한 카메라 테스트 환경이 아니다.
 - 첫 요청은 `video: { facingMode: { ideal: 'environment' } }`, `audio: false`를 사용한다. 해당 constraint가 `OverconstrainedError`를 내면 범용 `video: true`로 한 번 fallback한다.
 - 성공한 스트림을 controller ref에 등록한 뒤 현재 token과 ID가 여전히 일치할 때만 `video.srcObject`에 연결한다. 이미 stale이면 모든 track을 즉시 stop한다.
 - `loadedmetadata`와 유효한 `videoWidth/videoHeight`를 기다린 뒤 `video.play()`가 완료돼야 shutter를 활성화한다.
@@ -233,48 +236,25 @@ source는 `(dx, dy, dw, dh)`에 그린다. reference overlay의 `x`, `y`는 stag
 - `navigator.share`의 `AbortError`는 사용자가 share sheet를 취소한 정상 결과로 취급해 오류 경고를 띄우지 않는다.
 - 지원되지 않거나 공유가 실패하면 동일 PNG를 `<a download>` object URL로 내려받을 수 있게 한다. 공유 실패 시 사용자가 다운로드 폴백을 선택할 수 있도록 결과를 유지한다.
 - 다운로드 click 자체가 실패하거나 브라우저가 막으면 파일을 보관했다고 주장하지 않고, 지원 브라우저 안내와 재시도를 제공한다.
-- 네트워크를 요구하는 OS share target은 오프라인에서 실패할 수 있다. 그 경우 로컬 다운로드 폴백을 유지한다.
+- 네트워크를 요구하는 외부 share target은 네트워크가 없거나 대상 서비스가 실패하면 완료되지 않을 수 있다. 이 경우 애플리케이션 관리형 네트워크 불가 동작을 약속하지 않고 로컬 다운로드 폴백을 유지한다.
 - 공유·다운로드용 object URL은 동작 완료 또는 세션 종료 후 revoke한다.
 
-## 10. PWA foundation과 오프라인 계약
+## 10. 미래/범위 밖: 설치형 PWA와 애플리케이션 관리형 오프라인
 
-### 설치 구조
+이 장의 모든 항목은 별도 승인이 필요한 미래 개념이다. MVP의 전제 조건, 전달물, release gate 또는 acceptance check가 아니며 현재 MVP는 다음을 하나도 추가하지 않는다.
 
-`vite-plugin-pwa`의 `injectManifest` 모드와 프로젝트 소유 custom service worker를 사용한다. 카메라·인증·API 데이터를 명시적으로 배제해야 하므로 자동 runtime caching보다 검토 가능한 allowlist가 적합하다.
+- web manifest
+- install/app icons와 apple-touch metadata
+- service worker 등록 또는 생성된 service worker
+- Workbox 또는 `vite-plugin-pwa`
+- installability 판정, install prompt 또는 설치 UI
+- offline shell 또는 reference asset caching
+- Cache Storage, cache versioning 또는 update policy
+- background sync 또는 offline upload
+- push notification 또는 subscription
+- installed-PWA acceptance 또는 홈 화면 실행 검사
 
-manifest는 다음을 정의한다.
-
-- 앱 이름과 짧은 이름
-- 필수 maskable/any 아이콘과 일반 아이콘
-- iOS용 apple touch icon 및 관련 metadata
-- `display: "standalone"`
-- 앱 shell과 어울리는 `theme_color`, `background_color`
-- hash router를 보존하는 `start_url`과 `scope`; 설치 진입 기본값은 `/#/map`
-
-### 캐시·개인정보 규칙
-
-service worker precache는 빌드 해시가 있는 다음 allowlist에 한정한다.
-
-- HTML/JS/CSS 앱 shell
-- manifest와 승인된 앱 아이콘
-- MVP 로컬 map에서 참조하는 권리 승인 reference still
-
-다음은 어떤 Cache Storage에도 기록하지 않는다.
-
-- `/api/**`
-- `Authorization` 헤더가 있거나 authenticated response인 요청
-- camera frame, canvas, captured Blob, object URL, export PNG, 사용자 사진
-- localStorage/sessionStorage/IndexedDB의 카메라 세션 표현
-
-`/api/**`는 network-only이며 background sync나 photo queue를 두지 않는다. activation 시 현재 cache version에 없는 obsolete versioned cache만 삭제하고 타 앱 cache는 건드리지 않는다. 새 service worker는 활성 카메라 또는 결과 세션을 강제 reload하지 않는다. 업데이트는 다음 정상 reload에서 활성화하거나, 카메라·결과 세션이 없을 때 사용자가 명시적으로 승인한 안전한 갱신 동작으로만 적용한다.
-
-### 오프라인 기대치
-
-- 최초 load와 install은 온라인에서 완료해야 한다.
-- 설치 후에는 precache된 shell과 로컬 reference still로 재실행할 수 있다.
-- 기기와 브라우저가 카메라 권한을 허용하면 capture, compare, export, 로컬 download는 오프라인에서도 완료할 수 있다.
-- 범용 API 오프라인 기능은 제공하지 않는다. uncached 화면이나 API 의존 콘텐츠는 네트워크 필요 상태와 돌아가기·재시도를 명확히 표시한다.
-- 네트워크 의존 share target 성공은 보장하지 않는다.
+향후 별도 설계가 승인되면 개인정보, reference 권리, 인증/API 제외, 업데이트 중 활성 카메라 세션 보호, 캐시 만료와 기기별 설치 동작을 그때 정의한다. 현재의 안정적인 해시 라우트, 격리된 기능 모듈, same-origin asset/data seam, 메모리 전용 카메라 상태는 이 미래 작업을 막지 않지만, 이를 이유로 빈 PWA hook이나 dependency를 선행 구현하지 않는다.
 
 ## 11. CORS와 이미지 export 안전성
 
@@ -307,7 +287,7 @@ MVP asset은 same-origin이므로 canvas export가 origin-clean 상태를 유지
 | share cancelled | `AbortError` | 오류 없이 결과 유지 |
 | share failed/unsupported | capability 실패 또는 기타 예외 | 다운로드 폴백 제공 |
 | download failure | click/URL 생성 실패 | 저장 완료 주장 금지, 재시도·지원 안내 |
-| offline API | network-only API 요청 실패 | 오프라인 범위 설명, 온라인 재시도 |
+| network unavailable | 외부 share target 또는 네트워크 의존 요청 실패 | 결과 유지, 다운로드 또는 온라인 재시도 안내; 앱 관리형 오프라인 동작을 주장하지 않음 |
 
 오류 메시지는 마지막으로 성공한 캡처를 불필요하게 폐기하지 않는다. 단, 스트림과 reference의 export 안전성이 깨진 상태에서는 shutter를 허용하지 않는다. 오류가 화면을 바꾸면 heading 또는 alert로 focus를 이동하고, 동일 화면의 일시적 상태는 적절한 live region으로 알린다.
 
@@ -326,13 +306,14 @@ MVP asset은 same-origin이므로 canvas export가 origin-clean 상태를 유지
 
 ## 14. 개인정보와 보안
 
-- MediaStream과 사용자 이미지는 브라우저 메모리에만 존재한다.
+- 일반적인 HTTP 브라우저 캐시는 브라우저 정책에 따라 존재할 수 있다. MVP는 application-managed offline cache, Cache Storage 또는 service worker를 추가하지 않는다.
+- MediaStream, camera frame, captured Blob, object URL과 export는 앱 메모리에만 존재하며 localStorage, sessionStorage, IndexedDB 같은 영구 웹 저장소에 기록하지 않는다.
+- 캡처·프레임·Blob·export를 API로 전송하거나 analytics 또는 애플리케이션 로그에 남기지 않는다.
 - 스트림 track은 사용 목적이 끝나는 즉시 stop하고 모든 object URL을 revoke한다.
-- service worker, 웹 저장소, IndexedDB, API, analytics, 애플리케이션 로그에 frame·Blob·export를 남기지 않는다.
-- 다운로드는 기기 action이며 앱의 사진 저장·방문 인증·코스 기록이 아니다. 기존 `photo-saved`와 기록 화면을 연결하지 않는다.
+- 다운로드는 사용자가 시작하는 기기 파일 생성이며 앱의 persistence, 사진 저장 기록, 방문 인증 또는 코스 기록이 아니다. 기존 `photo-saved`와 기록 화면을 연결하지 않는다.
 - 카메라 상태 telemetry가 필요해도 오류 종류와 capability처럼 이미지가 아닌 최소 기술 정보만 별도 동의·정책 검토 후 도입한다. 기본 설계에는 사용자 이미지 analytics가 없다.
 
-## 15. 검증 전략
+## 15. 현재 MVP 검증 전략
 
 ### 자동 검증
 
@@ -345,62 +326,59 @@ MVP asset은 same-origin이므로 canvas export가 origin-clean 상태를 유지
 - `scene-detail/{id}` → `camera/{id}` → `shot-result/{id}`와 back/close ID 보존, direct result guard 검증
 - range label/aria value, keyboard 조작, focus 이동, live region에 대한 접근성 테스트
 - `canShare` 지원·미지원, share 취소·실패, download fallback 테스트
-- service worker build 산출물에서 precache allowlist와 정확한 제외를 검증: `/api/**`, Authorization/auth response, frame/Blob/export/photo 미캐시
-- 설치 후 offline navigation이 shell과 승인된 reference를 열고, uncached/API 요청은 명확히 실패하는지 검증
 
-### 빌드·산출물 검증
+### 빌드·HTTPS runtime 검증
 
 - clean dependency 상태에서 `npm ci`, `npm test`, `npm run build`
-- 생성 manifest의 `start_url`, `scope`, standalone, 아이콘·apple metadata 확인
-- 생성 service worker의 precache 목록, obsolete cache 삭제 범위, API network-only 처리 확인
-- production preview를 HTTPS 환경 또는 실제 배포 URL에서 실행하고 console, permission prompt, memory/object URL 정리를 확인
+- production build가 성공하고 camera/reference/export 코드와 asset이 포함되는지 확인
+- HTTPS 환경 또는 실제 배포 URL에서 production runtime을 열어 secure context, console, permission prompt, camera lifecycle, memory/object URL 정리를 확인
+- HTTP LAN IP가 실기기 검증 URL로 사용되지 않았는지 기록
 
-현재 기준 테스트 기록은 102개 중 97개 통과, 5개 `ERR_MODULE_NOT_FOUND`이며 원인은 `FE/node_modules` 부재였다. 빌드는 수행되지 않았다. 이는 기능 상태가 아니라 검증 환경 제약 기록이며, 구현 완료 판단에는 clean install 후 전체 테스트와 build의 새 결과가 필요하다.
-
-### 실기기 매트릭스
+### 브라우저 실기기 매트릭스
 
 | 플랫폼 | 실행 형태 | 필수 시나리오 |
 | --- | --- | --- |
 | iOS Safari | 브라우저 | 첫 허용/거부/설정 차단, background 복귀, rotation, retake, share 취소·성공·실패, download fallback |
-| iOS | 홈 화면 설치 PWA | online 설치, offline relaunch, safe area, 업데이트가 활성 세션을 reload하지 않음 |
-| Android Chrome | 브라우저 | environment camera, 장치 점유 오류, track ended, rotation, retake, share와 download |
-| Android | 설치 PWA | online 설치, offline relaunch/capture/compare/export/download, API offline 오류 |
+| Android Chrome | 브라우저 | environment camera, 장치 점유 오류, track ended, rotation, retake, share와 download fallback |
 
-각 조합에서 320×568 상당의 짧은 viewport, tall viewport, landscape, 200% zoom, 고대비, reduced motion을 확인한다. iOS VoiceOver와 Android TalkBack으로 전체 핵심 흐름을 실행하고, 가능한 경우 외부 키보드 range 조작도 검증한다. 실제 휴대폰 검증 URL은 유효한 HTTPS여야 한다.
+두 브라우저에서 320×568 상당의 짧은 viewport, tall viewport, landscape, safe area, 200% zoom, 고대비, reduced motion을 확인한다. iOS VoiceOver와 Android TalkBack으로 전체 핵심 흐름을 실행하고, 가능한 경우 외부 키보드 range 조작도 검증한다. 실제 휴대폰 검증 URL은 유효한 HTTPS여야 한다.
 
-## 16. 전달 순서와 단계별 사용자 관찰 기준
+네트워크가 없거나 외부 share target이 실패하는 경우 결과가 유실되지 않고 다운로드 또는 온라인 재시도 안내가 제공되는지는 확인한다. 이는 애플리케이션 관리형 오프라인 운용을 보장하는 검사가 아니다.
 
-다음 순서는 통합 위험과 사용자에게 확인 가능한 기반을 맞추기 위한 delivery order다. 구현 작업 목록이 아니라, 각 능력이 어떤 순서와 가시적 기준으로 완성돼야 하는지를 정의한다.
+## 16. 현재 전달 순서와 단계별 사용자 관찰 기준
 
-1. **PWA foundation** — manifest와 제한적 service worker를 먼저 제공한다. 사용자는 지원 기기에서 앱을 설치하고, 설치 후 standalone shell을 다시 열 수 있으며 기존 온라인 화면은 그대로 사용할 수 있다.
-2. **카메라/overlay framing** — ID를 보존한 full-bleed 카메라에서 실제 권한 prompt와 후면 preview, 같은 출처 reference overlay, 접근 가능한 위치·크기·불투명도 조절을 사용할 수 있다.
-3. **Shutter capture** — metadata와 reference가 준비된 상태에서 shutter를 누르면 보이는 3:4 프레임과 일치하는 upright 캡처가 만들어지고 스트림이 즉시 종료된다.
-4. **Interactive before/after result** — 결과 화면에서 reference 왼쪽/capture 오른쪽 비교가 기본 50에 열리고 touch·키보드로 경계를 바꿀 수 있으며 retake가 같은 장면 카메라를 다시 연다.
-5. **Default 50/50 export + optional overlay export** — 기본 PNG는 slider 위치와 무관하게 정확한 50/50이고, 사용자가 선택하면 동일 framing·opacity의 overlay PNG를 만들 수 있다.
-6. **Share/download** — 지원 기기에서는 PNG share sheet가 열리고, 미지원·실패 시 같은 결과를 다운로드할 수 있으며 취소는 오류로 오인되지 않는다.
-7. **Verification** — 자동 테스트, production build/manifest/SW 검사, iOS·Android 브라우저/설치 앱 실기기 매트릭스가 완료되고 privacy·offline·a11y 기준의 결과가 기록된다.
+다음 순서는 구현 작업 목록이 아니라, 각 능력이 어떤 순서와 가시적 기준으로 완성돼야 하는지를 정의한다.
 
-각 단계는 이전 단계의 계약을 깨지 않고 사용자 관찰 기준을 만족한 뒤 다음 능력을 얹는다. 7단계 완료 전에는 전체 장면 카메라 경험이 release-ready라고 판단하지 않는다.
+1. **HTTPS/secure-context plus route/session foundation** — 유효한 HTTPS 브라우저에서 secure context를 확인할 수 있고, `filmingLocationId`가 상세→카메라→결과 hash에 보존되며 keyed 화면 전환 위의 메모리 세션이 reload/direct-result guard와 새 ID 정리를 결정적으로 수행한다.
+2. **Camera permission/stream plus overlay framing** — 같은 사용자 제스처에서 실제 권한 prompt와 후면 preview가 시작되고, same-origin reference overlay의 위치·크기·불투명도를 touch 이외의 접근 가능한 제어로도 조절하며 닫기·background·오류 시 스트림이 남지 않는다.
+3. **Shutter/capture handoff** — metadata와 reference가 준비된 상태에서 shutter를 누르면 보이는 3:4 프레임과 일치하는 upright 메모리 캡처가 결과 세션에 전달되고 스트림이 즉시 종료된다.
+4. **Interactive before/after** — 결과 화면에서 reference 왼쪽/capture 오른쪽 비교가 기본 50에 열리고 touch·키보드로 경계를 바꿀 수 있으며 retake가 같은 장면 카메라를 다시 연다.
+5. **Default 50/50 plus optional overlay exports** — 기본 PNG는 slider 위치와 무관하게 정확한 50/50 `1080×1440`이고, 사용자가 선택하면 동일 framing·opacity의 overlay PNG가 UI chrome 없이 만들어진다.
+6. **Share/download fallback** — 지원 브라우저에서는 `canShare`를 통과한 PNG share sheet가 열리고, 미지원·실패 시 같은 결과를 다운로드할 수 있으며 취소는 오류로 오인되지 않는다.
+7. **Browser-mode automated/build/real-device verification** — geometry, reducer, media lifecycle, navigation, object URL, share, accessibility 자동 검증과 production build, HTTPS runtime, iOS Safari 브라우저·Android Chrome 브라우저 실기기 검증이 통과하고 결과가 기록된다.
 
-## 17. 완료 기준
+각 단계는 이전 단계의 계약을 깨지 않고 해당 관찰 기준을 만족해야 한다. 7단계 완료 전에는 HTTPS 브라우저 장면 카메라 경험이 release-ready라고 판단하지 않는다.
 
+## 17. 현재 MVP 완료 기준
+
+- iOS Safari와 Android Chrome 브라우저 모드의 유효한 HTTPS URL에서 핵심 흐름을 완료한다.
 - 유효한 장면 ID가 상세, 카메라, 결과 전체에서 보존되고 reload/direct result guard가 결정적으로 동작한다.
 - 카메라 권한은 실제 사용자 제스처로 요청되며 허용·거부·장치 오류마다 복구 가능한 UI가 있다.
 - route, capture, close, retry, background, track ended, Strict Mode cleanup에서 카메라가 남지 않는다.
 - DOM preview와 PNG가 동일한 3:4 cover·overlay 기하를 사용하고 후면 카메라가 mirror되지 않는다.
 - 기본 export는 slider와 무관한 정확한 reference-left/capture-right 50/50 `1080×1440` PNG다.
 - optional overlay export는 capture 아래, transformed reference 위 순서이며 UI chrome이 없다.
-- 촬영·export 데이터가 네트워크나 영구 저장소·service worker cache로 나가지 않는다.
-- 설치 앱이 precache된 범위에서 offline capture/compare/export/download를 완료하고 범용 API offline을 과장하지 않는다.
+- 촬영·export 데이터가 영구 웹 저장소, API, analytics 또는 로그로 나가지 않는다.
 - same-origin 또는 검증된 CORS reference만 shutter/export에 사용하며 권리·재배포 승인이 확인된다.
 - 핵심 흐름이 작은 화면, safe area, 키보드, VoiceOver/TalkBack, reduced motion에서 완료된다.
-- 자동 테스트, build 산출물 검사와 실기기 매트릭스가 통과하고 실패 항목은 release 전에 해소된다.
+- geometry/reducer/media lifecycle/navigation/object URL/share/accessibility 자동 테스트, production build, HTTPS runtime과 두 브라우저 실기기 매트릭스가 통과하고 실패 항목은 release 전에 해소된다.
 
 ## 18. 알려진 위험과 결정 경계
 
-- 모바일 Safari와 설치 PWA의 camera lifecycle·background 동작은 버전별 차이가 크다. token 기반 정리만으로 끝내지 않고 실기기 검증을 release gate로 둔다.
+- 모바일 Safari와 Chrome의 camera lifecycle, 권한 상태, background·rotation 동작은 버전과 기기별 차이가 크다. token 기반 정리와 두 브라우저 실기기 검증을 release gate로 둔다.
 - 고해상도 이미지 두 장의 canvas 합성은 모바일 메모리를 압박한다. export를 1080×1440, 처리 긴 변을 최대 1440으로 고정하고 중간 canvas와 object URL을 즉시 폐기한다.
+- Web Share와 다운로드 지원·실패 표현은 브라우저와 외부 share target에 따라 다르다. capability를 실제로 확인하고 결과를 유지한 채 다운로드 폴백을 제공한다.
 - cross-origin 이미지는 preview 성공 후에도 export를 실패시킬 수 있다. same-origin/proxy 우선과 shutter 전 origin-clean 검증을 유지한다.
 - 작품 스틸 권리는 기술적 접근 가능성과 무관하다. 앱 표시, 합성 export, 사용자 재공유까지 포함한 허가 범위가 없으면 해당 스틸을 배포하지 않는다.
-- service worker update를 즉시 강제하면 캡처를 잃을 수 있다. 활성 세션 중 자동 reload를 금지한다.
-- 자동 점수, AR/CV, backend photo persistence, 방문 인증 연결은 이 설계의 후속 단계가 아니다. 필요하면 별도 요구사항·개인정보·데이터 계약을 승인받아 독립 설계한다.
+- safe area, 짧은 화면, landscape, zoom에서 카메라 chrome이 stage나 핵심 제어를 가릴 수 있다. 실제 viewport와 접근성 검증을 release gate로 둔다.
+- 자동 점수, AR/CV, backend photo persistence, 방문 인증 연결은 이 MVP의 후속 단계가 아니다. 필요하면 별도 요구사항·개인정보·데이터 계약을 승인받아 독립 설계한다.
