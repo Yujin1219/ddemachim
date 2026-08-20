@@ -10,7 +10,7 @@ import com.ddemachim.server.domain.route.dto.RouteComparisonRequest.Coordinate;
 import com.ddemachim.server.domain.route.dto.RouteComparisonResponse.RouteOption;
 import com.ddemachim.server.domain.route.enums.RouteStatus;
 import com.ddemachim.server.domain.route.exception.RouteProviderException;
-import com.ddemachim.server.domain.route.service.RouteProviderClient;
+import com.ddemachim.server.domain.route.service.CourseRouteProviderClient;
 import java.time.Duration;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
@@ -22,11 +22,11 @@ public class CourseQuietPlanner {
 
     private static final Duration ARRIVAL_DEADLINE_BUFFER = Duration.ofMinutes(10);
 
-    private final RouteProviderClient routeProviderClient;
+    private final CourseRouteProviderClient routeProviderClient;
     private final CourseCongestionForecastProvider congestionForecastProvider;
 
     public CourseQuietPlanner(
-            RouteProviderClient routeProviderClient,
+            CourseRouteProviderClient routeProviderClient,
             CourseCongestionForecastProvider congestionForecastProvider) {
         this.routeProviderClient = routeProviderClient;
         this.congestionForecastProvider = congestionForecastProvider;

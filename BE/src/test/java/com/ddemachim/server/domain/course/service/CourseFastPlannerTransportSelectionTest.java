@@ -10,7 +10,7 @@ import com.ddemachim.server.domain.route.dto.RouteComparisonRequest.Coordinate;
 import com.ddemachim.server.domain.route.dto.RouteComparisonResponse.RouteOption;
 import com.ddemachim.server.domain.route.enums.RouteMode;
 import com.ddemachim.server.domain.route.enums.RouteStatus;
-import com.ddemachim.server.domain.route.service.RouteProviderClient;
+import com.ddemachim.server.domain.route.service.CourseRouteProviderClient;
 import com.ddemachim.server.domain.route.service.SelectedTransitRoute;
 import java.time.LocalDate;
 import java.time.LocalTime;
@@ -142,7 +142,7 @@ class CourseFastPlannerTransportSelectionTest {
                 null, null, 800, null, List.of());
     }
 
-    private static final class RecordingProvider implements RouteProviderClient {
+    private static final class RecordingProvider implements CourseRouteProviderClient {
         private final RouteOption walkingRoute;
         private final RouteOption transitRoute;
         private int walkingCalls;

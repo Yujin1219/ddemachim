@@ -26,6 +26,7 @@ CREATE TABLE IF NOT EXISTS place (
     transit_info VARCHAR(4000),
     accessibility VARCHAR(4000),
     tags VARCHAR ARRAY,
+    default_dwell_minutes INTEGER,
     created_at TIMESTAMP WITH TIME ZONE NOT NULL,
     updated_at TIMESTAMP WITH TIME ZONE NOT NULL
 );

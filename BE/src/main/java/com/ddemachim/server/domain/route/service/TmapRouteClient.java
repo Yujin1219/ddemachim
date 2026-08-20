@@ -34,9 +34,10 @@ import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.ObjectMapper;
 
 @Component
-public class TmapRouteClient implements RoadRouteProviderClient {
+public class TmapRouteClient implements CourseRouteProviderClient {
 
     private static final String WALKING_PATH = "/tmap/routes/pedestrian?version=1";
+    private static final String TRANSIT_PATH = "/transit/routes";
     private static final String TAXI_PATH = "/tmap/routes?version=1";
     private static final Duration DEFAULT_CACHE_TTL = Duration.ofMinutes(2);
     private static final long DEFAULT_CACHE_MAXIMUM_SIZE = 1_000L;
@@ -471,6 +472,71 @@ public class TmapRouteClient implements RoadRouteProviderClient {
         return null;
     }
 
+    private static List<RouteLeg> transitLegs(JsonNode itinerary) {
+        JsonNode legs = itinerary.path("legs");
+        if (!legs.isArray() || legs.isEmpty()) {
+            throw unavailable();
+        }
+        List<RouteLeg> result = new ArrayList<>();
+        for (JsonNode leg : legs) {
+            if (leg == null || !leg.isObject()) {
+                throw unavailable();
+            }
+            String rawMode = text(leg, "mode");
+            RouteMode mode = transitMode(rawMode);
+            Integer duration = integer(leg, "sectionTime");
+            Integer distance = integer(leg, "distance");
+            if (mode == null || duration == null || duration < 0 || distance == null || distance < 0) {
+                throw unavailable();
+            }
+            LineStringGeometry geometry = transitGeometry(leg.path("passShape").path("linestring"));
+            String routeName = firstText(leg, "routeName", "route", "service");
+            result.add(new RouteLeg(mode, routeName, duration, distance, geometry));
+        }
+        return List.copyOf(result);
+    }
+
+    private static LineStringGeometry transitGeometry(JsonNode linestring) {
+        if (linestring.isMissingNode() || linestring.isNull() || linestring.asString("").isBlank()) {
+            return null;
+        }
+        String value = linestring.asString("").trim();
+        String[] pairs = value.split("\\s+");
+        List<List<Double>> coordinates = new ArrayList<>();
+        for (String pair : pairs) {
+            String[] values = pair.split(",");
+            if (values.length != 2) {
+                throw unavailable();
+            }
+            try {
+                double longitude = Double.parseDouble(values[0]);
+                double latitude = Double.parseDouble(values[1]);
+                if (!validWgs84(longitude, latitude)) {
+                    throw unavailable();
+                }
+                coordinates.add(List.of(longitude, latitude));
+            } catch (NumberFormatException exception) {
+                throw unavailable();
+            }
+        }
+        if (coordinates.size() < 2) {
+            throw unavailable();
+        }
+        return new LineStringGeometry(coordinates);
+    }
+
+    private static RouteMode transitMode(String rawMode) {
+        if (rawMode == null || rawMode.isBlank()) {
+            return null;
+        }
+        return "WALK".equalsIgnoreCase(rawMode) ? RouteMode.WALK : RouteMode.TRANSIT;
+    }
+
+    private static Integer fare(JsonNode itinerary) {
+        JsonNode fare = itinerary.path("fare").path("regular").path("totalFare");
+        return number(fare);
+    }
+
     private static Integer integer(JsonNode node, String field) {
         return number(node.path(field));
     }
@@ -503,6 +569,25 @@ public class TmapRouteClient implements RoadRouteProviderClient {
                 && longitude <= 180.0
                 && latitude >= -90.0
                 && latitude <= 90.0;
+    }
+
+    private static String text(JsonNode node, String field) {
+        JsonNode value = node.path(field);
+        if (value.isMissingNode() || value.isNull()) {
+            return null;
+        }
+        String text = value.asString("").trim();
+        return text.isBlank() ? null : text;
+    }
+
+    private static String firstText(JsonNode node, String... fields) {
+        for (String field : fields) {
+            String value = text(node, field);
+            if (value != null) {
+                return value;
+            }
+        }
+        return null;
     }
 
     private record LineFeature(

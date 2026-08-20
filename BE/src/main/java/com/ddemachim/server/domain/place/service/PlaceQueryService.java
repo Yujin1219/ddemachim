@@ -7,6 +7,8 @@ import com.ddemachim.server.domain.place.dto.PlaceSummaryResponse;
 import com.ddemachim.server.domain.place.dto.PlaceTrendResponse;
 import com.ddemachim.server.domain.place.dto.PlaceTrendSummaryResponse;
 import com.ddemachim.server.domain.place.entity.Place;
+import com.ddemachim.server.domain.place.entity.PlaceTrendSnapshot;
+import com.ddemachim.server.domain.place.enums.PlaceTrendStatus;
 import com.ddemachim.server.domain.place.exception.InvalidFilmingContentTypeException;
 import com.ddemachim.server.domain.place.exception.InvalidPlaceBoundsException;
 import com.ddemachim.server.domain.place.exception.InvalidPlaceTrendLimitException;
@@ -76,7 +78,21 @@ public class PlaceQueryService {
                         .map(PlaceOperatingHoursResponse::from)
                         .toList();
 
-        return PlaceDetailResponse.of(place, operatingHours);
+        PlaceTrendResponse trend = findVisibleTrend(id);
+        return PlaceDetailResponse.of(place, operatingHours, trend);
+    }
+
+    public List<PlaceTrendSummaryResponse> getTrends(Integer limit) {
+        int safeLimit = normalizeTrendLimit(limit);
+        List<PlaceTrendSnapshot> snapshots = placeTrendSnapshotRepository.findLatestVisibleSnapshots(
+                org.springframework.data.domain.PageRequest.of(0, safeLimit));
+
+        return snapshots.stream()
+                .filter(snapshot -> isVisibleTrendStatus(snapshot.getStatus()))
+                .map(snapshot -> PlaceTrendSummaryResponse.of(
+                        snapshot.getPlace(),
+                        PlaceTrendResponse.from(snapshot)))
+                .toList();
     }
 
     public List<PlaceMapResponse> getPlacesInBounds(

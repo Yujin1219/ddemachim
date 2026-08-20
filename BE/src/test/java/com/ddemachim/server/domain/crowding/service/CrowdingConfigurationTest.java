@@ -3,7 +3,6 @@ package com.ddemachim.server.domain.crowding.service;
 import static org.assertj.core.api.Assertions.assertThat;
 
 import com.ddemachim.server.global.properties.CrowdingMockProperties;
-import java.io.IOException;
 import java.time.Duration;
 import java.util.Properties;
 import org.junit.jupiter.api.Test;
@@ -15,8 +14,8 @@ import org.springframework.boot.test.context.ConfigDataApplicationContextInitial
 import org.springframework.boot.test.context.runner.ApplicationContextRunner;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.context.annotation.Import;
-import org.springframework.core.io.ClassPathResource;
-import org.springframework.core.io.support.PropertiesLoaderUtils;
+import org.springframework.beans.factory.config.YamlPropertiesFactoryBean;
+import org.springframework.core.io.FileSystemResource;
 import org.springframework.data.redis.connection.RedisConnectionFactory;
 import org.springframework.data.redis.connection.lettuce.LettuceConnectionFactory;
 import org.springframework.data.redis.core.StringRedisTemplate;
@@ -39,22 +38,15 @@ class CrowdingConfigurationTest {
             .withUserConfiguration(CrowdingTestConfiguration.class);
 
     @Test
-    void applicationPropertiesShipsOnlyRedisAndCrowdingMockDefaults() throws IOException {
-        ClassPathResource resource = new ClassPathResource("application.properties");
+    void applicationYamlShipsRedisAndCrowdingMockDefaults() {
+        FileSystemResource resource = new FileSystemResource("src/main/resources/application.yml");
         assertThat(resource.exists()).isTrue();
 
-        Properties properties = PropertiesLoaderUtils.loadProperties(resource);
+        YamlPropertiesFactoryBean factory = new YamlPropertiesFactoryBean();
+        factory.setResources(resource);
+        Properties properties = factory.getObject();
 
-        assertThat(properties.stringPropertyNames()).containsExactlyInAnyOrder(
-                "spring.data.redis.host",
-                "spring.data.redis.port",
-                "spring.data.redis.connect-timeout",
-                "spring.data.redis.timeout",
-                "ddemachim.crowding.mock.seed",
-                "ddemachim.crowding.mock.ttl",
-                "ddemachim.crowding.mock.zone",
-                "ddemachim.crowding.mock.maximum-viewport-grids",
-                "ddemachim.crowding.mock.maximum-batch-points");
+        assertThat(properties).isNotNull();
         assertThat(properties)
                 .containsEntry("spring.data.redis.host", "${REDIS_HOST:localhost}")
                 .containsEntry("spring.data.redis.port", "${REDIS_PORT:6379}")
@@ -63,8 +55,8 @@ class CrowdingConfigurationTest {
                 .containsEntry("ddemachim.crowding.mock.seed", "${MOCK_CROWDING_SEED:ddemachim-demo-v1}")
                 .containsEntry("ddemachim.crowding.mock.ttl", "24h")
                 .containsEntry("ddemachim.crowding.mock.zone", "Asia/Seoul")
-                .containsEntry("ddemachim.crowding.mock.maximum-viewport-grids", "5000")
-                .containsEntry("ddemachim.crowding.mock.maximum-batch-points", "300");
+                .containsEntry("ddemachim.crowding.mock.maximum-viewport-grids", 5000)
+                .containsEntry("ddemachim.crowding.mock.maximum-batch-points", 300);
     }
 
     @Test

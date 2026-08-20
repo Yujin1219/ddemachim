@@ -12,7 +12,7 @@ import com.ddemachim.server.domain.route.enums.RouteMode;
 import com.ddemachim.server.domain.route.enums.RouteStatus;
 import com.ddemachim.server.domain.route.enums.RouteUnavailableReason;
 import com.ddemachim.server.domain.route.exception.RouteProviderException;
-import com.ddemachim.server.domain.route.service.RouteProviderClient;
+import com.ddemachim.server.domain.route.service.CourseRouteProviderClient;
 import com.ddemachim.server.domain.route.service.SelectedTransitRoute;
 import com.ddemachim.server.domain.route.service.TransitWalkSegment;
 import java.time.Duration;
@@ -31,9 +31,9 @@ public class CourseFastPlanner {
     private static final Duration ARRIVAL_DEADLINE_BUFFER = Duration.ofMinutes(10);
     private static final int DEFAULT_WALK_DURATION_SECONDS = 20 * 60;
 
-    private final RouteProviderClient routeProviderClient;
+    private final CourseRouteProviderClient routeProviderClient;
 
-    public CourseFastPlanner(RouteProviderClient routeProviderClient) {
+    public CourseFastPlanner(CourseRouteProviderClient routeProviderClient) {
         this.routeProviderClient = routeProviderClient;
     }
 
@@ -101,7 +101,8 @@ public class CourseFastPlanner {
         PermutationPlan best = evaluateOrder(
                 request, places, scheduledStart, walkingRoutes, transitRoutes, order, rejectedReasons);
         if (best == null) {
-            return null;
+            return findFeasiblePermutation(
+                    request, places, scheduledStart, walkingRoutes, transitRoutes, rejectedReasons);
         }
 
         boolean improved;
@@ -126,6 +127,79 @@ public class CourseFastPlanner {
             }
         } while (improved);
         return best;
+    }
+
+    private PermutationPlan findFeasiblePermutation(
+            CoursePreviewRequest request,
+            List<ResolvedPlace> places,
+            LocalDateTime scheduledStart,
+            Map<DirectedLeg, RouteLookup> walkingRoutes,
+            Map<DirectedLeg, TransitLookup> transitRoutes,
+            Map<Integer, EnumSet<CourseFastPlanFailure.DiagnosticReason>> rejectedReasons) {
+        List<Integer> remaining = new ArrayList<>();
+        for (int index = 0; index < places.size(); index++) {
+            remaining.add(index);
+        }
+        return findFeasiblePermutation(
+                request,
+                places,
+                scheduledStart,
+                walkingRoutes,
+                transitRoutes,
+                rejectedReasons,
+                new ArrayList<>(),
+                remaining,
+                null);
+    }
+
+    private PermutationPlan findFeasiblePermutation(
+            CoursePreviewRequest request,
+            List<ResolvedPlace> places,
+            LocalDateTime scheduledStart,
+            Map<DirectedLeg, RouteLookup> walkingRoutes,
+            Map<DirectedLeg, TransitLookup> transitRoutes,
+            Map<Integer, EnumSet<CourseFastPlanFailure.DiagnosticReason>> rejectedReasons,
+            List<Integer> prefix,
+            List<Integer> remaining,
+            PermutationPlan best) {
+        if (remaining.isEmpty()) {
+            PermutationPlan candidate = evaluateOrder(
+                    request,
+                    places,
+                    scheduledStart,
+                    walkingRoutes,
+                    transitRoutes,
+                    prefix,
+                    rejectedReasons);
+            if (candidate == null) return best;
+            if (best == null
+                    || candidate.totalTravelSeconds() < best.totalTravelSeconds()
+                    || (candidate.totalTravelSeconds() == best.totalTravelSeconds()
+                    && compareRequestOrder(candidate.order(), best.order()) < 0)) {
+                return candidate;
+            }
+            return best;
+        }
+
+        PermutationPlan selected = best;
+        for (int index = 0; index < remaining.size(); index++) {
+            Integer destinationIndex = remaining.get(index);
+            List<Integer> nextPrefix = new ArrayList<>(prefix);
+            nextPrefix.add(destinationIndex);
+            List<Integer> nextRemaining = new ArrayList<>(remaining);
+            nextRemaining.remove(index);
+            selected = findFeasiblePermutation(
+                    request,
+                    places,
+                    scheduledStart,
+                    walkingRoutes,
+                    transitRoutes,
+                    rejectedReasons,
+                    nextPrefix,
+                    nextRemaining,
+                    selected);
+        }
+        return selected;
     }
 
     private List<Integer> nearestFeasibleOrder(

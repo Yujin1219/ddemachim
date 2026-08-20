@@ -11,6 +11,7 @@ import static org.springframework.test.web.client.response.MockRestResponseCreat
 import static org.springframework.test.web.client.response.MockRestResponseCreators.withSuccess;
 
 import com.ddemachim.server.domain.route.dto.RouteComparisonRequest.Coordinate;
+import com.ddemachim.server.domain.route.dto.RouteComparisonResponse.RouteLeg;
 import com.ddemachim.server.domain.route.dto.RouteComparisonResponse.RouteOption;
 import com.ddemachim.server.domain.route.enums.RouteMode;
 import com.ddemachim.server.domain.route.enums.RouteUnavailableReason;

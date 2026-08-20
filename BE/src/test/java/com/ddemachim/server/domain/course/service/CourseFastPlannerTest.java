@@ -18,7 +18,7 @@ import com.ddemachim.server.domain.route.enums.RouteMode;
 import com.ddemachim.server.domain.route.enums.RouteStatus;
 import com.ddemachim.server.domain.route.enums.RouteUnavailableReason;
 import com.ddemachim.server.domain.route.exception.RouteProviderException;
-import com.ddemachim.server.domain.route.service.RouteProviderClient;
+import com.ddemachim.server.domain.route.service.CourseRouteProviderClient;
 import com.ddemachim.server.domain.route.service.SelectedTransitRoute;
 import com.ddemachim.server.domain.route.service.TransitWalkSegment;
 import java.time.LocalDate;
@@ -408,7 +408,7 @@ class CourseFastPlannerTest {
     private record Call(Coordinate origin, Coordinate destination) {
     }
 
-    private static final class RecordingProvider implements RouteProviderClient {
+    private static final class RecordingProvider implements CourseRouteProviderClient {
 
         private final BiFunction<Coordinate, Coordinate, RouteOption> walking;
         private final List<Call> calls = new ArrayList<>();
@@ -425,7 +425,7 @@ class CourseFastPlannerTest {
 
         @Override
         public RouteOption findTransit(Coordinate origin, Coordinate destination) {
-            throw new AssertionError("FAST planner must only look up transit for selected long walking legs");
+            throw new RouteProviderException(RouteUnavailableReason.NO_ROUTE);
         }
 
         @Override
@@ -438,7 +438,7 @@ class CourseFastPlannerTest {
         }
     }
 
-    private static final class RichRecordingProvider implements RouteProviderClient {
+    private static final class RichRecordingProvider implements CourseRouteProviderClient {
 
         private final RouteOption walkingRoute;
         private final SelectedTransitRoute selectedTransit;

@@ -15,7 +15,7 @@ import com.ddemachim.server.domain.course.service.CoursePreviewInputResolver.Res
 import com.ddemachim.server.domain.route.dto.RouteComparisonResponse.RouteOption;
 import com.ddemachim.server.domain.route.enums.RouteMode;
 import com.ddemachim.server.domain.route.enums.RouteStatus;
-import com.ddemachim.server.domain.route.service.RouteProviderClient;
+import com.ddemachim.server.domain.route.service.CourseRouteProviderClient;
 import java.time.LocalDate;
 import java.time.LocalTime;
 import java.util.List;
@@ -27,7 +27,7 @@ class CourseQuietPlannerTest {
     void choosesLowerTravelPlusFourLevelCongestionPenaltyAtExpectedArrival() {
         ResolvedPlace nearCrowded = place(1L, 37.1, 126.1);
         ResolvedPlace fartherRelaxed = place(2L, 37.2, 126.2);
-        RouteProviderClient routes = mock(RouteProviderClient.class);
+        CourseRouteProviderClient routes = mock(CourseRouteProviderClient.class);
         when(routes.findTransit(any(), any())).thenAnswer(invocation -> {
             com.ddemachim.server.domain.route.dto.RouteComparisonRequest.Coordinate destination =
                     invocation.getArgument(1);
@@ -56,7 +56,7 @@ class CourseQuietPlannerTest {
                 1L, null, null, "장소", "서울 종로구", 37.1, 126.1,
                 1, 1, CourseDwellSource.DEFAULT, LocalTime.of(11, 0), CourseHoursSourceType.REAL,
                 LocalTime.of(9, 0), LocalTime.of(18, 0), false);
-        RouteProviderClient routes = mock(RouteProviderClient.class);
+        CourseRouteProviderClient routes = mock(CourseRouteProviderClient.class);
         when(routes.findTransit(any(), any())).thenReturn(route(60));
 
         CourseQuietPlanner.QuietPlan plan = new CourseQuietPlanner(
@@ -70,7 +70,7 @@ class CourseQuietPlannerTest {
     @Test
     void schedulesPastTheFormerDesiredEndBoundaryWhenOperatingHoursAllowIt() {
         ResolvedPlace place = place(1L, 37.1, 126.1);
-        RouteProviderClient routes = mock(RouteProviderClient.class);
+        CourseRouteProviderClient routes = mock(CourseRouteProviderClient.class);
         when(routes.findTransit(any(), any())).thenReturn(route(8 * 60 * 60));
 
         CourseQuietPlanner.QuietPlan plan = new CourseQuietPlanner(
