@@ -18,7 +18,6 @@ import {
   fetchFilmingWorks,
   fetchKakaoPlaces,
   fetchMapPlaces,
-  fetchMockCrowdingGrids,
   fetchMyProfile,
   fetchMediaContent,
   fetchMediaContents,
@@ -91,7 +90,6 @@ import {
   eventToMapMarker,
   mapEventsForFilter,
   mapFilterApiParams,
-  resolveCongestionPreference,
   tagMapItemsForFilter,
   toggleMapFilterSelection,
 } from '../utils/mapHomeFilters.js';
@@ -1089,18 +1087,6 @@ const FILMING_COLLECTION_FILTERS = [
 ];
 
 const FILMING_COLLECTION_PAGE_SIZE = 12;
-const CONGESTION_LAYER_STORAGE_KEY = 'ddemachim:jongno-congestion-layer';
-const CONGESTION_LEVELS = [
-  { level: '여유', label: '여유' },
-  { level: '보통', label: '보통' },
-  { level: '약간 붐빔', label: '약간 붐빔' },
-  { level: '붐빔', label: '붐빔' },
-];
-
-function readCongestionLayerPreference() {
-  if (typeof window === 'undefined') return false;
-  return resolveCongestionPreference(window.localStorage.getItem(CONGESTION_LAYER_STORAGE_KEY));
-}
 
 function normalizeMapCode(value) {
   return typeof value === 'string' ? value.trim().toUpperCase() : '';
@@ -1122,8 +1108,6 @@ function MapHome({ go, basketState, onBasketAdded, onBasketRefresh, onAuthRequir
   });
   const activeRouteMode = routeModeSelection.activeMode;
   const [activeMapFilterKeys, setActiveMapFilterKeys] = useState([]);
-  const [isCongestionLayerVisible, setIsCongestionLayerVisible] = useState(readCongestionLayerPreference);
-  const [selectedCongestionArea, setSelectedCongestionArea] = useState(null);
   const [activeEvents, setActiveEvents] = useState([]);
   const [eventStatus, setEventStatus] = useState('loading');
   const [loadedMapFilterKey, setLoadedMapFilterKey] = useState(null);
@@ -1213,11 +1197,6 @@ function MapHome({ go, basketState, onBasketAdded, onBasketRefresh, onAuthRequir
     return () => controller.abort();
   }, []);
 
-  useEffect(() => {
-    window.localStorage.setItem(CONGESTION_LAYER_STORAGE_KEY, isCongestionLayerVisible ? 'on' : 'off');
-    if (!isCongestionLayerVisible) setSelectedCongestionArea(null);
-  }, [isCongestionLayerVisible]);
-
   const nearbyByFilter = {
     전체: { title: '지금 가기 좋은 곳', place: nearbyPlace || { name: '주변 장소를 불러오는 중', meta: '', image: images.mapPlace, badge: '종로구' }, next: 'place' },
     촬영지: { title: '장면 속 가까운 곳', place: { name: '창덕궁 후원', meta: '도깨비 촬영지', image: images.popup, badge: '촬영지' }, next: 'filming-content' },
@@ -1262,10 +1241,6 @@ function MapHome({ go, basketState, onBasketAdded, onBasketRefresh, onAuthRequir
     }));
     return nextLocation;
   }), [locate]);
-  const selectCongestionArea = (area) => {
-    setSelectedCongestionArea(area);
-    if (area) dispatchMapHomeInteraction({ type: 'CROWDING_SELECTED' });
-  };
   const collapsedSheetOffset = selectedPlace ? 300 : 178;
   const isInsideMapBounds = (item, bounds) => {
     const latitude = Number(item?.latitude);
@@ -1328,10 +1303,6 @@ function MapHome({ go, basketState, onBasketAdded, onBasketRefresh, onAuthRequir
             }
             return visibleItems;
           },
-          loadCongestionInBounds: (bounds, options) => fetchMockCrowdingGrids(bounds, options),
-          showCongestionAreas: isCongestionLayerVisible,
-          selectedCongestionGridCode: selectedCongestionArea?.gridCode ?? null,
-          onCongestionAreaClick: selectCongestionArea,
           placeMarkerFilterKey: activeMapFilterKey,
           placeRequestKey: `${activeMapFilterKey}:${activeEvents.length}:${routeSelectionKey}`,
           routeLegs: selectedRoute?.status === 'AVAILABLE' ? selectedRoute.legs : [],
@@ -1408,17 +1379,7 @@ function MapHome({ go, basketState, onBasketAdded, onBasketRefresh, onAuthRequir
             >
               <SearchIcon />
             </motion.button>}
-        <button
-          className="map-congestion-switch"
-          type="button"
-          role="switch"
-          aria-checked={isCongestionLayerVisible}
-          onClick={() => setIsCongestionLayerVisible((current) => !current)}
-        >
-          <span>혼잡도</span>
-          <i aria-hidden="true"><b /></i>
-        </button>
-        {!selectedCongestionArea && (activeFilterHasError || activeFilterEmpty) && (
+        {(activeFilterHasError || activeFilterEmpty) && (
           <p className="map-filter-status" role="status">
             {activeFilterHasError
               ? `${activeFilterLabel} 중 일부 정보를 불러오지 못했어요`
@@ -1436,35 +1397,6 @@ function MapHome({ go, basketState, onBasketAdded, onBasketRefresh, onAuthRequir
         >
           <LocateFixed aria-hidden="true" size={20} strokeWidth={2.2} />
         </button>
-        {isCongestionLayerVisible && !selectedCongestionArea && (
-          <div className="map-congestion-legend" aria-label="혼잡도 범례">
-            <strong>혼잡도</strong>
-            {CONGESTION_LEVELS.map((item) => (
-              <span key={item.level} data-level={item.level}>
-                <i aria-hidden="true" />
-                {item.label}
-              </span>
-            ))}
-          </div>
-        )}
-        {isCongestionLayerVisible && selectedCongestionArea && (
-          <aside className="map-congestion-detail" aria-live="polite">
-            <button type="button" aria-label="혼잡도 상세 닫기" onClick={() => setSelectedCongestionArea(null)}><X aria-hidden="true" size={16} strokeWidth={2.2} /></button>
-            <span className="map-congestion-detail-level" data-level={selectedCongestionArea.levelLabel}>{selectedCongestionArea.levelLabel}</span>
-            <strong>{selectedCongestionArea.title}</strong>
-            <p>{selectedCongestionArea.gridCode}</p>
-            <dl>
-              <div>
-                <dt>혼잡도 점수</dt>
-                <dd>{selectedCongestionArea.scoreLabel}</dd>
-              </div>
-              <div>
-                <dt>기준 시간</dt>
-                <dd>{selectedCongestionArea.slotLabel}</dd>
-              </div>
-            </dl>
-          </aside>
-        )}
         <motion.section className={`bottom-sheet map-nearby-sheet motion-depth-sheet${isRouteRequested ? ' has-selected-route' : ''}`} data-collapsed={isNearbySheetCollapsed || undefined} initial={{ opacity: 0, y: 42 }} animate={{ opacity: 1, y: isNearbySheetCollapsed ? collapsedSheetOffset : 0 }} transition={{ opacity: { duration: 0.28, delay: 0.08 }, y: { type: 'spring', stiffness: 420, damping: 38 } }} drag="y" dragControls={nearbySheetDragControls} dragListener={false} dragConstraints={{ top: 0, bottom: collapsedSheetOffset }} dragElastic={0.06} dragMomentum={false} onDrag={(_, info) => { if (Math.abs(info.offset.y) > 6) didDragNearbySheetRef.current = true; }} onDragEnd={settleNearbySheet}>
           <button className="map-sheet-handle-button" type="button" aria-label={isNearbySheetCollapsed ? '주변 장소 패널 펼치기' : '주변 장소 패널 접기'} aria-expanded={!isNearbySheetCollapsed} onPointerDown={(event) => { didDragNearbySheetRef.current = false; nearbySheetDragControls.start(event); }} onClick={() => { if (didDragNearbySheetRef.current) { didDragNearbySheetRef.current = false; return; } dispatchMapHomeInteraction({ type: 'SHEET_TOGGLED' }); }}><span className="sheet-handle" /></button>
           <div className="map-sheet-content" aria-hidden={isNearbySheetCollapsed || undefined} inert={isNearbySheetCollapsed ? true : undefined}>
