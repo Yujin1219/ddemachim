@@ -1,8 +1,8 @@
-import { ShoppingBasket } from 'lucide-react';
+import { MessageCircle, ShoppingBasket } from 'lucide-react';
 
 const ASSET_BASE = '/assets/app-header';
 
-export default function AppHeader({ basketCount = 0, onBasket, onProfile }) {
+export default function AppHeader({ basketCount = 0, onBasket, onLiveTalk }) {
   return (
     <header className="app-header" aria-label="때마침 공통 헤더">
       <div className="app-header-brand" aria-label="때마침 홈">
@@ -17,8 +17,8 @@ export default function AppHeader({ basketCount = 0, onBasket, onProfile }) {
           <ShoppingBasket aria-hidden="true" size={22} strokeWidth={2} />
           {basketCount > 0 && <span className="app-header-basket-count" aria-hidden="true">{basketCount > 99 ? '99+' : basketCount}</span>}
         </button>
-        <button type="button" className="app-header-profile" onClick={onProfile} aria-label="프로필">
-          <img src={`${ASSET_BASE}/avatar.svg`} alt="" />
+        <button type="button" className="app-header-action" onClick={onLiveTalk} aria-label="내 주변 지금톡" title="내 주변 지금톡">
+          <MessageCircle aria-hidden="true" size={23} strokeWidth={2} />
         </button>
       </div>
     </header>

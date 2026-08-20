@@ -1,7 +1,7 @@
-import { Compass, MapPinned, Route, UserRound } from 'lucide-react';
+import { Compass, MapPinned, Route, Sparkles, UserRound } from 'lucide-react';
 import { motion } from 'motion/react';
 
-const items = [{id:'map', label:'지도', Icon:MapPinned}, {id:'explore', label:'탐색', Icon:Compass}, {id:'course', label:'코스', Icon:Route}, {id:'my', label:'MY', Icon:UserRound}];
+const items = [{id:'map', label:'지도', Icon:MapPinned}, {id:'explore', label:'탐색', Icon:Compass}, {id:'assistant', label:'AI 가이드', Icon:Sparkles}, {id:'course', label:'코스', Icon:Route}, {id:'my', label:'MY', Icon:UserRound}];
 
 export default function BottomNav({ active, onNavigate }) {
   return <nav className="bottom-nav" aria-label="주요 메뉴">{items.map(({ id, label, Icon }) => {

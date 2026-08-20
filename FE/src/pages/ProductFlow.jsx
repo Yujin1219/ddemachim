@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from 'react';
-import { motion, useDragControls, useReducedMotion } from 'motion/react';
+import { motion, useReducedMotion } from 'motion/react';
 import { CalendarDays, ChevronLeft, ChevronRight, CircleDollarSign, CircleHelp, Clapperboard, Clock3, Coffee, ExternalLink, Flame, Heart, Image as ImageIcon, LocateFixed, MapPin, Minus, MoreHorizontal, Plus, RefreshCw, Search, SearchX, SendHorizontal, ShoppingBasket, UserRound, Utensils, X } from 'lucide-react';
 import AppHeader from '../components/AppHeader';
 import BottomNav from '../components/BottomNav';
@@ -101,7 +101,7 @@ import { guardSceneRouteHash } from '../sceneCamera/routes.js';
 
 const routeGroups = {
   auth: ['splash', 'intro', 'login', 'signup', 'onboarding', 'onboarding-schedule', 'onboarding-permissions'],
-  discovery: ['map', 'explore', 'place', 'event-detail', 'search', 'search-empty', 'saved', 'trending', 'filming-locations', 'popups', 'live-talk'],
+  discovery: ['map', 'explore', 'place', 'event-detail', 'search', 'search-empty', 'saved', 'trending', 'filming-locations', 'popups', 'live-talk', 'ai-guide'],
   course: ['course-home', 'course-conditions', 'course-place-times', 'basket', 'basket-natural', 'basket-glass', 'compare', 'route-map'],
   travel: ['progress', 'arrival', 'navigation', 'reroute', 'reroute-applied', 'transit', 'taxi', 'nearby', 'nearby-added', 'nearby-arrival', 'active-course', 'next-stop', 'gps-error', 'taxi-handoff', 'offline', 'closed-place', 'stop-course'],
   filming: ['onsite', 'filming-work', 'filming-content', 'camera', 'scene-list', 'scene-detail', 'shot-result', 'photo-saved', 'image-missing', 'filming-restricted', 'report'],
@@ -110,7 +110,7 @@ const routeGroups = {
 };
 
 const routes = new Set(Object.values(routeGroups).flat());
-const rootRoutes = { map: 'map', explore: 'explore', course: 'course-home', my: 'my' };
+const rootRoutes = { map: 'map', explore: 'explore', assistant: 'ai-guide', course: 'course-home', my: 'my' };
 const images = {
   cafe: '/assets/figma/explore-cafe.jpeg',
   mapPlace: '/assets/figma/map-place.jpeg',
@@ -1120,10 +1120,7 @@ function MapHome({ go, basketState, onBasketAdded, onBasketRefresh, onAuthRequir
       isMapFocused: Boolean(selectedPlace),
     }),
   );
-  const { isMapFocused, isSheetCollapsed: isNearbySheetCollapsed } = mapHomeInteraction;
-  const [nearbyPlace, setNearbyPlace] = useState(null);
-  const nearbySheetDragControls = useDragControls();
-  const didDragNearbySheetRef = useRef(false);
+  const { isMapFocused } = mapHomeInteraction;
   const selectedDestination = normalizeRouteCoordinate(selectedPlace
     ? { latitude: selectedPlace.latitude, longitude: selectedPlace.longitude }
     : null);
@@ -1170,17 +1167,6 @@ function MapHome({ go, basketState, onBasketAdded, onBasketRefresh, onAuthRequir
   }, [locate, routeSelectionKey]);
 
   useEffect(() => {
-    let cancelled = false;
-    fetchPlaces({ district: '종로구', size: 1 })
-      .then((page) => {
-        const first = page.content?.[0];
-        if (!cancelled && first) setNearbyPlace(placeToCardProps(first));
-      })
-      .catch((error) => console.error('주변 장소를 불러오지 못했어요', error));
-    return () => { cancelled = true; };
-  }, []);
-
-  useEffect(() => {
     const controller = new AbortController();
     setEventStatus('loading');
     fetchEvents({ status: 'ONGOING', size: 200, signal: controller.signal })
@@ -1197,10 +1183,6 @@ function MapHome({ go, basketState, onBasketAdded, onBasketRefresh, onAuthRequir
     return () => controller.abort();
   }, []);
 
-  const nearbyByFilter = {
-    전체: { title: '지금 가기 좋은 곳', place: nearbyPlace || { name: '주변 장소를 불러오는 중', meta: '', image: images.mapPlace, badge: '종로구' }, next: 'place' },
-    촬영지: { title: '장면 속 가까운 곳', place: { name: '창덕궁 후원', meta: '도깨비 촬영지', image: images.popup, badge: '촬영지' }, next: 'filming-content' },
-  };
   const selectedPlaceCard = selectedPlace?.externalSource === 'KAKAO'
     ? {
         ...mapKakaoPlaceToMapCard(selectedPlace),
@@ -1214,19 +1196,11 @@ function MapHome({ go, basketState, onBasketAdded, onBasketRefresh, onAuthRequir
     : selectedPlace?.externalSource === 'KAKAO' || !selectedPlace
       ? null
       : { screen: 'place', id: selectedPlace.id };
-  const nearby = nearbyByFilter[activeMapFilters[0]?.label] || nearbyByFilter.전체;
   const selectMapFilter = (option) => {
     setActiveMapFilterKeys((current) => toggleMapFilterSelection(current, option.key));
     setSelectedPlace(null);
     setIsRouteRequested(false);
     setLoadedMapFilterKey(null);
-  };
-  const settleNearbySheet = (_, info) => {
-    dispatchMapHomeInteraction({
-      type: 'SHEET_DRAG_ENDED',
-      offsetY: info.offset.y,
-      velocityY: info.velocity.y,
-    });
   };
   const selectPlace = (place) => {
     setSelectedPlace(place);
@@ -1241,7 +1215,6 @@ function MapHome({ go, basketState, onBasketAdded, onBasketRefresh, onAuthRequir
     }));
     return nextLocation;
   }), [locate]);
-  const collapsedSheetOffset = selectedPlace ? 300 : 178;
   const isInsideMapBounds = (item, bounds) => {
     const latitude = Number(item?.latitude);
     const longitude = Number(item?.longitude);
@@ -1397,12 +1370,10 @@ function MapHome({ go, basketState, onBasketAdded, onBasketRefresh, onAuthRequir
         >
           <LocateFixed aria-hidden="true" size={20} strokeWidth={2.2} />
         </button>
-        <motion.section className={`bottom-sheet map-nearby-sheet motion-depth-sheet${isRouteRequested ? ' has-selected-route' : ''}`} data-collapsed={isNearbySheetCollapsed || undefined} initial={{ opacity: 0, y: 42 }} animate={{ opacity: 1, y: isNearbySheetCollapsed ? collapsedSheetOffset : 0 }} transition={{ opacity: { duration: 0.28, delay: 0.08 }, y: { type: 'spring', stiffness: 420, damping: 38 } }} drag="y" dragControls={nearbySheetDragControls} dragListener={false} dragConstraints={{ top: 0, bottom: collapsedSheetOffset }} dragElastic={0.06} dragMomentum={false} onDrag={(_, info) => { if (Math.abs(info.offset.y) > 6) didDragNearbySheetRef.current = true; }} onDragEnd={settleNearbySheet}>
-          <button className="map-sheet-handle-button" type="button" aria-label={isNearbySheetCollapsed ? '주변 장소 패널 펼치기' : '주변 장소 패널 접기'} aria-expanded={!isNearbySheetCollapsed} onPointerDown={(event) => { didDragNearbySheetRef.current = false; nearbySheetDragControls.start(event); }} onClick={() => { if (didDragNearbySheetRef.current) { didDragNearbySheetRef.current = false; return; } dispatchMapHomeInteraction({ type: 'SHEET_TOGGLED' }); }}><span className="sheet-handle" /></button>
-          <div className="map-sheet-content" aria-hidden={isNearbySheetCollapsed || undefined} inert={isNearbySheetCollapsed ? true : undefined}>
-            {!selectedPlace && <ScreenSection title={nearby.title} action="전체보기" onAction={() => go('explore')}><PlaceRow place={nearby.place} onClick={() => go(nearby.next, nearby.place.id)} /></ScreenSection>}
-            {selectedPlace && <PlaceRow place={selectedPlaceCard} onClick={selectedPlaceDetail ? () => go(selectedPlaceDetail.screen, selectedPlaceDetail.id) : undefined} />}
-            {selectedPlace && !isRouteRequested && <section className="map-place-choice" aria-label="선택한 장소 작업">
+        {selectedPlace && <motion.section className={`bottom-sheet map-nearby-sheet motion-depth-sheet${isRouteRequested ? ' has-selected-route' : ''}`} initial={{ opacity: 0, y: 42 }} animate={{ opacity: 1, y: 0 }} transition={{ opacity: { duration: 0.28 }, y: { type: 'spring', stiffness: 420, damping: 38 } }}>
+          <div className="map-sheet-content">
+            <PlaceRow place={selectedPlaceCard} onClick={selectedPlaceDetail ? () => go(selectedPlaceDetail.screen, selectedPlaceDetail.id) : undefined} />
+            {!isRouteRequested && <section className="map-place-choice" aria-label="선택한 장소 작업">
               <h2>이 장소에서 무엇을 할까요?</h2>
               <div className="map-place-choice-actions">
                 {selectedPlace.externalSource === 'KAKAO'
@@ -1413,7 +1384,7 @@ function MapHome({ go, basketState, onBasketAdded, onBasketRefresh, onAuthRequir
                 <ActionButton tone="secondary" onClick={() => setIsRouteRequested(true)}>현재 위치에서 길찾기</ActionButton>
               </div>
             </section>}
-            {selectedPlace && isRouteRequested && <>
+            {isRouteRequested && <>
                 <button className="map-route-back" type="button" onClick={() => setIsRouteRequested(false)}>‹ 장소 선택으로 돌아가기</button>
                 <SelectedPlaceRoutePanel
                   selectedPlace={selectedPlace}
@@ -1430,9 +1401,8 @@ function MapHome({ go, basketState, onBasketAdded, onBasketRefresh, onAuthRequir
                   onRetryRoute={retryRoute}
                   taxiHref={activeRouteMode === 'TAXI' ? buildKakaoTaxiHref(routeDestination) : null}
                 /></>}
-            {!selectedPlace && <button type="button" className="map-live-link" onClick={() => go('live-talk')}><span>내 주변 지금톡</span><small>현장 소식 6개&nbsp; ›</small></button>}
           </div>
-        </motion.section>
+        </motion.section>}
       </MapStage>
       <BottomNav active="map" onNavigate={(tab) => go(rootRoutes[tab])} />
     </section>
@@ -2672,6 +2642,27 @@ function CollectionScreen({ screen, go }) {
 
 }
 
+function AiGuide({ go }) {
+  return (
+    <section className="phone standard-screen tab-screen">
+      <main className="page-scroll explore-scroll">
+        <header className="tab-heading">
+          <p className="eyebrow">AI 여행 도우미</p>
+          <h1>어디로 갈지 같이 정해봐요</h1>
+          <p className="section-subtitle">취향과 일정에 맞는 장소와 코스를 대화로 추천할 예정이에요.</p>
+        </header>
+        <ScreenSection title="이렇게 물어보세요">
+          <div className="why-card">
+            <strong>“안국에서 조용한 카페 중심으로 3시간 코스 짜줘”</strong>
+            <p>챗봇 연결 전 화면 구성을 준비하고 있어요.</p>
+          </div>
+        </ScreenSection>
+      </main>
+      <BottomNav active="assistant" onNavigate={(tab) => go(rootRoutes[tab])} />
+    </section>
+  );
+}
+
 function LiveTalk({ go }) {
   const [draft, setDraft] = useState('');
   const [messages, setMessages] = useState([{ text: '창덕궁 쪽은 입장 줄이 거의 없어요.', mine: false }, { text: '도토리가든은 지금 바로 들어갔어요!', mine: true }, { text: '북촌 골목은 오후보다 한산해요.', mine: false }]);
@@ -3551,7 +3542,7 @@ function MyScreen({ screen, go }) {
 function AppScreenFrame({ basketCount, children, go, hideHeader = false }) {
   return (
     <div className="screen-frame">
-      {!hideHeader && <AppHeader basketCount={basketCount} onBasket={() => go('basket')} onProfile={() => go('my')} />}
+      {!hideHeader && <AppHeader basketCount={basketCount} onBasket={() => go('basket')} onLiveTalk={() => go('live-talk')} />}
       <div className={`screen-frame-content${hideHeader ? '' : ' with-app-header'}`}>{children}</div>
     </div>
   );
@@ -3567,6 +3558,7 @@ function RenderScreen({ screen, id, go, basketState, courseFlow, onBasketAdded, 
   else if (screen === 'search' || screen === 'search-empty') renderedScreen = <SearchResults screen={screen} go={go} />;
   else if (screen === 'saved') renderedScreen = <SavedConfirmation go={go} />;
   else if (screen === 'trending' || screen === 'filming-locations' || screen === 'popups') renderedScreen = <CollectionScreen screen={screen} go={go} />;
+  else if (screen === 'ai-guide') renderedScreen = <AiGuide go={go} />;
   else if (screen === 'live-talk') renderedScreen = <LiveTalk go={go} />;
   else if (screen === 'course-home') renderedScreen = <CourseHome go={go} onNavigate={(tab) => go(rootRoutes[tab])} />;
   else if (screen === 'course-conditions') renderedScreen = <CourseConditions go={go} draft={courseFlow.draft} onContinue={courseFlow.continueFromConditions} />;
@@ -3578,7 +3570,7 @@ function RenderScreen({ screen, id, go, basketState, courseFlow, onBasketAdded, 
   else if (routeGroups.record.includes(screen)) renderedScreen = <RecordScreen screen={screen} go={go} />;
   else renderedScreen = <MyScreen screen={screen} go={go} />;
 
-  return <AppScreenFrame basketCount={basketState.items.length} go={go} hideHeader={screen === 'place' || screen === 'filming-work' || screen === 'event-detail' || screen === 'camera' || screen === 'shot-result'}>{renderedScreen}</AppScreenFrame>;
+  return <AppScreenFrame basketCount={basketState.items.length} go={go} hideHeader={screen === 'place' || screen === 'filming-work' || screen === 'event-detail' || screen === 'live-talk' || screen === 'camera' || screen === 'shot-result'}>{renderedScreen}</AppScreenFrame>;
 }
 
 export default function ProductFlow() {
