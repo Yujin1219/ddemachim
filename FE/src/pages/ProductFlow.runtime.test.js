@@ -23,3 +23,24 @@ test('keeps MapHome filter and sheet runtime dependencies defined after integrat
     assert.equal(productFlowSource.includes(removedReference), false);
   }
 });
+
+test('threads the sanitized course preview failure into the compare results', () => {
+  assert.equal(productFlowSource.includes('failure={coursePreview?.failure}'), true);
+});
+
+test('renders the AI guide as an API-backed, composition-safe chat surface', () => {
+  for (const expectedReference of [
+    'message, history, currentLocation, previousResponseId, signal: controller.signal,',
+    'setPreviousResponseId(result?.responseId || null)',
+    'navigator.geolocation.getCurrentPosition(',
+    'slice(-AI_GUIDE_HISTORY_LIMIT)',
+    'role: role.toUpperCase()',
+    'event.nativeEvent?.isComposing',
+    'getAiGuideErrorPresentation(requestError)',
+    'error.technical',
+    'aria-live="polite"',
+    'disabled={!draft.trim() || isLoading}',
+  ]) {
+    assert.equal(productFlowSource.includes(expectedReference), true, `missing AI guide reference: ${expectedReference}`);
+  }
+});

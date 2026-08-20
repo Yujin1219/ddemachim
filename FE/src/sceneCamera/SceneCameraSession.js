@@ -282,9 +282,10 @@ export function shouldResetSceneSession(previous, next) {
   return true;
 }
 
-export function SceneCameraVideo(props) {
+export function SceneCameraVideo({ videoRef: providedVideoRef, ...props }) {
   const { state, bindVideo, cancelVideoBinding } = useSceneCamera();
-  const videoRef = useRef(null);
+  const internalVideoRef = useRef(null);
+  const videoRef = providedVideoRef || internalVideoRef;
   useEffect(() => {
     bindVideo(videoRef.current);
     return cancelVideoBinding;

@@ -82,6 +82,124 @@ export function validateCoursePreviewRequest(payload) {
   return null;
 }
 
+const COURSE_PREVIEW_FAILURE_GROUPS = [
+  { id: 'conditions', label: '출발 조건', action: 'conditions' },
+  { id: 'stops', label: '장소별 시간', action: 'stops' },
+  { id: 'route', label: '이동 경로', action: 'route' },
+];
+
+const COURSE_PREVIEW_FAILURE_RULES = {
+  PLACE_CLOSED: {
+    proposal: 'CHANGE_SERVICE_DATE',
+    group: 'conditions',
+    message: (placeName) => `${placeName}: 선택한 날짜에는 운영하지 않아요.`,
+  },
+  ARRIVAL_DEADLINE_EXCEEDED: {
+    proposal: 'RELAX_ARRIVAL_DEADLINE',
+    group: 'stops',
+    message: (placeName) => `${placeName}: 설정한 도착 시각을 맞추기 어려워요.`,
+  },
+  OPERATING_HOURS_EXCEEDED: {
+    proposal: 'ADJUST_VISIT_DURATION',
+    group: 'stops',
+    message: (placeName) => `${placeName}: 운영시간 안에 방문을 마치기 어려워요.`,
+  },
+  NO_FEASIBLE_ORDER: {
+    proposal: 'ADJUST_START_TIME',
+    group: 'conditions',
+    message: () => '현재 출발 시각으로는 장소별 조건을 모두 맞추기 어려워요.',
+  },
+  ROUTE_NOT_FOUND: {
+    proposal: 'CHECK_ROUTE_AVAILABILITY',
+    group: 'route',
+    message: (placeName) => `${placeName}: 이용 가능한 이동 경로를 찾지 못했어요.`,
+  },
+  ROUTE_UNAVAILABLE: {
+    proposal: 'CHECK_ROUTE_AVAILABILITY',
+    group: 'route',
+    message: (placeName) => `${placeName}: 이동 경로를 계산할 수 없어요.`,
+  },
+  ROUTE_PROVIDER_UNAVAILABLE: {
+    proposal: 'CHECK_ROUTE_AVAILABILITY',
+    group: 'route',
+    message: () => '현재 이동 경로 정보를 불러오기 어려워요.',
+  },
+  ROUTE_PROVIDER_NOT_CONFIGURED: {
+    proposal: 'CHECK_ROUTE_AVAILABILITY',
+    group: 'route',
+    message: () => '현재 이동 경로 정보를 확인할 수 없어요.',
+  },
+  ROUTE_PROVIDER_TIMEOUT: {
+    proposal: 'CHECK_ROUTE_AVAILABILITY',
+    group: 'route',
+    message: () => '이동 경로 확인을 완료하지 못했어요.',
+  },
+};
+
+function sanitizeCoursePreviewPlaceName(value) {
+  if (typeof value !== 'string') return null;
+  const cleaned = value
+    .replace(/[\u0000-\u001f\u007f-\u009f]/gu, '')
+    .replace(/[\u061c\u200e\u200f\u202a-\u202e\u2066-\u2069]/gu, '')
+    .replace(/\s+/gu, ' ')
+    .trim();
+  if (!cleaned) return null;
+  return Array.from(cleaned).slice(0, 60).join('');
+}
+
+export function normalizeCoursePreviewFailure(result, payload) {
+  if (!result || typeof result !== 'object' || Array.isArray(result)) return null;
+  const places = payload?.places;
+  if (!Array.isArray(places) || places.length < 1 || places.length > 5) return null;
+  const basketItemIds = places.map((place) => place?.basketItemId);
+  if (basketItemIds.some((id) => !Number.isSafeInteger(id) || id <= 0)) return null;
+  if (new Set(basketItemIds).size !== basketItemIds.length) return null;
+
+  const diagnostics = result.diagnostics;
+  if (!Number.isSafeInteger(result.requestedStopCount)
+    || result.requestedStopCount !== places.length
+    || !Array.isArray(diagnostics)
+    || diagnostics.length !== places.length) {
+    return null;
+  }
+
+  const messagesByGroup = new Map(COURSE_PREVIEW_FAILURE_GROUPS.map(({ id }) => [id, []]));
+  const itemsByGroup = new Map(COURSE_PREVIEW_FAILURE_GROUPS.map(({ id }) => [id, []]));
+  for (let index = 0; index < diagnostics.length; index += 1) {
+    const item = diagnostics[index];
+    if (!item || typeof item !== 'object' || Array.isArray(item)) return null;
+    if (!Number.isSafeInteger(item.basketItemId)
+      || item.basketItemId <= 0
+      || item.basketItemId !== basketItemIds[index]) {
+      return null;
+    }
+    const placeName = sanitizeCoursePreviewPlaceName(item.placeName);
+    const rule = typeof item.reason === 'string' && Object.hasOwn(COURSE_PREVIEW_FAILURE_RULES, item.reason)
+      ? COURSE_PREVIEW_FAILURE_RULES[item.reason]
+      : null;
+    if (!placeName || !rule || item.adjustmentProposal !== rule.proposal) return null;
+    messagesByGroup.get(rule.group).push(rule.message(placeName));
+    itemsByGroup.get(rule.group).push({
+      basketItemId: item.basketItemId,
+      placeName,
+      reason: item.reason,
+      adjustmentProposal: item.adjustmentProposal,
+    });
+  }
+
+  return {
+    groups: COURSE_PREVIEW_FAILURE_GROUPS
+      .filter(({ id }) => messagesByGroup.get(id).length > 0)
+      .map(({ id, label, action }) => ({
+        id,
+        label,
+        action,
+        messages: [...messagesByGroup.get(id)],
+        items: [...itemsByGroup.get(id)],
+      })),
+  };
+}
+
 export function coursePreviewErrorMessage(error) {
   const code = String(error?.code || '').toUpperCase();
   if (error?.status === 401 || code.includes('401')) {

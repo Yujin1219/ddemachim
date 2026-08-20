@@ -39,8 +39,21 @@ public interface PlaceRepository extends JpaRepository<Place, Long> {
                         case
                             when :tag = 'FILMING_LOCATION'
                                 and p.image_url is not null
+                                and exists (
+                                    select 1 from place_menu pm
+                                    where pm.place_id = p.id
+                                )
                             then 0
-                            else 1
+                            when :tag = 'FILMING_LOCATION'
+                                and p.image_url is not null
+                            then 1
+                            when :tag = 'FILMING_LOCATION'
+                                and exists (
+                                    select 1 from place_menu pm
+                                    where pm.place_id = p.id
+                                )
+                            then 2
+                            else 3
                         end,
                         p.id
                     """,
@@ -89,5 +102,62 @@ public interface PlaceRepository extends JpaRepository<Place, Long> {
             @Param("maxLat") Double maxLat,
             @Param("minLng") Double minLng,
             @Param("maxLng") Double maxLng,
+            @Param("limit") int limit);
+
+    @Query(
+            value = """
+                    select distinct p.*
+                    from place p
+                    left join place_category c on p.category_id = c.id
+                    where p.location is not null
+                    and (:categories is null or c.code = any(string_to_array(:categories, ',')))
+                    and (:area is null or p.district ilike concat('%', cast(:area as text), '%')
+                        or p.neighborhood ilike concat('%', cast(:area as text), '%')
+                        or p.road_address ilike concat('%', cast(:area as text), '%')
+                        or p.lot_address ilike concat('%', cast(:area as text), '%'))
+                    and (:query is null or :categories is not null
+                        or p.name ilike concat('%', cast(:query as text), '%')
+                        or p.description ilike concat('%', cast(:query as text), '%')
+                        or array_to_string(p.tags, ' ') ilike concat('%', cast(:query as text), '%'))
+                    order by p.id
+                    limit :limit
+                    """,
+            nativeQuery = true)
+    List<Place> searchForAi(
+            @Param("query") String query,
+            @Param("area") String area,
+            @Param("categories") String categories,
+            @Param("limit") int limit);
+
+    @Query(
+            value = """
+                    select p.id as "placeId",
+                           ST_Distance(
+                               cast(p.location as geography),
+                               cast(ST_SetSRID(ST_MakePoint(:longitude, :latitude), 4326) as geography)
+                           ) as "distanceMeters"
+                    from place p
+                    left join place_category c on p.category_id = c.id
+                    where p.location is not null
+                    and (:category is null or c.code = :category)
+                    and (:query is null or :category is not null
+                        or p.name ilike concat('%', cast(:query as text), '%')
+                        or p.description ilike concat('%', cast(:query as text), '%')
+                        or array_to_string(p.tags, ' ') ilike concat('%', cast(:query as text), '%'))
+                    and ST_DWithin(
+                        cast(p.location as geography),
+                        cast(ST_SetSRID(ST_MakePoint(:longitude, :latitude), 4326) as geography),
+                        :radiusMeters
+                    )
+                    order by "distanceMeters", p.id
+                    limit :limit
+                    """,
+            nativeQuery = true)
+    List<NearbyPlaceDistanceProjection> findNearbyForAi(
+            @Param("latitude") double latitude,
+            @Param("longitude") double longitude,
+            @Param("category") String category,
+            @Param("query") String query,
+            @Param("radiusMeters") int radiusMeters,
             @Param("limit") int limit);
 }

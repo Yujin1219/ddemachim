@@ -99,6 +99,20 @@ public class Course {
         this.plannedStopCount = plannedStopCount;
     }
 
+    public void start() {
+        if (status != CourseStatus.READY) {
+            throw new IllegalStateException("only a ready course can start");
+        }
+        status = CourseStatus.IN_PROGRESS;
+    }
+
+    public void archiveActive() {
+        if (status != CourseStatus.IN_PROGRESS) {
+            throw new IllegalStateException("only an in-progress course can be archived");
+        }
+        status = CourseStatus.ARCHIVED;
+    }
+
     private boolean belongsToThisCourse(Course revisionCourse) {
         if (revisionCourse == this) {
             return true;

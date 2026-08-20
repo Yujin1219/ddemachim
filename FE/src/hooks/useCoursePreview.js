@@ -4,10 +4,11 @@ import { fetchCoursePreview } from '../api/client.js';
 import {
   coursePreviewErrorMessage,
   normalizeCoursePreview,
+  normalizeCoursePreviewFailure,
   validateCoursePreviewRequest,
 } from '../components/coursePreviewModel.js';
 
-const INITIAL_STATE = { preview: null, status: 'idle', message: null };
+const INITIAL_STATE = { preview: null, failure: null, status: 'idle', message: null };
 
 export function useCoursePreview({ loadPreview = fetchCoursePreview, onAuthRequired } = {}) {
   const [state, setState] = useState(INITIAL_STATE);
@@ -36,7 +37,7 @@ export function useCoursePreview({ loadPreview = fetchCoursePreview, onAuthRequi
     if (inFlightRef.current) return inFlightRef.current;
     const validationMessage = validateCoursePreviewRequest(payload);
     if (validationMessage) {
-      setState({ preview: null, status: 'validation', message: validationMessage });
+      setState({ preview: null, failure: null, status: 'validation', message: validationMessage });
       return Promise.resolve(null);
     }
 
@@ -46,7 +47,7 @@ export function useCoursePreview({ loadPreview = fetchCoursePreview, onAuthRequi
     controllerRef.current?.abort();
     const controller = new AbortController();
     controllerRef.current = controller;
-    setState({ preview: null, status: 'loading', message: null });
+    setState({ preview: null, failure: null, status: 'loading', message: null });
 
     const requestPromise = Promise.resolve()
       .then(() => loadPreviewRef.current(payload, { signal: controller.signal }))
@@ -58,13 +59,16 @@ export function useCoursePreview({ loadPreview = fetchCoursePreview, onAuthRequi
           error.code = 'COURSE_PREVIEW_MALFORMED';
           throw error;
         }
-        setState({ preview, status: 'success', message: null });
+        setState({ preview, failure: null, status: 'success', message: null });
         return preview;
       })
       .catch((error) => {
         if (!mountedRef.current || requestIdRef.current !== requestId || controller.signal.aborted || error?.name === 'AbortError') return null;
         if (error?.status === 401) onAuthRequiredRef.current?.();
-        setState({ preview: null, status: 'error', message: coursePreviewErrorMessage(error) });
+        const failure = error?.status === 422 && error?.code === 'COURSE4222'
+          ? normalizeCoursePreviewFailure(error.result, payload)
+          : null;
+        setState({ preview: null, failure, status: 'error', message: coursePreviewErrorMessage(error) });
         return null;
       });
 

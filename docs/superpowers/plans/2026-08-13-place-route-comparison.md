@@ -1,6 +1,5 @@
 # Place Route Comparison Implementation Plan
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** 메인 지도에서 장소를 선택하면 현재 위치 기준 도보·최단 대중교통·택시 예상 시간과 경로를 보여주고, 택시 탭에서 카카오 T로 이동하게 한다.
 

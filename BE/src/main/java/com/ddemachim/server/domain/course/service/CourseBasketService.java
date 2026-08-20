@@ -3,6 +3,8 @@ package com.ddemachim.server.domain.course.service;
 import com.ddemachim.server.domain.course.dto.AddKakaoPlaceRequest;
 import com.ddemachim.server.domain.course.dto.CourseBasketItemResponse;
 import com.ddemachim.server.domain.course.entity.CourseBasketItem;
+import com.ddemachim.server.domain.course.exception.CourseErrorStatus;
+import com.ddemachim.server.domain.course.exception.CourseException;
 import com.ddemachim.server.domain.course.repository.CourseBasketItemRepository;
 import com.ddemachim.server.domain.place.entity.Place;
 import com.ddemachim.server.domain.place.entity.UserPlace;
@@ -78,6 +80,14 @@ public class CourseBasketService {
         return courseBasketItemRepository.findAllByMemberIdOrderByCreatedAtDescIdDesc(memberId).stream()
                 .map(CourseBasketItemResponse::from)
                 .toList();
+    }
+
+    @Transactional
+    public void deletePlace(Long memberId, Long basketItemId) {
+        CourseBasketItem item = courseBasketItemRepository
+                .findByIdAndMemberId(basketItemId, memberId)
+                .orElseThrow(() -> new CourseException(CourseErrorStatus.BASKET_ITEM_NOT_FOUND));
+        courseBasketItemRepository.delete(item);
     }
 
     public record AddResult(CourseBasketItemResponse item, boolean isCreated) {}

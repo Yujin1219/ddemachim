@@ -1,6 +1,5 @@
 # Place Review Preview Redesign Implementation Plan
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Replace the tall generic Place review card with a compact, Naver Map-familiar preview that presents accurate ratings, visible review photos, a clear full-review endpoint, and safe UI behavior for future API payloads.
 

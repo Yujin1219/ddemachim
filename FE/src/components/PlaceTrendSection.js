@@ -88,7 +88,7 @@ export function PlaceTrendSection({
     : h('p', { className: 'explore-inline-state' }, '트렌드 장소 목록을 표시할 수 없어요.');
   const sectionProps = {
     title: '요즘 이곳에서는',
-    subtitle: '상태가 확인된 장소를 모아봤어요.',
+    subtitle: '지금 주목받는 장소를 모았어요.',
     action: typeof onViewAll === 'function' ? '전체보기' : undefined,
     onAction: onViewAll,
     children: content,

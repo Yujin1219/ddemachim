@@ -1,6 +1,5 @@
 # ODsay Safe Diagnostics Implementation Plan
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** ODsay 호출 실패를 비밀정보 없이 서버 로그에서 구분하고 배열 형태의 ODsay 오류 응답을 정상 해석한다.
 

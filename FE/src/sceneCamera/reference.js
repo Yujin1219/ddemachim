@@ -1,6 +1,7 @@
 export const LOCAL_REFERENCE_STILLS = Object.freeze({
   1: Object.freeze({
     url: '/assets/scenes/filming-location-1.jpg',
+    outlineUrl: '/assets/scenes/filming-location-1-outline.svg',
     altText: '촬영지 1의 장면 구도 참고 이미지',
     attribution: '테스트용 임시 이미지 · 원본 제공: 경향신문(images.khan.co.kr)',
     width: 600,
@@ -22,18 +23,24 @@ export function normalizeReferenceStill(value, { origin = globalThis.location?.o
   const height = Number(value.height);
   if (!Number.isInteger(width) || width <= 0 || !Number.isInteger(height) || height <= 0) return null;
   if (![value.url, value.altText, value.attribution].every((item) => typeof item === 'string' && item.trim())) return null;
+  let outlineUrl = null;
   try {
     const base = origin || 'https://local.invalid';
     const url = new URL(value.url, base);
     if (url.origin !== new URL(base).origin) return null;
+    if (typeof value.outlineUrl === 'string' && value.outlineUrl.trim()) {
+      const outline = new URL(value.outlineUrl, base);
+      if (outline.origin === url.origin) outlineUrl = value.outlineUrl;
+    }
   } catch {
     return null;
   }
-  return { url: value.url, altText: value.altText.trim(), attribution: value.attribution.trim(), width, height };
+  return { url: value.url, outlineUrl, altText: value.altText.trim(), attribution: value.attribution.trim(), width, height };
 }
 
 export function resolveReferenceStill(id, map = LOCAL_REFERENCE_STILLS, options) {
-  return normalizeReferenceStill(map[id], options);
+  if (!id) return null;
+  return normalizeReferenceStill(map[1], options);
 }
 
 function withTimeout(promise, timeoutMs) {

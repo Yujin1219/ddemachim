@@ -20,10 +20,14 @@ import jakarta.persistence.UniqueConstraint;
 import java.math.BigDecimal;
 import java.time.LocalTime;
 import java.time.OffsetDateTime;
+import java.util.LinkedHashMap;
+import java.util.Map;
 import lombok.AccessLevel;
 import lombok.Getter;
 import lombok.NoArgsConstructor;
 import org.hibernate.annotations.CreationTimestamp;
+import org.hibernate.annotations.JdbcTypeCode;
+import org.hibernate.type.SqlTypes;
 
 @Entity
 @Table(
@@ -122,6 +126,10 @@ public class CourseStop {
 
     @Column(name = "event_end_time_snapshot")
     private LocalTime eventEndTimeSnapshot;
+
+    @JdbcTypeCode(SqlTypes.JSON)
+    @Column(name = "selected_route_snapshot", columnDefinition = "jsonb")
+    private Map<String, Object> selectedRouteSnapshot;
 
     @CreationTimestamp
     @Column(name = "created_at", nullable = false, updatable = false)
@@ -301,6 +309,13 @@ public class CourseStop {
         stop.event = event;
         stop.eventEndTimeSnapshot = eventEndTimeSnapshot;
         return stop;
+    }
+
+    public CourseStop withSelectedRouteSnapshot(Map<String, Object> selectedRouteSnapshot) {
+        this.selectedRouteSnapshot = selectedRouteSnapshot == null
+                ? null
+                : new LinkedHashMap<>(selectedRouteSnapshot);
+        return this;
     }
 
     private static void validate(

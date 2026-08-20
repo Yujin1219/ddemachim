@@ -13,6 +13,7 @@ import lombok.RequiredArgsConstructor;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
+import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
@@ -33,6 +34,15 @@ public class CourseBasketController {
     public ResponseEntity<ApiResponse<List<CourseBasketItemResponse>>> listPlaces(
             @AuthenticationPrincipal Long memberId) {
         return ResponseEntity.ok(ApiResponse.onSuccess(courseBasketService.listPlaces(memberId)));
+    }
+
+    @Operation(summary = "코스 장바구니 장소 삭제", description = "내 코스 장바구니에서 선택한 장소를 삭제합니다.")
+    @DeleteMapping("/places/{basketItemId}")
+    public ResponseEntity<ApiResponse<Void>> deletePlace(
+            @AuthenticationPrincipal Long memberId,
+            @Parameter(description = "삭제할 장바구니 항목 id") @PathVariable Long basketItemId) {
+        courseBasketService.deletePlace(memberId, basketItemId);
+        return ResponseEntity.ok(ApiResponse.<Void>onSuccess(null));
     }
 
     @Operation(summary = "코스 장바구니에 장소 담기", description = "이미 담긴 장소는 중복 생성하지 않고 기존 항목을 반환합니다.")

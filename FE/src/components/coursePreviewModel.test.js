@@ -74,6 +74,24 @@ function option(strategy, stops, overrides = {}) {
   };
 }
 
+function failurePayload(...basketItemIds) {
+  return {
+    places: basketItemIds.map((basketItemId) => ({ basketItemId })),
+  };
+}
+
+function failureResult(diagnostics, overrides = {}) {
+  return {
+    requestedStopCount: diagnostics.length,
+    diagnostics,
+    ...overrides,
+  };
+}
+
+function diagnostic(basketItemId, reason, adjustmentProposal, placeName = '서울공예박물관') {
+  return { basketItemId, placeName, reason, adjustmentProposal };
+}
+
 test('selects FAST by strategy and normalizes server times and stop order', () => {
   const preview = normalizeCoursePreview({
     generatedAt: '2026-08-18T01:00:00Z',
@@ -431,6 +449,167 @@ test('requires integer numeric basket IDs and dwell minutes', () => {
   assert.equal(validateCoursePreviewRequest({ ...payload, places: [{ ...payload.places[0], dwellMinutes: 60.5 }] }), invalidMessage);
   assert.equal(validateCoursePreviewRequest({ ...payload, places: [{ ...payload.places[0], dwellMinutes: false }] }), invalidMessage);
   assert.equal(validateCoursePreviewRequest({ ...payload, places: [{ ...payload.places[0], dwellMinutes: '60' }] }), invalidMessage);
+});
+
+test('normalizes every approved COURSE4222 reason into exact safe group copy', () => {
+  const normalizeFailure = coursePreviewModel.normalizeCoursePreviewFailure;
+  assert.equal(typeof normalizeFailure, 'function');
+  const cases = [
+    {
+      reason: 'PLACE_CLOSED',
+      proposal: 'CHANGE_SERVICE_DATE',
+      group: { id: 'conditions', label: '출발 조건', action: 'conditions', messages: ['서울공예박물관: 선택한 날짜에는 운영하지 않아요.'] },
+    },
+    {
+      reason: 'ARRIVAL_DEADLINE_EXCEEDED',
+      proposal: 'RELAX_ARRIVAL_DEADLINE',
+      group: { id: 'stops', label: '장소별 시간', action: 'stops', messages: ['서울공예박물관: 설정한 도착 시각을 맞추기 어려워요.'] },
+    },
+    {
+      reason: 'OPERATING_HOURS_EXCEEDED',
+      proposal: 'ADJUST_VISIT_DURATION',
+      group: { id: 'stops', label: '장소별 시간', action: 'stops', messages: ['서울공예박물관: 운영시간 안에 방문을 마치기 어려워요.'] },
+    },
+    {
+      reason: 'NO_FEASIBLE_ORDER',
+      proposal: 'ADJUST_START_TIME',
+      group: { id: 'conditions', label: '출발 조건', action: 'conditions', messages: ['현재 출발 시각으로는 장소별 조건을 모두 맞추기 어려워요.'] },
+    },
+    {
+      reason: 'ROUTE_NOT_FOUND',
+      proposal: 'CHECK_ROUTE_AVAILABILITY',
+      group: { id: 'route', label: '이동 경로', action: 'route', messages: ['서울공예박물관: 이용 가능한 이동 경로를 찾지 못했어요.'] },
+    },
+    {
+      reason: 'ROUTE_UNAVAILABLE',
+      proposal: 'CHECK_ROUTE_AVAILABILITY',
+      group: { id: 'route', label: '이동 경로', action: 'route', messages: ['서울공예박물관: 이동 경로를 계산할 수 없어요.'] },
+    },
+    {
+      reason: 'ROUTE_PROVIDER_UNAVAILABLE',
+      proposal: 'CHECK_ROUTE_AVAILABILITY',
+      group: { id: 'route', label: '이동 경로', action: 'route', messages: ['현재 이동 경로 정보를 불러오기 어려워요.'] },
+    },
+    {
+      reason: 'ROUTE_PROVIDER_NOT_CONFIGURED',
+      proposal: 'CHECK_ROUTE_AVAILABILITY',
+      group: { id: 'route', label: '이동 경로', action: 'route', messages: ['현재 이동 경로 정보를 확인할 수 없어요.'] },
+    },
+    {
+      reason: 'ROUTE_PROVIDER_TIMEOUT',
+      proposal: 'CHECK_ROUTE_AVAILABILITY',
+      group: { id: 'route', label: '이동 경로', action: 'route', messages: ['이동 경로 확인을 완료하지 못했어요.'] },
+    },
+  ];
+
+  cases.forEach(({ reason, proposal, group }) => {
+    assert.deepEqual(
+      normalizeFailure(failureResult([diagnostic(11, reason, proposal)]), failurePayload(11)),
+      { groups: [group] },
+      reason,
+    );
+  });
+});
+
+test('keeps every diagnostic in stable semantic group order without retaining raw fields', () => {
+  const normalizeFailure = coursePreviewModel.normalizeCoursePreviewFailure;
+  const result = failureResult([
+    diagnostic(11, 'ROUTE_PROVIDER_TIMEOUT', 'CHECK_ROUTE_AVAILABILITY', '첫 장소'),
+    diagnostic(12, 'OPERATING_HOURS_EXCEEDED', 'ADJUST_VISIT_DURATION', '둘째 장소'),
+    diagnostic(13, 'NO_FEASIBLE_ORDER', 'ADJUST_START_TIME', '셋째 장소'),
+    diagnostic(14, 'PLACE_CLOSED', 'CHANGE_SERVICE_DATE', '넷째 장소'),
+    diagnostic(15, 'ROUTE_NOT_FOUND', 'CHECK_ROUTE_AVAILABILITY', '다섯째 장소'),
+  ], { message: '서버 원문', code: 'COURSE4222', extra: { secret: true } });
+  const before = structuredClone(result);
+
+  assert.deepEqual(normalizeFailure(result, failurePayload(11, 12, 13, 14, 15)), {
+    groups: [
+      {
+        id: 'conditions',
+        label: '출발 조건',
+        action: 'conditions',
+        messages: [
+          '현재 출발 시각으로는 장소별 조건을 모두 맞추기 어려워요.',
+          '넷째 장소: 선택한 날짜에는 운영하지 않아요.',
+        ],
+      },
+      {
+        id: 'stops',
+        label: '장소별 시간',
+        action: 'stops',
+        messages: ['둘째 장소: 운영시간 안에 방문을 마치기 어려워요.'],
+      },
+      {
+        id: 'route',
+        label: '이동 경로',
+        action: 'route',
+        messages: [
+          '이동 경로 확인을 완료하지 못했어요.',
+          '다섯째 장소: 이용 가능한 이동 경로를 찾지 못했어요.',
+        ],
+      },
+    ],
+  });
+  assert.deepEqual(result, before, 'normalization must not mutate the server result');
+});
+
+test('sanitizes control text, whitespace, bidi overrides, and limits names to 60 Unicode code points', () => {
+  const normalizeFailure = coursePreviewModel.normalizeCoursePreviewFailure;
+  const longName = `  서울\u0000\u0085  \u202E공예   ${'😀'.repeat(70)}  `;
+  const sanitizedName = `서울 공예 ${'😀'.repeat(54)}`;
+
+  assert.deepEqual(normalizeFailure(failureResult([
+    diagnostic(11, 'PLACE_CLOSED', 'CHANGE_SERVICE_DATE', longName),
+  ]), failurePayload(11)), {
+    groups: [{
+      id: 'conditions',
+      label: '출발 조건',
+      action: 'conditions',
+      messages: [`${sanitizedName}: 선택한 날짜에는 운영하지 않아요.`],
+    }],
+  });
+});
+
+test('rejects malformed, partial, mismatched, duplicate, and request-divergent diagnostics as a whole', () => {
+  const normalizeFailure = coursePreviewModel.normalizeCoursePreviewFailure;
+  const valid = diagnostic(11, 'PLACE_CLOSED', 'CHANGE_SERVICE_DATE');
+  const cases = [
+    [null, failurePayload(11)],
+    [{}, failurePayload(11)],
+    [failureResult([valid]), null],
+    [failureResult([valid]), { places: [] }],
+    [failureResult([valid]), { places: Array.from({ length: 6 }, (_, index) => ({ basketItemId: index + 1 })) }],
+    [failureResult([valid], { requestedStopCount: '1' }), failurePayload(11)],
+    [failureResult([valid], { requestedStopCount: 2 }), failurePayload(11)],
+    [failureResult([]), failurePayload(11)],
+    [failureResult([valid, valid]), failurePayload(11, 12)],
+    [failureResult([diagnostic(12, 'PLACE_CLOSED', 'CHANGE_SERVICE_DATE')]), failurePayload(11)],
+    [failureResult([diagnostic(12, 'PLACE_CLOSED', 'CHANGE_SERVICE_DATE'), diagnostic(11, 'PLACE_CLOSED', 'CHANGE_SERVICE_DATE')]), failurePayload(11, 12)],
+    [failureResult([valid]), failurePayload(11, 11)],
+    [failureResult([{ ...valid, basketItemId: 0 }]), failurePayload(0)],
+    [failureResult([{ ...valid, basketItemId: 1.5 }]), failurePayload(1.5)],
+    [failureResult([{ ...valid, basketItemId: Number.MAX_SAFE_INTEGER + 1 }]), failurePayload(Number.MAX_SAFE_INTEGER + 1)],
+    [failureResult([{ ...valid, placeName: '\u0000\u202E\u0085' }]), failurePayload(11)],
+    [failureResult([{ ...valid, reason: 'UNKNOWN_REASON' }]), failurePayload(11)],
+    [failureResult([{ ...valid, adjustmentProposal: 'ADJUST_START_TIME' }]), failurePayload(11)],
+    [failureResult([valid, { ...diagnostic(12, 'ROUTE_NOT_FOUND', 'CHECK_ROUTE_AVAILABILITY'), placeName: '' }]), failurePayload(11, 12)],
+  ];
+
+  cases.forEach(([result, payload], index) => {
+    assert.equal(normalizeFailure(result, payload), null, `invalid case ${index + 1}`);
+  });
+});
+
+test('rejects inherited object property names as unknown diagnostic reasons without throwing', () => {
+  const normalizeFailure = coursePreviewModel.normalizeCoursePreviewFailure;
+
+  for (const reason of ['__proto__', 'constructor']) {
+    assert.equal(normalizeFailure(failureResult([{
+      basketItemId: 11,
+      placeName: '서울공예박물관',
+      reason,
+    }]), failurePayload(11)), null, reason);
+  }
 });
 
 test('maps course and auth errors to actionable preview messages', () => {

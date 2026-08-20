@@ -73,15 +73,46 @@ async function request(path, options = {}) {
   const accessToken = auth ? getAccessToken() : null;
   if (accessToken) headers.set('Authorization', `Bearer ${accessToken}`);
 
-  const response = await fetch(`${BASE_URL}${path}`, { ...requestOptions, headers });
-  const responseText = await response.text();
+  let response;
+  try {
+    response = await fetch(`${BASE_URL}${path}`, { ...requestOptions, headers });
+  } catch (cause) {
+    if (cause?.name === 'AbortError') throw cause;
+    const error = new Error('백엔드 서버에 연결할 수 없습니다. 서버와 프록시 상태를 확인해주세요.');
+    error.name = 'ApiRequestError';
+    error.status = 0;
+    error.code = 'NETWORK_ERROR';
+    error.path = path;
+    error.method = requestOptions.method || 'GET';
+    error.cause = cause;
+    throw error;
+  }
+  let responseText;
+  try {
+    responseText = await response.text();
+  } catch (cause) {
+    const error = new Error('서버 응답을 받는 중 연결이 끊어졌습니다.');
+    error.name = 'ApiRequestError';
+    error.status = response.status;
+    error.code = 'RESPONSE_READ_ERROR';
+    error.path = path;
+    error.method = requestOptions.method || 'GET';
+    error.cause = cause;
+    throw error;
+  }
   let body = {};
   if (responseText) {
     try {
       body = JSON.parse(responseText);
     } catch {
       if (response.status === 401) clearAuth();
-      throw new Error(`API ${path} 응답을 읽지 못했어요.`);
+      const error = new Error(`API ${path} 응답을 JSON으로 읽지 못했습니다.`);
+      error.name = 'ApiRequestError';
+      error.status = response.status;
+      error.code = 'INVALID_RESPONSE';
+      error.path = path;
+      error.method = requestOptions.method || 'GET';
+      throw error;
     }
   }
   if (!response.ok || body.isSuccess === false) {
@@ -91,11 +122,80 @@ async function request(path, options = {}) {
     if (isAuthError) clearAuth();
 
     const error = new Error(body.message || `API ${path} failed: ${response.status}`);
+    error.name = 'ApiRequestError';
     error.status = isAuthError ? 401 : response.status;
     error.code = body.code;
+    error.path = path;
+    error.method = requestOptions.method || 'GET';
+    if (path === '/courses/preview' && response.status === 422 && body.code === 'COURSE4222') {
+      error.result = body.result;
+    }
     throw error;
   }
   return body.result;
+}
+
+const AI_GUIDE_ERROR_PRESENTATIONS = {
+  AIGUIDE4291: {
+    title: 'OpenAI 사용량 한도를 초과했어요',
+    message: 'OpenAI API의 분당 요청 한도와 프로젝트 결제 크레딧을 확인한 뒤 다시 시도해주세요.',
+  },
+  AIGUIDE5031: {
+    title: 'AI 가이드 설정이 필요해요',
+    message: '백엔드 실행 환경의 OPENAI_API_KEY와 OPENAI_MODEL을 확인한 뒤 서버를 재시작해주세요.',
+  },
+  AIGUIDE5021: {
+    title: 'OpenAI 서버에 연결하지 못했어요',
+    message: '백엔드는 실행 중이지만 OpenAI API 호출에 실패했습니다. 네트워크와 API 키의 프로젝트 상태를 확인해주세요.',
+  },
+  AIGUIDE5041: {
+    title: 'OpenAI 응답 시간이 초과됐어요',
+    message: '요청 처리 시간이 제한을 넘었습니다. 잠시 후 질문을 짧게 바꿔 다시 시도해주세요.',
+  },
+  AIGUIDE5022: {
+    title: 'OpenAI 응답 형식이 올바르지 않아요',
+    message: '모델이 해석할 수 없는 응답을 보냈습니다. 다시 시도해도 반복되면 백엔드 로그를 확인해주세요.',
+  },
+  AIGUIDE5023: {
+    title: '도구 호출 인자를 해석하지 못했어요',
+    message: 'OpenAI가 지원하지 않는 형식으로 함수를 요청했습니다. 질문을 조금 더 구체적으로 작성해주세요.',
+  },
+  AIGUIDE5024: {
+    title: '지원하지 않는 도구가 요청됐어요',
+    message: '현재 AI 가이드가 처리할 수 없는 기능입니다. 백엔드의 Tool 등록 상태를 확인해주세요.',
+  },
+  AIGUIDE4221: {
+    title: '도구 호출이 너무 많이 반복됐어요',
+    message: '필요한 장소·날짜·출발지 정보를 한 번에 알려주거나 새 대화로 다시 시도해주세요.',
+  },
+  NETWORK_ERROR: {
+    title: '백엔드 서버에 연결하지 못했어요',
+    message: 'localhost:8080의 백엔드와 Vite 프록시 설정을 확인한 뒤 다시 시도해주세요.',
+  },
+  INVALID_RESPONSE: {
+    title: '서버 응답을 읽지 못했어요',
+    message: '프록시가 JSON이 아닌 오류 페이지를 반환했을 수 있습니다. 백엔드와 Vite 터미널 로그를 확인해주세요.',
+  },
+  RESPONSE_READ_ERROR: {
+    title: '응답을 받는 중 연결이 끊겼어요',
+    message: '백엔드가 처리 중 종료됐거나 프록시 연결이 끊겼습니다. 두 서버의 터미널 로그를 확인해주세요.',
+  },
+};
+
+export function getAiGuideErrorPresentation(error) {
+  const code = String(error?.code || '');
+  const status = Number.isFinite(error?.status) ? error.status : null;
+  const known = AI_GUIDE_ERROR_PRESENTATIONS[code];
+  const fallback = status === 401
+    ? { title: '로그인이 필요해요', message: '다시 로그인한 뒤 AI 가이드 요청을 보내주세요.' }
+    : { title: 'AI 가이드 요청에 실패했어요', message: error?.message || '잠시 후 다시 시도해주세요.' };
+
+  return {
+    ...(known || fallback),
+    code: code || null,
+    status,
+    technical: [status ? `HTTP ${status}` : null, code || null].filter(Boolean).join(' · '),
+  };
 }
 
 function post(path, payload, options = {}) {
@@ -114,6 +214,12 @@ export function login({ email, password }) {
 
 export function fetchMyProfile({ signal } = {}) {
   return request('/v1/members/me', { signal, auth: true });
+}
+
+export function sendAiGuideMessage({ message, history = [], currentLocation = null, previousResponseId = null, signal } = {}) {
+  return post('/v1/ai-guide/chats', {
+    message, history, currentLocation, previousResponseId,
+  }, { signal, auth: true });
 }
 
 function toQuery(params = {}) {
@@ -205,8 +311,28 @@ export function fetchCourseBasketPlaces({ signal } = {}) {
   return request('/course-basket/places', { signal, auth: true });
 }
 
+export function deleteCourseBasketPlace(basketItemId, { signal } = {}) {
+  return request(`/course-basket/places/${basketItemId}`, { method: 'DELETE', signal, auth: true });
+}
+
 export function fetchCoursePreview(payload, { signal } = {}) {
   return post('/courses/preview', payload, { signal, auth: true });
+}
+
+export function createCourse(payload, { signal } = {}) {
+  return post('/courses', payload, { signal, auth: true });
+}
+
+export function fetchCourses({ status, signal } = {}) {
+  return request(`/courses${toQuery({ status })}`, { signal, auth: true });
+}
+
+export function fetchCourse(courseId, { signal } = {}) {
+  return request(`/courses/${courseId}`, { signal, auth: true });
+}
+
+export function startCourse(courseId, { replaceActive = false, signal } = {}) {
+  return post(`/courses/${courseId}/start`, { replaceActive }, { signal, auth: true });
 }
 
 export function fetchPlaceFilmingLocations(placeId) {

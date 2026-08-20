@@ -239,7 +239,18 @@ public class CoursePreviewInputResolver {
             CourseHoursSourceType hoursSourceType,
             LocalTime openTime,
             LocalTime closeTime,
-            boolean closed) {
+            boolean closed,
+            Long placeId) {
+
+        public ResolvedPlace(
+                Long basketItemId, Place place, UserPlace userPlace, String placeName, String address,
+                Double latitude, Double longitude, Integer defaultDwellMinutes, Integer dwellMinutes,
+                CourseDwellSource dwellSource, LocalTime arrivalDeadline, CourseHoursSourceType hoursSourceType,
+                LocalTime openTime, LocalTime closeTime, boolean closed) {
+            this(basketItemId, place, userPlace, placeName, address, latitude, longitude,
+                    defaultDwellMinutes, dwellMinutes, dwellSource, arrivalDeadline, hoursSourceType,
+                    openTime, closeTime, closed, place == null ? null : place.getId());
+        }
     }
 
     private record ResolvedHours(

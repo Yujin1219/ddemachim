@@ -35,7 +35,15 @@ public record CoursePreviewRequest(
         @Schema(description = "코스에 포함할 장바구니 장소와 사용자 설정", requiredMode = Schema.RequiredMode.REQUIRED)
                 @NotEmpty(message = "코스에 포함할 장소가 한 개 이상 필요합니다.")
                 @Size(max = 5, message = "코스에 포함할 장소는 최대 5개입니다.")
-                List<@NotNull @Valid Place> places) {
+                List<@NotNull @Valid Place> places,
+        @Schema(description = "AI 코스에서만 사용하는 최대 이용 가능 시간(분)", nullable = true)
+                @Min(value = 30, message = "사용 가능 시간은 30분 이상이어야 합니다.")
+                @Max(value = 1440, message = "사용 가능 시간은 1440분 이하여야 합니다.")
+                Integer availableMinutes) {
+
+    public CoursePreviewRequest(LocalDate serviceDate, LocalTime desiredStartTime, Start start, List<Place> places) {
+        this(serviceDate, desiredStartTime, start, places, null);
+    }
 
     @AssertTrue(message = "같은 장바구니 장소를 중복해서 요청할 수 없습니다.")
     @Schema(hidden = true)

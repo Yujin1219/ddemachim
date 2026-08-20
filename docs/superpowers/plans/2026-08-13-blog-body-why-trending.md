@@ -10,7 +10,6 @@
 
 ## Global Constraints
 
-- Execute inline without subagents.
 - Do not persist complete body HTML or complete body text.
 - Do not use shared topics to decide WATCH or TRENDING status.
 - Require three unique authors by default and return no explanation below that threshold.

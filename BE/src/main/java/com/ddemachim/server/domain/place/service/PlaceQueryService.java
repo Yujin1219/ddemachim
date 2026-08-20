@@ -2,6 +2,7 @@ package com.ddemachim.server.domain.place.service;
 
 import com.ddemachim.server.domain.place.dto.PlaceDetailResponse;
 import com.ddemachim.server.domain.place.dto.PlaceMapResponse;
+import com.ddemachim.server.domain.place.dto.PlaceMenuResponse;
 import com.ddemachim.server.domain.place.dto.PlaceOperatingHoursResponse;
 import com.ddemachim.server.domain.place.dto.PlaceSummaryResponse;
 import com.ddemachim.server.domain.place.dto.PlaceTrendResponse;
@@ -14,6 +15,7 @@ import com.ddemachim.server.domain.place.exception.InvalidPlaceTrendLimitExcepti
 import com.ddemachim.server.domain.place.exception.PlaceNotFoundException;
 import com.ddemachim.server.domain.place.repository.PlaceFilmingContentTypeProjection;
 import com.ddemachim.server.domain.place.repository.PlaceOperatingHoursRepository;
+import com.ddemachim.server.domain.place.repository.PlaceMenuRepository;
 import com.ddemachim.server.domain.place.repository.PlaceRepository;
 import com.ddemachim.server.domain.place.repository.PlaceTrendResultRepository;
 import java.util.HashMap;
@@ -42,6 +44,7 @@ public class PlaceQueryService {
     private static final List<String> FILMING_CONTENT_TYPE_ORDER = List.of("DRAMA", "VARIETY", "MOVIE");
     private final PlaceRepository placeRepository;
     private final PlaceOperatingHoursRepository placeOperatingHoursRepository;
+    private final PlaceMenuRepository placeMenuRepository;
     private final PlaceTrendResultRepository placeTrendResultRepository;
 
     public Page<PlaceSummaryResponse> search(
@@ -74,8 +77,12 @@ public class PlaceQueryService {
                         .map(PlaceOperatingHoursResponse::from)
                         .toList();
 
+        List<PlaceMenuResponse> menus = placeMenuRepository.findByPlaceIdOrderById(id).stream()
+                .map(PlaceMenuResponse::from)
+                .toList();
+
         PlaceTrendResponse trend = findVisibleTrend(id);
-        return PlaceDetailResponse.of(place, operatingHours, trend);
+        return PlaceDetailResponse.of(place, operatingHours, menus, trend);
     }
 
     public List<PlaceTrendSummaryResponse> getTrends(Integer limit) {

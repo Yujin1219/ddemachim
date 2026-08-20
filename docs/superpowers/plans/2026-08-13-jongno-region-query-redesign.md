@@ -1,6 +1,5 @@
 # Jongno Region Query Redesign Implementation Plan
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Collect Jongno blog-trend evidence with nine canonical commercial-area groups, exactly eighteen approved representative queries, up to 100 search results per query, and preserve aliases without duplicate region signals.
 

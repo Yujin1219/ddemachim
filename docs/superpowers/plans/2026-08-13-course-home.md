@@ -1,6 +1,5 @@
 # Course Home Implementation Plan
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Replace the course tab's creation-first landing screen with a mock-data course hub for scheduled, completed, and public courses.
 
@@ -73,4 +72,3 @@
 - [ ] Run the Impeccable detector once over changed UI files.
 - [ ] Start Vite on an available port and inspect the course tab at mobile and desktop viewports.
 - [ ] Confirm `+` opens `course-conditions`, tabs switch content, and public cards scroll horizontally.
-

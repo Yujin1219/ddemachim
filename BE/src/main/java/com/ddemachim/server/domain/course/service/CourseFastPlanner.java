@@ -30,6 +30,7 @@ public class CourseFastPlanner {
 
     private static final Duration ARRIVAL_DEADLINE_BUFFER = Duration.ofMinutes(10);
     private static final int DEFAULT_WALK_DURATION_SECONDS = 20 * 60;
+    private static final int FEASIBLE_ORDER_BEAM_WIDTH = 16;
 
     private final CourseRouteProviderClient routeProviderClient;
 
@@ -101,7 +102,7 @@ public class CourseFastPlanner {
         PermutationPlan best = evaluateOrder(
                 request, places, scheduledStart, walkingRoutes, transitRoutes, order, rejectedReasons);
         if (best == null) {
-            return findFeasiblePermutation(
+            return findFeasibleOrder(
                     request, places, scheduledStart, walkingRoutes, transitRoutes, rejectedReasons);
         }
 
@@ -129,77 +130,37 @@ public class CourseFastPlanner {
         return best;
     }
 
-    private PermutationPlan findFeasiblePermutation(
+    private PermutationPlan findFeasibleOrder(
             CoursePreviewRequest request,
             List<ResolvedPlace> places,
             LocalDateTime scheduledStart,
             Map<DirectedLeg, RouteLookup> walkingRoutes,
             Map<DirectedLeg, TransitLookup> transitRoutes,
             Map<Integer, EnumSet<CourseFastPlanFailure.DiagnosticReason>> rejectedReasons) {
-        List<Integer> remaining = new ArrayList<>();
-        for (int index = 0; index < places.size(); index++) {
-            remaining.add(index);
-        }
-        return findFeasiblePermutation(
-                request,
-                places,
-                scheduledStart,
-                walkingRoutes,
-                transitRoutes,
-                rejectedReasons,
-                new ArrayList<>(),
-                remaining,
-                null);
-    }
-
-    private PermutationPlan findFeasiblePermutation(
-            CoursePreviewRequest request,
-            List<ResolvedPlace> places,
-            LocalDateTime scheduledStart,
-            Map<DirectedLeg, RouteLookup> walkingRoutes,
-            Map<DirectedLeg, TransitLookup> transitRoutes,
-            Map<Integer, EnumSet<CourseFastPlanFailure.DiagnosticReason>> rejectedReasons,
-            List<Integer> prefix,
-            List<Integer> remaining,
-            PermutationPlan best) {
-        if (remaining.isEmpty()) {
-            PermutationPlan candidate = evaluateOrder(
-                    request,
-                    places,
-                    scheduledStart,
-                    walkingRoutes,
-                    transitRoutes,
-                    prefix,
-                    rejectedReasons);
-            if (candidate == null) return best;
-            if (best == null
-                    || candidate.totalTravelSeconds() < best.totalTravelSeconds()
-                    || (candidate.totalTravelSeconds() == best.totalTravelSeconds()
-                    && compareRequestOrder(candidate.order(), best.order()) < 0)) {
-                return candidate;
+        List<List<Integer>> beam = new ArrayList<>();
+        beam.add(List.of());
+        for (int depth = 0; depth < places.size(); depth++) {
+            List<PermutationPlan> expanded = new ArrayList<>();
+            for (List<Integer> prefix : beam) {
+                for (int destinationIndex = 0; destinationIndex < places.size(); destinationIndex++) {
+                    if (prefix.contains(destinationIndex)) continue;
+                    List<Integer> next = new ArrayList<>(prefix);
+                    next.add(destinationIndex);
+                    PermutationPlan candidate = evaluateOrder(
+                            request, places, scheduledStart, walkingRoutes, transitRoutes,
+                            next, rejectedReasons);
+                    if (candidate != null) expanded.add(candidate);
+                }
             }
-            return best;
+            if (expanded.isEmpty()) return null;
+            expanded.sort(Comparator.comparingLong(PermutationPlan::totalTravelSeconds)
+                    .thenComparing(PermutationPlan::order, CourseFastPlanner::compareRequestOrder));
+            beam = expanded.stream().limit(FEASIBLE_ORDER_BEAM_WIDTH)
+                    .map(PermutationPlan::order).toList();
         }
-
-        PermutationPlan selected = best;
-        for (int index = 0; index < remaining.size(); index++) {
-            Integer destinationIndex = remaining.get(index);
-            List<Integer> nextPrefix = new ArrayList<>(prefix);
-            nextPrefix.add(destinationIndex);
-            List<Integer> nextRemaining = new ArrayList<>(remaining);
-            nextRemaining.remove(index);
-            selected = findFeasiblePermutation(
-                    request,
-                    places,
-                    scheduledStart,
-                    walkingRoutes,
-                    transitRoutes,
-                    rejectedReasons,
-                    nextPrefix,
-                    nextRemaining,
-                    selected);
-        }
-        return selected;
+        List<Integer> bestOrder = beam.getFirst();
+        return evaluateOrder(request, places, scheduledStart, walkingRoutes, transitRoutes,
+                bestOrder, rejectedReasons);
     }
 
     private List<Integer> nearestFeasibleOrder(
@@ -340,6 +301,11 @@ public class CourseFastPlanner {
         }
 
         LocalDateTime departure = effectiveArrival.plusMinutes(place.dwellMinutes());
+        if (request.availableMinutes() != null
+                && departure.isAfter(request.serviceDate().atTime(request.desiredStartTime())
+                .plusMinutes(request.availableMinutes()))) {
+            return CandidateResult.rejected(CourseFastPlanFailure.DiagnosticReason.OPERATING_HOURS_EXCEEDED);
+        }
         if (place.closeTime() != null
                 && departure.isAfter(request.serviceDate().atTime(place.closeTime()))) {
             return CandidateResult.rejected(CourseFastPlanFailure.DiagnosticReason.OPERATING_HOURS_EXCEEDED);

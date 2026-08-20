@@ -2,6 +2,16 @@ spring:
   application:
     name: server
 
+  ai:
+    mcp:
+      server:
+        protocol: STREAMABLE
+        name: ddemachim-mcp-server
+        version: 0.0.1
+        type: SYNC
+        streamable-http:
+          mcp-endpoint: /mcp
+
   datasource:
     url: jdbc:postgresql://localhost:5432/ddemachim
     username: postgres
@@ -23,6 +33,17 @@ spring:
     show-sql: true
 
 ddemachim:
+  ai-guide:
+    enabled: ${AI_GUIDE_ENABLED:true}
+    api-key: ${OPENAI_API_KEY:}
+    model: ${OPENAI_MODEL:gpt-5.6-luna}
+    base-url: ${OPENAI_BASE_URL:https://api.openai.com}
+    connect-timeout: ${OPENAI_CONNECT_TIMEOUT:3s}
+    read-timeout: ${OPENAI_READ_TIMEOUT:45s}
+    max-output-tokens: ${OPENAI_MAX_OUTPUT_TOKENS:1200}
+    max-tool-rounds: ${OPENAI_MAX_TOOL_ROUNDS:4}
+    max-tool-calls: ${OPENAI_MAX_TOOL_CALLS:8}
+
   data-pipeline:
     scheduler:
       enabled: true

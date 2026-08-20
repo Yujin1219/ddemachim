@@ -10,7 +10,6 @@
 
 ## Global Constraints
 
-- Execute inline in the current task; do not dispatch subagents.
 - Preserve unrelated working-tree changes and do not read `.env`, dumps, or credentials.
 - Keep `uniqueQueries` for audit output but use `uniqueIntentCategories` for classification.
 - Keep Search Trend explicitly relative-only and never describe it as absolute search volume.

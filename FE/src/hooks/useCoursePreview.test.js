@@ -52,6 +52,26 @@ function response() {
   };
 }
 
+function course4222Error(result) {
+  const error = new Error('조건에 맞는 빠른 코스를 생성할 수 없습니다.');
+  error.status = 422;
+  error.code = 'COURSE4222';
+  error.result = result;
+  return error;
+}
+
+function validFailureResult() {
+  return {
+    requestedStopCount: 1,
+    diagnostics: [{
+      basketItemId: 11,
+      placeName: '서울공예박물관',
+      reason: 'PLACE_CLOSED',
+      adjustmentProposal: 'CHANGE_SERVICE_DATE',
+    }],
+  };
+}
+
 async function flushPromises() {
   await Promise.resolve();
   await Promise.resolve();
@@ -85,6 +105,7 @@ test('validates before fetch and shares one in-flight preview request', async ()
     });
     assert.equal(requests.length, 0);
     assert.equal(ref.current.status, 'validation');
+    assert.equal(ref.current.failure, null);
 
     let first;
     let duplicate;
@@ -96,6 +117,7 @@ test('validates before fetch and shares one in-flight preview request', async ()
     assert.equal(first, duplicate);
     assert.equal(requests.length, 1);
     assert.equal(ref.current.status, 'loading');
+    assert.equal(ref.current.failure, null);
 
     await act(async () => {
       requests[0].resolve(response());
@@ -105,6 +127,7 @@ test('validates before fetch and shares one in-flight preview request', async ()
     assert.equal(ref.current.status, 'success');
     assert.equal(ref.current.preview.strategy, 'FAST');
     assert.equal(ref.current.preview.stops[0].scheduledArrival, '10:00');
+    assert.equal(ref.current.failure, null);
   } finally {
     await act(async () => renderer?.unmount());
   }
@@ -136,6 +159,150 @@ test('reset aborts a pending request and suppresses its late result', async () =
     assert.equal(requests[0].options.signal.aborted, true);
     assert.equal(ref.current.status, 'idle');
     assert.equal(ref.current.preview, null);
+    assert.equal(ref.current.failure, null);
+  } finally {
+    await act(async () => renderer?.unmount());
+  }
+});
+
+test('stores only a request-matched sanitized COURSE4222 failure', async () => {
+  const loadPreview = async () => { throw course4222Error(validFailureResult()); };
+  const ref = createRef();
+  let renderer;
+  await act(async () => {
+    renderer = create(createElement(Harness, { ref, loadPreview }));
+    await flushPromises();
+  });
+
+  try {
+    await act(async () => {
+      await ref.current.submit(validPayload());
+      await flushPromises();
+    });
+
+    assert.equal(ref.current.status, 'error');
+    assert.deepEqual(ref.current.failure, {
+      groups: [{
+        id: 'conditions',
+        label: '출발 조건',
+        action: 'conditions',
+        messages: ['서울공예박물관: 선택한 날짜에는 운영하지 않아요.'],
+      }],
+    });
+  } finally {
+    await act(async () => renderer?.unmount());
+  }
+});
+
+test('falls back safely when COURSE4222 diagnostics are malformed or not an exact 4222 error', async () => {
+  const errors = [
+    course4222Error({ requestedStopCount: 1, diagnostics: [] }),
+    course4222Error({
+      requestedStopCount: 1,
+      diagnostics: [{ basketItemId: 11, placeName: '서울공예박물관', reason: '__proto__' }],
+    }),
+    course4222Error({
+      requestedStopCount: 1,
+      diagnostics: [{ basketItemId: 11, placeName: '서울공예박물관', reason: 'constructor' }],
+    }),
+    Object.assign(course4222Error(validFailureResult()), { status: 400 }),
+    Object.assign(course4222Error(validFailureResult()), { code: 'COURSE4221' }),
+  ];
+
+  for (const error of errors) {
+    const ref = createRef();
+    let renderer;
+    await act(async () => {
+      renderer = create(createElement(Harness, { ref, loadPreview: async () => { throw error; } }));
+      await flushPromises();
+    });
+    try {
+      await act(async () => {
+        await ref.current.submit(validPayload());
+        await flushPromises();
+      });
+      assert.equal(ref.current.status, 'error');
+      assert.equal(ref.current.failure, null);
+    } finally {
+      await act(async () => renderer?.unmount());
+    }
+  }
+});
+
+test('clears a prior structured failure through validation, retry loading, and success', async () => {
+  let callCount = 0;
+  let resolveRetry;
+  const loadPreview = () => {
+    callCount += 1;
+    if (callCount === 1) return Promise.reject(course4222Error(validFailureResult()));
+    return new Promise((resolve) => { resolveRetry = resolve; });
+  };
+  const ref = createRef();
+  let renderer;
+  await act(async () => {
+    renderer = create(createElement(Harness, { ref, loadPreview }));
+    await flushPromises();
+  });
+
+  try {
+    await act(async () => {
+      await ref.current.submit(validPayload());
+      await flushPromises();
+    });
+    assert.ok(ref.current.failure);
+
+    await act(async () => {
+      await ref.current.submit({ ...validPayload(), places: [] });
+      await flushPromises();
+    });
+    assert.equal(ref.current.status, 'validation');
+    assert.equal(ref.current.failure, null);
+
+    let retryPromise;
+    await act(async () => {
+      retryPromise = ref.current.retry();
+      await flushPromises();
+    });
+    assert.equal(ref.current.status, 'loading');
+    assert.equal(ref.current.failure, null);
+
+    await act(async () => {
+      resolveRetry(response());
+      await retryPromise;
+      await flushPromises();
+    });
+    assert.equal(ref.current.status, 'success');
+    assert.equal(ref.current.failure, null);
+  } finally {
+    await act(async () => renderer?.unmount());
+  }
+});
+
+test('preserves auth handling while refusing structured failure data on 401', async () => {
+  let authRequiredCount = 0;
+  const authError = new Error('로그인이 필요합니다.');
+  authError.status = 401;
+  authError.code = 'COURSE4222';
+  authError.result = validFailureResult();
+  const ref = createRef();
+  let renderer;
+  await act(async () => {
+    renderer = create(createElement(Harness, {
+      ref,
+      loadPreview: async () => { throw authError; },
+      onAuthRequired: () => { authRequiredCount += 1; },
+    }));
+    await flushPromises();
+  });
+
+  try {
+    await act(async () => {
+      await ref.current.submit(validPayload());
+      await flushPromises();
+    });
+    assert.equal(authRequiredCount, 1);
+    assert.equal(ref.current.status, 'error');
+    assert.equal(ref.current.failure, null);
   } finally {
     await act(async () => renderer?.unmount());
   }

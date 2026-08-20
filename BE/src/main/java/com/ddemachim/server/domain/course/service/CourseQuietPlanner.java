@@ -109,6 +109,11 @@ public class CourseQuietPlanner {
             if (arrival.isAfter(latestArrival)) return null;
         }
         LocalDateTime departure = arrival.plusMinutes(place.dwellMinutes());
+        if (request.availableMinutes() != null
+                && departure.isAfter(request.serviceDate().atTime(request.desiredStartTime())
+                .plusMinutes(request.availableMinutes()))) {
+            return null;
+        }
         if (place.closeTime() != null
                 && departure.isAfter(request.serviceDate().atTime(place.closeTime()))) {
             return null;

@@ -67,7 +67,18 @@ public record RouteComparisonResponse(Instant generatedAt, List<RouteOption> rou
             String streetName,
             Integer distanceMeters,
             String description,
-            LineStringGeometry geometry) {
+            LineStringGeometry geometry,
+            Double latitude,
+            Double longitude,
+            Integer turnType) {
+
+        public RouteStep(
+                String streetName,
+                Integer distanceMeters,
+                String description,
+                LineStringGeometry geometry) {
+            this(streetName, distanceMeters, description, geometry, null, null, null);
+        }
     }
 
     public record LineStringGeometry(String type, List<List<Double>> coordinates) {
