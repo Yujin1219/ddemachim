@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from 'react';
 import { motion, useDragControls, useReducedMotion } from 'motion/react';
-import { CalendarDays, ChevronLeft, ChevronRight, CircleDollarSign, CircleHelp, Clapperboard, Clock3, Coffee, ExternalLink, Flame, Heart, Image as ImageIcon, LocateFixed, MapPin, Minus, MoreHorizontal, Plus, RefreshCw, Search, SearchX, SendHorizontal, ShoppingBasket, Store, UserRound, Utensils, X } from 'lucide-react';
+import { CalendarDays, ChevronLeft, ChevronRight, CircleDollarSign, CircleHelp, Clapperboard, Clock3, Coffee, ExternalLink, Flame, Heart, Image as ImageIcon, LocateFixed, MapPin, Minus, MoreHorizontal, Plus, RefreshCw, Search, SearchX, SendHorizontal, ShoppingBasket, UserRound, Utensils, X } from 'lucide-react';
 import AppHeader from '../components/AppHeader';
 import BottomNav from '../components/BottomNav';
 import PlaceReviewPreview from '../components/PlaceReviewPreview';
@@ -1076,7 +1076,6 @@ const MAP_FILTER_ICONS = {
   ALL: MapPin,
   FILMING: Clapperboard,
   HOT: Flame,
-  POPUP: Store,
   EVENT: CalendarDays,
   RESTAURANT: Utensils,
   CAFE_DESSERT: Coffee,
@@ -1279,10 +1278,10 @@ function MapHome({ go, basketState, onBasketAdded, onBasketRefresh, onAuthRequir
       && longitude <= bounds.maxLng;
   };
   const activeFilterHasError = activeMapFilterKeys.some((filterKey) => (
-    (filterKey === 'POPUP' || filterKey === 'EVENT') && eventStatus === 'error'
+    filterKey === 'EVENT' && eventStatus === 'error'
   ));
   const activeFilterIsLoading = activeMapFilterKeys.some((filterKey) => (
-    (filterKey === 'POPUP' || filterKey === 'EVENT') && eventStatus === 'loading'
+    filterKey === 'EVENT' && eventStatus === 'loading'
   ));
   const activeFilterEmpty = activeMapFilterKeys.length > 0
     && !activeFilterHasError
@@ -1302,10 +1301,14 @@ function MapHome({ go, basketState, onBasketAdded, onBasketRefresh, onAuthRequir
           zoom: selectedPlace ? 17 : 15,
           loadPlacesInBounds: async (bounds) => {
             const groups = await Promise.all(activeMapFilters.map(async (filter) => {
-              const placesInBounds = await fetchMapPlaces({
-                ...bounds,
-                ...mapFilterApiParams(filter),
-              });
+              const placesInBounds = filter.key === 'HOT'
+                ? (await fetchPlaceTrends({ limit: 50 }))
+                    .filter((place) => isInsideMapBounds(place, bounds))
+                    .map((place) => ({ ...place, id: place.placeId ?? place.id }))
+                : await fetchMapPlaces({
+                    ...bounds,
+                    ...mapFilterApiParams(filter),
+                  });
               const eventMarkers = mapEventsForFilter(activeEvents, filter.key)
                 .filter((event) => isInsideMapBounds(event, bounds))
                 .map(eventToMapMarker);
