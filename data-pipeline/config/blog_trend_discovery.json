@@ -25,11 +25,11 @@
   "queryGeneration": {
     "intents": [
       {
-        "category": "FOOD",
+        "category": "CAFE",
         "phrase": "카페"
       },
       {
-        "category": "FOOD",
+        "category": "RESTAURANT",
         "phrase": "맛집"
       }
     ]
@@ -50,21 +50,16 @@
     ]
   },
   "selection": {
-    "strategy": "query_balanced",
-    "bodyLimit": 500,
-    "quotas": {
-      "relevance": 300,
-      "cross_query": 100,
-      "diversity": 50,
-      "exploration": 50
-    },
+    "strategy": "all_unique_in_window",
     "authorCap": 0,
     "regionMinimum": 2,
     "seed": "repeated-blog-trend-mvp"
   },
   "search": {
-    "resultsPerQuery": 500,
-    "pageSize": 100
+    "pageSize": 100,
+    "maxResultsPerQuery": 300,
+    "windowDays": 7,
+    "overlapDays": 1
   },
   "evidence": {
     "recentDays": 7
@@ -98,12 +93,8 @@
     }
   },
   "trend": {
-    "minimumRatio": 2.0,
-    "minimumRecentNonzeroObservations": 3,
-    "minimumBaselineNonzeroObservations": 7,
-    "recentDays": 7,
-    "baselineDays": 28,
-    "timeUnit": "date"
+    "timeUnit": "month",
+    "baselineMonths": 3
   },
   "paths": {
     "outputDir": "results/repeated_blog_trend",

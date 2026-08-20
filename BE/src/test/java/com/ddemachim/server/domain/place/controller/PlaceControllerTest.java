@@ -13,7 +13,8 @@ import com.ddemachim.server.domain.place.enums.PlaceTrendStatus;
 import com.ddemachim.server.domain.place.exception.InvalidPlaceTrendLimitException;
 import com.ddemachim.server.domain.place.service.PlaceQueryService;
 import com.ddemachim.server.global.apiPayload.exception.ExceptionAdvice;
-import java.time.LocalDate;
+import java.time.OffsetDateTime;
+import java.time.ZoneOffset;
 import java.util.List;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -40,15 +41,21 @@ class PlaceControllerTest {
     }
 
     @Test
-    void getTrends_returnsStatusAndUpdatedAtOnlyInsideCommonSuccessEnvelope() throws Exception {
+    void getTrends_returnsFinalTrendMetricsInsideCommonSuccessEnvelope() throws Exception {
+        OffsetDateTime measuredAt = OffsetDateTime.of(2026, 8, 13, 9, 0, 0, 0, ZoneOffset.ofHours(9));
         PlaceTrendResponse trend = new PlaceTrendResponse(
                 PlaceTrendStatus.TRENDING,
-                LocalDate.of(2026, 8, 13));
+                72.5,
+                65.0,
+                11.538,
+                measuredAt);
         PlaceTrendSummaryResponse response = new PlaceTrendSummaryResponse(
                 152L,
                 "콘웨이커피 안국점",
                 "종로구",
                 "카페",
+                37.5711,
+                126.9856,
                 null,
                 trend);
         when(placeQueryService.getTrends(6)).thenReturn(List.of(response));
@@ -61,10 +68,14 @@ class PlaceControllerTest {
                 .andExpect(jsonPath("$.result[0].name").value("콘웨이커피 안국점"))
                 .andExpect(jsonPath("$.result[0].district").value("종로구"))
                 .andExpect(jsonPath("$.result[0].categoryLabel").value("카페"))
+                .andExpect(jsonPath("$.result[0].latitude").value(37.5711))
+                .andExpect(jsonPath("$.result[0].longitude").value(126.9856))
                 .andExpect(jsonPath("$.result[0].imageUrl").doesNotExist())
                 .andExpect(jsonPath("$.result[0].trend.status").value("TRENDING"))
-                .andExpect(jsonPath("$.result[0].trend.summary").doesNotExist())
-                .andExpect(jsonPath("$.result[0].trend.keywords").doesNotExist())
+                .andExpect(jsonPath("$.result[0].trend.recentInterestAverage").value(72.5))
+                .andExpect(jsonPath("$.result[0].trend.previousInterestAverage").value(65.0))
+                .andExpect(jsonPath("$.result[0].trend.interestChangePercent").value(11.538))
+                .andExpect(jsonPath("$.result[0].trend.measuredAt").value("2026-08-13T09:00:00+09:00"))
                 .andExpect(jsonPath("$.result[0].trend.updatedAt").value("2026-08-13"));
 
         verify(placeQueryService).getTrends(6);
@@ -72,21 +83,21 @@ class PlaceControllerTest {
 
     @Test
     void getTrends_passesExplicitLimitToService() throws Exception {
-        when(placeQueryService.getTrends(20)).thenReturn(List.of());
+        when(placeQueryService.getTrends(50)).thenReturn(List.of());
 
-        mockMvc.perform(get("/api/places/trends").param("limit", "20"))
+        mockMvc.perform(get("/api/places/trends").param("limit", "50"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.isSuccess").value(true))
                 .andExpect(jsonPath("$.result").isEmpty());
 
-        verify(placeQueryService).getTrends(20);
+        verify(placeQueryService).getTrends(50);
     }
 
     @Test
     void getTrends_returnsTypedBadRequestForInvalidLimit() throws Exception {
-        when(placeQueryService.getTrends(21)).thenThrow(new InvalidPlaceTrendLimitException());
+        when(placeQueryService.getTrends(51)).thenThrow(new InvalidPlaceTrendLimitException());
 
-        mockMvc.perform(get("/api/places/trends").param("limit", "21"))
+        mockMvc.perform(get("/api/places/trends").param("limit", "51"))
                 .andExpect(status().isBadRequest())
                 .andExpect(jsonPath("$.isSuccess").value(false))
                 .andExpect(jsonPath("$.code").value("PLACE4003"))

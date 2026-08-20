@@ -70,11 +70,13 @@ public class PlaceController {
 
     @Operation(
             summary = "장소 트렌드 목록 조회",
-            description = "가장 최근 스냅샷이 TRENDING 또는 WATCH인 장소만 공개 트렌드 목록으로 조회합니다. "
-                    + "limit은 기본 6건이며 1~20건을 지원합니다. 트렌드 상태와 최신 스냅샷 날짜만 반환합니다.")
+            description = "성공한 트렌드 실행의 만료되지 않은 장소 결과만 공개 트렌드 목록으로 조회합니다. "
+                    + "장소별 최신 결과를 사용하며 TRENDING, 변화율 내림차순으로 정렬합니다. "
+                    + "상태, 최근/이전 Search Trend 평균, 변화율, 측정 시각과 기존 호환용 updatedAt 날짜를 반환합니다. "
+                    + "limit은 기본 6건이며 1~50건을 지원합니다.")
     @GetMapping("/trends")
     public ApiResponse<List<PlaceTrendSummaryResponse>> getTrends(
-            @Parameter(description = "반환할 장소 트렌드 수 (1~20, 기본 6)", example = "6")
+            @Parameter(description = "반환할 장소 트렌드 수 (1~50, 기본 6)", example = "6")
             @RequestParam(defaultValue = "6") Integer limit) {
         return ApiResponse.onSuccess(placeQueryService.getTrends(limit));
     }
@@ -82,7 +84,8 @@ public class PlaceController {
     @Operation(
             summary = "장소 상세 조회",
             description = "장소 id로 상세 정보(주소, 연락처, 설명, 운영시간, 대표 이미지 정보 등)를 조회합니다. "
-                    + "존재하지 않는 id면 404를 반환합니다.")
+                    + "성공한 트렌드 실행의 만료되지 않은 최신 트렌드 결과가 있으면 상태, Search Trend 평균, "
+                    + "변화율, 측정 시각, 기존 호환용 updatedAt 날짜를 함께 반환합니다. 존재하지 않는 id면 404를 반환합니다.")
     @GetMapping("/{id}")
     public ApiResponse<PlaceDetailResponse> getDetail(
             @Parameter(description = "장소 id") @PathVariable Long id) {

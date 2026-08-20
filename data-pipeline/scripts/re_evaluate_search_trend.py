@@ -32,11 +32,7 @@ from naver_search_trend import (  # noqa: E402
     batch_keyword_groups,
 )
 from src.db.connection import get_connection  # noqa: E402
-from src.loaders.blog_trend_loader import (  # noqa: E402
-    BlogTrendLoadStats,
-    ensure_search_trend_columns,
-    persist_blog_trend_run,
-)
+from src.loaders.blog_trend_loader import persist_blog_trend_run  # noqa: E402
 
 
 SCHEMA_VERSION = 2
@@ -594,6 +590,7 @@ def reevaluate_run(
     result = dict(run)
     result["schemaVersion"] = SCHEMA_VERSION
     result["collectionDate"] = as_of.isoformat()
+    result["measuredAt"] = _text(run.get("measuredAt")) or _utc_now()
     result["semantics"] = (
         f"{_text(run.get('semantics'))}; {TREND_SEMANTICS}"
         if _text(run.get("semantics"))
@@ -643,13 +640,17 @@ def persist_result_to_database(
     result: Mapping[str, Any],
     *,
     connection_factory: Callable[[], Any] = get_connection,
-    loader: Callable[[Any, Mapping[str, Any]], BlogTrendLoadStats] = persist_blog_trend_run,
+    loader: Callable[[Any, Mapping[str, Any]], Any] = persist_blog_trend_run,
 ) -> dict[str, int]:
-    """Apply the idempotent trend migration and upsert the refreshed snapshot."""
+    """Persist the refreshed weekly run and frontend-ready place results."""
 
     with connection_factory() as connection:
-        ensure_search_trend_columns(connection)
-        stats = loader(connection, result)
+        try:
+            stats = loader(connection, result)
+        except Exception:
+            # Preserve the loader's FAILED run state for retry/operations.
+            connection.commit()
+            raise
         connection.commit()
     return stats.as_dict()
 

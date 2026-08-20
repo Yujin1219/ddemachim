@@ -7,8 +7,7 @@ import com.ddemachim.server.domain.place.dto.PlaceSummaryResponse;
 import com.ddemachim.server.domain.place.dto.PlaceTrendResponse;
 import com.ddemachim.server.domain.place.dto.PlaceTrendSummaryResponse;
 import com.ddemachim.server.domain.place.entity.Place;
-import com.ddemachim.server.domain.place.entity.PlaceTrendSnapshot;
-import com.ddemachim.server.domain.place.enums.PlaceTrendStatus;
+import com.ddemachim.server.domain.place.entity.PlaceTrendResult;
 import com.ddemachim.server.domain.place.exception.InvalidFilmingContentTypeException;
 import com.ddemachim.server.domain.place.exception.InvalidPlaceBoundsException;
 import com.ddemachim.server.domain.place.exception.InvalidPlaceTrendLimitException;
@@ -16,7 +15,7 @@ import com.ddemachim.server.domain.place.exception.PlaceNotFoundException;
 import com.ddemachim.server.domain.place.repository.PlaceFilmingContentTypeProjection;
 import com.ddemachim.server.domain.place.repository.PlaceOperatingHoursRepository;
 import com.ddemachim.server.domain.place.repository.PlaceRepository;
-import com.ddemachim.server.domain.place.repository.PlaceTrendSnapshotRepository;
+import com.ddemachim.server.domain.place.repository.PlaceTrendResultRepository;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Locale;
@@ -38,15 +37,12 @@ public class PlaceQueryService {
     private static final int MAX_MAP_LIMIT = 500;
     private static final int DEFAULT_TREND_LIMIT = 6;
     private static final int MIN_TREND_LIMIT = 1;
-    private static final int MAX_TREND_LIMIT = 20;
+    private static final int MAX_TREND_LIMIT = 50;
     private static final Set<String> FILMING_CONTENT_TYPES = Set.of("DRAMA", "VARIETY", "MOVIE");
     private static final List<String> FILMING_CONTENT_TYPE_ORDER = List.of("DRAMA", "VARIETY", "MOVIE");
-    private static final Set<PlaceTrendStatus> VISIBLE_TREND_STATUSES = Set.of(
-            PlaceTrendStatus.TRENDING, PlaceTrendStatus.WATCH);
-
     private final PlaceRepository placeRepository;
     private final PlaceOperatingHoursRepository placeOperatingHoursRepository;
-    private final PlaceTrendSnapshotRepository placeTrendSnapshotRepository;
+    private final PlaceTrendResultRepository placeTrendResultRepository;
 
     public Page<PlaceSummaryResponse> search(
             String category,
@@ -84,14 +80,13 @@ public class PlaceQueryService {
 
     public List<PlaceTrendSummaryResponse> getTrends(Integer limit) {
         int safeLimit = normalizeTrendLimit(limit);
-        List<PlaceTrendSnapshot> snapshots = placeTrendSnapshotRepository.findLatestVisibleSnapshots(
+        List<PlaceTrendResult> results = placeTrendResultRepository.findLatestVisibleResults(
                 org.springframework.data.domain.PageRequest.of(0, safeLimit));
 
-        return snapshots.stream()
-                .filter(snapshot -> isVisibleTrendStatus(snapshot.getStatus()))
-                .map(snapshot -> PlaceTrendSummaryResponse.of(
-                        snapshot.getPlace(),
-                        PlaceTrendResponse.from(snapshot)))
+        return results.stream()
+                .map(result -> PlaceTrendSummaryResponse.of(
+                        result.getPlace(),
+                        PlaceTrendResponse.from(result)))
                 .toList();
     }
 
@@ -124,14 +119,9 @@ public class PlaceQueryService {
     }
 
     private PlaceTrendResponse findVisibleTrend(Long placeId) {
-        return placeTrendSnapshotRepository.findFirstByPlaceIdOrderBySnapshotDateDesc(placeId)
-                .filter(snapshot -> isVisibleTrendStatus(snapshot.getStatus()))
+        return placeTrendResultRepository.findFirstVisibleByPlaceId(placeId)
                 .map(PlaceTrendResponse::from)
                 .orElse(null);
-    }
-
-    private boolean isVisibleTrendStatus(PlaceTrendStatus status) {
-        return VISIBLE_TREND_STATUSES.contains(status);
     }
 
     private void validateBounds(Double minLat, Double maxLat, Double minLng, Double maxLng) {
