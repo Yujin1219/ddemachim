@@ -1341,17 +1341,40 @@ function MapHome({ go, basketState, onBasketAdded, onBasketRefresh, onAuthRequir
                 </div>
               </motion.div>
             </>
-          : <motion.button
-              className="map-search-restore"
-              type="button"
-              aria-label="검색 및 필터 펼치기"
-              onClick={() => dispatchMapHomeInteraction({ type: 'SEARCH_RESTORED' })}
-              initial={{ opacity: 0, scale: 0.9 }}
-              animate={{ opacity: 1, scale: 1 }}
+          : <motion.div
+              className="map-focused-controls"
+              initial={{ opacity: 0, y: -6 }}
+              animate={{ opacity: 1, y: 0 }}
               transition={{ type: 'spring', stiffness: 480, damping: 34 }}
             >
-              <SearchIcon />
-            </motion.button>}
+              <button
+                className="map-search-restore"
+                type="button"
+                aria-label="검색 및 필터 펼치기"
+                onClick={() => dispatchMapHomeInteraction({ type: 'SEARCH_RESTORED' })}
+              >
+                <SearchIcon />
+              </button>
+              {activeMapFilters.length > 0 && (
+                <div className="map-filter-bar map-filter-bar-compact" aria-label="선택한 장소 카테고리">
+                  {activeMapFilters.map((item) => {
+                    const FilterIcon = MAP_FILTER_ICONS[item.key];
+                    return (
+                      <button
+                        className={`map-filter-chip is-${item.tone} is-active`}
+                        key={item.key}
+                        onClick={() => selectMapFilter(item)}
+                        type="button"
+                        aria-pressed="true"
+                      >
+                        <FilterIcon aria-hidden="true" size={15} strokeWidth={2} />
+                        {item.label}
+                      </button>
+                    );
+                  })}
+                </div>
+              )}
+            </motion.div>}
         {(activeFilterHasError || activeFilterEmpty) && (
           <p className="map-filter-status" role="status">
             {activeFilterHasError

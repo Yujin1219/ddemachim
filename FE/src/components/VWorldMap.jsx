@@ -103,6 +103,7 @@ export default function VWorldMap({
   routeLegs = [],
   routeMode = 'WALK',
   routeFitKey = '',
+  routeFitCoordinates = [],
   routeFitPadding = DEFAULT_ROUTE_FIT_PADDING,
 }) {
   const targetRef = useRef(null)
@@ -583,7 +584,7 @@ export default function VWorldMap({
       maxZoom: 17,
       duration: resolveRouteFitDuration(),
     })
-  }, [routeFitKey, routeLegs, routeFitPadding])
+  }, [routeFitCoordinates, routeFitKey, routeLegs, routeFitPadding])
 
   useEffect(() => {
     congestionAreaLayerRef.current?.setVisible(showCongestionAreas)
