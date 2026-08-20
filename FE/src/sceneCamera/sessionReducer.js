@@ -1,4 +1,4 @@
-export const DEFAULT_OVERLAY = Object.freeze({ x: 0, y: 0, scale: 1, opacity: 0.5, visible: true });
+export const DEFAULT_OVERLAY = Object.freeze({ x: 0, y: 0, scale: 1, opacity: 0.45, visible: true, mode: 'image' });
 
 const clamp = (value, min, max) => Math.min(max, Math.max(min, Number(value)));
 
@@ -45,6 +45,7 @@ export function sceneCameraReducer(state, action) {
           scale: clamp(patch.scale ?? state.overlay.scale, 0.5, 2),
           opacity: clamp(patch.opacity ?? state.overlay.opacity, 0.1, 1),
           visible: patch.visible ?? state.overlay.visible,
+          mode: (patch.mode ?? state.overlay.mode) === 'image' ? 'image' : 'outline',
         },
       };
     }

@@ -1,6 +1,5 @@
 # Temporary Jongno Route Origin Implementation Plan
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** 메인 홈 경로 출발지를 광화문 좌표로 임시 고정하고 브라우저 위치 요청을 생략한다.
 

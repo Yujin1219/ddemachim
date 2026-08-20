@@ -5,13 +5,14 @@ import sys
 import unittest
 from pathlib import Path
 from typing import Any
+from unittest.mock import patch
 
 
 ROOT = Path(__file__).resolve().parents[1]
 SCHEMA_PATH = ROOT / "src" / "db" / "schema.sql"
 MIGRATION_PATH = ROOT / "src" / "db" / "add_blog_trend_tables.sql"
-REMOVAL_MIGRATION_PATH = ROOT / "src" / "db" / "migrate_remove_blog_trend_topics.sql"
-INTEREST_MIGRATION_PATH = ROOT / "src" / "db" / "add_search_trend_interest_columns.sql"
+SIMPLIFICATION_MIGRATION_PATH = ROOT / "src" / "db" / "migrate_simplify_blog_trend_persistence.sql"
+CLEANUP_MIGRATION_PATH = ROOT / "src" / "db" / "migrate_remove_unused_blog_trend_places.sql"
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
@@ -28,63 +29,94 @@ def _compact_sql(path: Path) -> str:
 
 
 class BlogTrendSchemaTest(unittest.TestCase):
-    def test_schema_defines_normalized_blog_trend_tables_and_identities(self) -> None:
+    def test_schema_defines_weekly_run_and_minimal_place_result_contract(self) -> None:
         self.assertTrue(MIGRATION_PATH.exists(), "blog trend migration SQL must exist")
         self.assertTrue(
-            REMOVAL_MIGRATION_PATH.exists(),
-            "blog trend topic removal migration SQL must exist",
+            SIMPLIFICATION_MIGRATION_PATH.exists(),
+            "blog trend simplification migration SQL must exist",
         )
+
+        for path in (SCHEMA_PATH, MIGRATION_PATH, SIMPLIFICATION_MIGRATION_PATH):
+            sql = _compact_sql(path)
+            self.assertIn("create table if not exists blog_trend_run", sql)
+            self.assertIn("unique (run_week)", sql)
+            self.assertIn("status varchar(10) not null", sql)
+            self.assertIn("check (status in ('running', 'success', 'failed'))", sql)
+            self.assertIn("started_at timestamptz not null", sql)
+            self.assertIn("finished_at timestamptz", sql)
+            self.assertIn("processed_place_count integer not null", sql)
+            self.assertIn("result_count integer not null", sql)
+            self.assertIn("failure_reason text", sql)
+            self.assertIn("create table if not exists place_trend_result", sql)
+            self.assertIn("run_id bigint not null references blog_trend_run(id)", sql)
+            self.assertIn("place_id bigint not null references place(id)", sql)
+            self.assertIn("status varchar(10) not null", sql)
+            self.assertIn("check (status in ('watch', 'trending'))", sql)
+            self.assertIn("recent_interest_average", sql)
+            self.assertIn("previous_interest_average", sql)
+            self.assertIn("interest_change_percent", sql)
+            self.assertIn("measured_at", sql)
+            self.assertIn("expires_at", sql)
+            self.assertIn("unique (run_id, place_id)", sql)
+            for obsolete in (
+                "blog_trend_observation",
+                "place_trend_snapshot",
+                "place_trend_keyword",
+                "body_topic_candidates",
+                "trend_month_values",
+            ):
+                self.assertNotIn(f"create table if not exists {obsolete}", sql)
+
+        migration_sql = _compact_sql(SIMPLIFICATION_MIGRATION_PATH)
+        self.assertIn("begin", migration_sql)
+        self.assertIn("drop table if exists blog_trend_observation", migration_sql)
+        self.assertIn("drop table if exists place_trend_snapshot", migration_sql)
+        self.assertIn("drop table if exists place_trend_keyword", migration_sql)
+        self.assertIn("commit", migration_sql)
+        dropped_tables = re.findall(r"drop table if exists ([a-z_]+)", migration_sql)
+        self.assertEqual(
+            set(dropped_tables),
+            {"blog_trend_observation", "place_trend_snapshot", "place_trend_keyword"},
+        )
+        self.assertNotIn("drop schema", migration_sql)
+        self.assertNotIn("truncate", migration_sql)
+
+    def test_cleanup_migration_is_conservative_transactional_and_fk_safe(self) -> None:
         self.assertTrue(
-            INTEREST_MIGRATION_PATH.exists(),
-            "Search Trend interest migration SQL must exist",
+            CLEANUP_MIGRATION_PATH.exists(),
+            "unused blog-trend place cleanup migration SQL must exist",
         )
+        cleanup_sql = _compact_sql(CLEANUP_MIGRATION_PATH)
 
-        for path in (SCHEMA_PATH, MIGRATION_PATH):
-            sql = _compact_sql(path)
-            self.assertIn("create table if not exists blog_trend_observation", sql)
-            self.assertIn("create table if not exists place_trend_snapshot", sql)
-            self.assertNotIn("create table if not exists place_trend_keyword", sql)
-            self.assertNotIn("body_topic_candidates", sql)
-            self.assertNotIn("explanation_available", sql)
-            self.assertNotIn("explanation_summary", sql)
-            self.assertNotIn("explanation_source", sql)
-            self.assertNotIn("explanation_minimum_authors", sql)
-            self.assertNotIn("explanation_reason", sql)
-            self.assertIn("unique (collection_date, query, post_url)", sql)
-            self.assertIn("unique (place_id, snapshot_date)", sql)
-
-        removal_sql = _compact_sql(REMOVAL_MIGRATION_PATH)
-        self.assertIn("begin", removal_sql)
-        self.assertIn("drop table if exists place_trend_keyword", removal_sql)
-        self.assertIn(
-            "alter table blog_trend_observation drop column if exists body_topic_candidates",
-            removal_sql,
-        )
-        for column in (
-            "explanation_available",
-            "explanation_summary",
-            "explanation_source",
-            "explanation_minimum_authors",
-            "explanation_reason",
+        self.assertIn("begin", cleanup_sql)
+        self.assertIn("commit", cleanup_sql)
+        self.assertIn("lock table place in share row exclusive mode", cleanup_sql)
+        self.assertIn("lock table place_source in share row exclusive mode", cleanup_sql)
+        self.assertIn("create temp table blog_trend_place_cleanup_candidates", cleanup_sql)
+        self.assertIn("p.tags @> array['blog_trend']::text[]", cleanup_sql)
+        self.assertIn("cardinality(p.tags) = 1", cleanup_sql)
+        self.assertIn("blog_source.source = 'naver_map'", cleanup_sql)
+        self.assertIn("not exists ( select 1 from place_source as non_blog_source", cleanup_sql)
+        self.assertIn("not exists ( select 1 from place_trend_result", cleanup_sql)
+        self.assertIn("not exists ( select 1 from source_raw_data", cleanup_sql)
+        self.assertIn("constraint_row.confrelid = 'public.place_source'::regclass", cleanup_sql)
+        self.assertIn("place_source_id", cleanup_sql)
+        for relation_table in (
+            "place_operating_hours",
+            "course_basket_item",
+            "event",
+            "filming_location",
         ):
-            self.assertIn(
-                f"alter table place_trend_snapshot drop column if exists {column}",
-                removal_sql,
-            )
-        self.assertIn("commit", removal_sql)
-
-        for path in (SCHEMA_PATH, MIGRATION_PATH, INTEREST_MIGRATION_PATH):
-            sql = _compact_sql(path)
-            self.assertIn("trend_time_unit", sql)
-            self.assertIn("trend_baseline_months", sql)
-            self.assertIn("trend_comparison_label", sql)
-            self.assertIn("trend_current_month", sql)
-            self.assertIn("trend_current_value", sql)
-            self.assertIn("trend_baseline_value", sql)
-            self.assertIn("monthly_ratio", sql)
-            self.assertIn("trend_partial_month_adjusted", sql)
-            self.assertIn("trend_partial_month_days_used", sql)
-            self.assertIn("trend_month_values", sql)
+            self.assertIn(f"not exists ( select 1 from {relation_table} as", cleanup_sql)
+        self.assertIn("pg_constraint", cleanup_sql)
+        self.assertIn("delete from place_source", cleanup_sql)
+        self.assertIn("delete from place", cleanup_sql)
+        self.assertLess(
+            cleanup_sql.index("delete from place_source"),
+            cleanup_sql.index("delete from place as place_row"),
+        )
+        self.assertNotIn("truncate", cleanup_sql)
+        self.assertNotIn("drop schema", cleanup_sql)
 
 
 class RecordingCursor:
@@ -107,9 +139,13 @@ class RecordingCursor:
 class RecordingConnection:
     def __init__(self) -> None:
         self.recording_cursor = RecordingCursor()
+        self.rolled_back = False
 
     def cursor(self) -> RecordingCursor:
         return self.recording_cursor
+
+    def rollback(self) -> None:
+        self.rolled_back = True
 
 
 class ScriptedPlaceCursor:
@@ -192,6 +228,10 @@ def _run_result() -> dict[str, Any]:
     }
     return {
         "collectionDate": "2026-08-13",
+        "startedAt": "2026-08-13T01:00:00Z",
+        "measuredAt": "2026-08-13T01:10:00Z",
+        "expiresAt": "2026-08-20T01:10:00Z",
+        "finishedAt": "2026-08-13T01:20:00Z",
         "semantics": "sample observations only",
         "validation": [],
         "evidence": [
@@ -211,10 +251,12 @@ def _run_result() -> dict[str, Any]:
                 "adSuspectedRatio": 0.0,
                 "trend": {
                     "available": True,
+                    "status": "SURGING",
                     "rising": True,
                     "trendRatio": 2.5,
                     "recentTrendValue": 50.0,
                     "previousTrendValue": 20.0,
+                    "measuredAt": "2026-08-13T01:10:00Z",
                     "recentNonzeroObservations": 7,
                     "baselineNonzeroObservations": 28,
                     "reason": "ratio_checked",
@@ -233,6 +275,7 @@ def _run_result() -> dict[str, Any]:
 
 class BlogTrendLoaderTest(unittest.TestCase):
     def test_naver_map_place_dto_prefers_reliable_matched_kakao_category(self) -> None:
+        self.assertIsNotNone(blog_trend_loader, "blog trend loader module must exist")
         evidence = {
             "canonicalPlaceId": "NAVER_MAP:13034552",
             "canonicalPlaceName": "카페 이름",
@@ -249,10 +292,12 @@ class BlogTrendLoaderTest(unittest.TestCase):
 
         dto = blog_trend_loader.naver_map_place_dto_from_evidence(evidence)
 
+        self.assertIsNotNone(dto)
         self.assertEqual(dto.category_code, "CAFE")
         self.assertEqual(dto.raw_category, "음식점 > 카페 > 테마카페")
 
     def test_naver_map_place_dto_falls_back_to_distinct_post_intent_evidence(self) -> None:
+        self.assertIsNotNone(blog_trend_loader, "blog trend loader module must exist")
         evidence = {
             "canonicalPlaceId": "NAVER_MAP:13034552",
             "canonicalPlaceName": "식당 이름",
@@ -267,9 +312,11 @@ class BlogTrendLoaderTest(unittest.TestCase):
 
         dto = blog_trend_loader.naver_map_place_dto_from_evidence(evidence)
 
+        self.assertIsNotNone(dto)
         self.assertEqual(dto.category_code, "RESTAURANT")
 
     def test_naver_map_place_dto_leaves_tied_intents_unclassified(self) -> None:
+        self.assertIsNotNone(blog_trend_loader, "blog trend loader module must exist")
         evidence = {
             "canonicalPlaceId": "NAVER_MAP:13034552",
             "canonicalPlaceName": "모호한 장소",
@@ -282,49 +329,44 @@ class BlogTrendLoaderTest(unittest.TestCase):
 
         dto = blog_trend_loader.naver_map_place_dto_from_evidence(evidence)
 
+        self.assertIsNotNone(dto)
         self.assertIsNone(dto.category_code)
 
-    def test_naver_map_place_dto_leaves_conflicting_kakao_categories_unclassified(self) -> None:
+    def test_naver_map_place_dto_leaves_conflicting_matched_kakao_categories_unclassified(self) -> None:
+        self.assertIsNotNone(blog_trend_loader, "blog trend loader module must exist")
         evidence = {
             "canonicalPlaceId": "NAVER_MAP:13034552",
-            "canonicalPlaceName": "복합 장소",
+            "canonicalPlaceName": "모호한 장소",
             "canonicalRoadAddress": "서울특별시 종로구 계동길 37",
             "matched_places": [
                 {"category_group_code": "CE7", "category_name": "음식점 > 카페"},
                 {"category_group_code": "FD6", "category_name": "음식점 > 한식"},
             ],
+            "evidence": [
+                {"postUrl": "https://blog.naver.com/a/1", "intent": "맛집"},
+                {"postUrl": "https://blog.naver.com/b/2", "intent": "카페"},
+            ],
         }
 
         dto = blog_trend_loader.naver_map_place_dto_from_evidence(evidence)
 
+        self.assertIsNotNone(dto)
         self.assertIsNone(dto.category_code)
 
-    def test_blog_trend_refresh_can_preserve_an_existing_category(self) -> None:
+    def test_trend_resolution_preserves_an_existing_place_category(self) -> None:
+        self.assertIsNotNone(blog_trend_loader, "blog trend loader module must exist")
         connection = ScriptedPlaceConnection(existing_source_id=808)
-        dto = PlaceDTO(
-            name="종로 카페",
-            road_address="서울 종로구 율곡로 1",
-            lot_address=None,
-            latitude=None,
-            longitude=None,
-            phone=None,
-            raw_category="음식점 > 카페",
-            description=None,
-            source="NAVER_MAP",
-            source_id="13034552",
-            district="종로구",
-            normalized_name="종로카페",
-            category_code="CAFE",
-            tags=["BLOG_TREND"],
-            has_coordinates=False,
-        )
+        evidence = {
+            "canonicalPlaceId": "NAVER_MAP:13034552",
+            "canonicalPlaceName": "카페 이름",
+            "canonicalRoadAddress": "서울특별시 종로구 계동길 37",
+            "matched_place": {
+                "category_group_code": "CE7",
+                "category_name": "음식점 > 카페",
+            },
+        }
 
-        place_id = load_place(
-            connection,
-            dto,
-            LoadStats(),
-            preserve_existing_category=True,
-        )
+        place_id = blog_trend_loader._resolve_place_id(connection, evidence)
 
         self.assertEqual(place_id, 808)
         update_sql, update_params = next(
@@ -332,7 +374,7 @@ class BlogTrendLoaderTest(unittest.TestCase):
             for sql, params in connection.recording_cursor.calls
             if "update place set" in sql
         )
-        self.assertIn("coalesce(category_id", update_sql)
+        self.assertIn("when %s then coalesce(category_id, %s)", update_sql)
         self.assertTrue(update_params[4])
 
     def test_resolve_attaches_single_address_matching_candidate_after_distance_review(self) -> None:
@@ -643,14 +685,15 @@ class BlogTrendLoaderTest(unittest.TestCase):
         self.assertEqual(
             stats.as_dict(),
             {
+                "runsUpserted": 1,
                 "placesResolved": 1,
                 "placesSkipped": 1,
-                "observationsUpserted": 1,
-                "snapshotsUpserted": 1,
+                "resultsSkipped": 0,
+                "resultsUpserted": 1,
             },
         )
 
-    def test_persist_run_upserts_observation_and_snapshot_without_topic_storage(self) -> None:
+    def test_persist_run_upserts_only_minimal_place_result_fields(self) -> None:
         self.assertIsNotNone(blog_trend_loader, "blog trend loader module must exist")
         connection = RecordingConnection()
 
@@ -661,29 +704,213 @@ class BlogTrendLoaderTest(unittest.TestCase):
         )
 
         statements = [sql for sql, _ in connection.recording_cursor.calls]
-        self.assertTrue(any("insert into blog_trend_observation" in sql for sql in statements))
-        self.assertTrue(any("on conflict (collection_date, query, post_url)" in sql for sql in statements))
-        self.assertTrue(any("insert into place_trend_snapshot" in sql for sql in statements))
-        self.assertTrue(any("on conflict (place_id, snapshot_date)" in sql for sql in statements))
+        self.assertTrue(any("insert into blog_trend_run" in sql for sql in statements))
+        self.assertTrue(any("on conflict (run_week)" in sql for sql in statements))
+        self.assertTrue(any("status = 'running'" in sql for sql in statements))
+        self.assertTrue(any("status = 'success'" in sql for sql in statements))
+        self.assertTrue(any("delete from place_trend_result where run_id" in sql for sql in statements))
+        self.assertTrue(any("insert into place_trend_result" in sql for sql in statements))
+        self.assertTrue(any("on conflict (run_id, place_id)" in sql for sql in statements))
+        result_sql = next(sql for sql in statements if "insert into place_trend_result" in sql)
+        for column in (
+            "run_id",
+            "place_id",
+            "status",
+            "recent_interest_average",
+            "previous_interest_average",
+            "interest_change_percent",
+            "measured_at",
+            "expires_at",
+        ):
+            self.assertIn(column, result_sql)
         for forbidden in (
+            "blog_trend_observation",
+            "place_trend_snapshot",
             "place_trend_keyword",
             "body_topic_candidates",
-            "explanation_available",
-            "explanation_summary",
-            "explanation_source",
-            "explanation_minimum_authors",
-            "explanation_reason",
+            "unique_posts",
+            "trend_month_values",
         ):
             self.assertFalse(any(forbidden in sql for sql in statements), forbidden)
         self.assertEqual(
             stats.as_dict(),
             {
+                "runsUpserted": 1,
                 "placesResolved": 1,
                 "placesSkipped": 0,
-                "observationsUpserted": 1,
-                "snapshotsUpserted": 1,
+                "resultsSkipped": 0,
+                "resultsUpserted": 1,
             },
         )
+
+    def test_persist_run_marks_failed_for_retry_operations(self) -> None:
+        connection = RecordingConnection()
+
+        def fail_resolving(_connection: Any, _evidence: Any) -> int:
+            raise RuntimeError("resolver failed")
+
+        with self.assertRaises(RuntimeError):
+            blog_trend_loader.persist_blog_trend_run(
+                connection,
+                _run_result(),
+                place_resolver=fail_resolving,
+            )
+
+        statements = [sql for sql, _ in connection.recording_cursor.calls]
+        self.assertTrue(connection.rolled_back)
+        self.assertTrue(any("status = 'failed'" in sql for sql in statements))
+        failure_params = next(
+            params
+            for sql, params in connection.recording_cursor.calls
+            if "status = 'failed'" in sql
+        )
+        self.assertEqual(failure_params["failure_reason"], "RuntimeError")
+
+    def test_persist_run_skips_blog_watch_when_search_trend_is_flat(self) -> None:
+        connection = RecordingConnection()
+        run_result = _run_result()
+        run_result["evidence"][0]["trend"].update(
+            {
+                "status": "STABLE",
+                "available": True,
+                "recentInterestAverage": 20.0,
+                "previousInterestAverage": 20.0,
+            }
+        )
+
+        with patch.object(
+            blog_trend_loader,
+            "load_place",
+            side_effect=AssertionError("place must not load"),
+        ) as load_place_mock:
+            stats = blog_trend_loader.persist_blog_trend_run(connection, run_result)
+
+        load_place_mock.assert_not_called()
+        self.assertEqual(stats.places_resolved, 0)
+        self.assertEqual(stats.places_skipped, 0)
+        self.assertEqual(stats.results_upserted, 0)
+        self.assertEqual(stats.results_skipped, 1)
+        success_params = next(
+            params
+            for sql, params in connection.recording_cursor.calls
+            if "status = 'success'" in sql
+        )
+        self.assertEqual(success_params["processed_place_count"], 1)
+        self.assertEqual(success_params["result_count"], 0)
+        self.assertFalse(
+            any("insert into place_trend_result" in sql for sql, _ in connection.recording_cursor.calls)
+        )
+
+    def test_persist_run_maps_stable_monthly_growth_to_watch(self) -> None:
+        connection = RecordingConnection()
+        run_result = _run_result()
+        run_result["evidence"][0]["trend"].update(
+            {
+                "status": "STABLE",
+                "available": True,
+                "current": 1.5,
+                "baseline": 1.0,
+                "ratio": 1.5,
+                "recentSearchInterestAverage": 1.5,
+                "previous14dSearchInterestAverage": 1.0,
+            }
+        )
+
+        stats = blog_trend_loader.persist_blog_trend_run(
+            connection,
+            run_result,
+            place_resolver=lambda _connection, _evidence: 77,
+        )
+
+        self.assertEqual(stats.results_upserted, 1)
+        result_params = next(
+            params
+            for sql, params in connection.recording_cursor.calls
+            if "insert into place_trend_result" in sql
+        )
+        self.assertEqual(result_params["status"], "WATCH")
+
+    def test_persist_run_skips_stable_monthly_decline(self) -> None:
+        connection = RecordingConnection()
+        run_result = _run_result()
+        run_result["evidence"][0]["trend"].update(
+            {
+                "status": "STABLE",
+                "available": True,
+                "current": 0.9,
+                "baseline": 1.0,
+                "ratio": 0.9,
+                "recentSearchInterestAverage": 0.9,
+                "previous14dSearchInterestAverage": 1.0,
+            }
+        )
+
+        stats = blog_trend_loader.persist_blog_trend_run(
+            connection,
+            run_result,
+            place_resolver=lambda _connection, _evidence: 77,
+        )
+
+        self.assertEqual(stats.results_upserted, 0)
+        self.assertEqual(stats.results_skipped, 1)
+        self.assertFalse(
+            any("insert into place_trend_result" in sql for sql, _ in connection.recording_cursor.calls)
+        )
+
+    def test_persist_run_stores_search_trend_surging_when_blog_evidence_is_insufficient(self) -> None:
+        for search_status in ("SURGING", "NEWLY_EMERGING"):
+            with self.subTest(search_status=search_status):
+                connection = RecordingConnection()
+                run_result = _run_result()
+                run_result["evidence"][0]["classification"]["status"] = "INSUFFICIENT_EVIDENCE"
+                run_result["evidence"][0]["trend"].update(
+                    {
+                        "status": search_status,
+                        "available": True,
+                        "recentInterestAverage": 50.0,
+                        "previousInterestAverage": 20.0,
+                    }
+                )
+
+                stats = blog_trend_loader.persist_blog_trend_run(
+                    connection,
+                    run_result,
+                    place_resolver=lambda _connection, _evidence: 77,
+                )
+
+                self.assertEqual(stats.results_upserted, 1)
+                result_params = next(
+                    params
+                    for sql, params in connection.recording_cursor.calls
+                    if "insert into place_trend_result" in sql
+                )
+                self.assertEqual(result_params["status"], "TRENDING")
+
+    def test_persist_run_uses_two_x_available_search_trend_as_trending(self) -> None:
+        connection = RecordingConnection()
+        run_result = _run_result()
+        run_result["evidence"][0]["classification"]["status"] = "INSUFFICIENT_EVIDENCE"
+        run_result["evidence"][0]["trend"].update(
+            {
+                "status": "RISING",
+                "available": True,
+                "recentInterestAverage": 20.0,
+                "previousInterestAverage": 10.0,
+            }
+        )
+
+        blog_trend_loader.persist_blog_trend_run(
+            connection,
+            run_result,
+            place_resolver=lambda _connection, _evidence: 77,
+        )
+
+        result_params = next(
+            params
+            for sql, params in connection.recording_cursor.calls
+            if "insert into place_trend_result" in sql
+        )
+        self.assertEqual(result_params["status"], "TRENDING")
 
 
 if __name__ == "__main__":

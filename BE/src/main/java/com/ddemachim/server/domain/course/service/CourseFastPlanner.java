@@ -12,7 +12,7 @@ import com.ddemachim.server.domain.route.enums.RouteMode;
 import com.ddemachim.server.domain.route.enums.RouteStatus;
 import com.ddemachim.server.domain.route.enums.RouteUnavailableReason;
 import com.ddemachim.server.domain.route.exception.RouteProviderException;
-import com.ddemachim.server.domain.route.service.RouteProviderClient;
+import com.ddemachim.server.domain.route.service.CourseRouteProviderClient;
 import com.ddemachim.server.domain.route.service.SelectedTransitRoute;
 import com.ddemachim.server.domain.route.service.TransitWalkSegment;
 import java.time.Duration;
@@ -30,10 +30,11 @@ public class CourseFastPlanner {
 
     private static final Duration ARRIVAL_DEADLINE_BUFFER = Duration.ofMinutes(10);
     private static final int DEFAULT_WALK_DURATION_SECONDS = 20 * 60;
+    private static final int FEASIBLE_ORDER_BEAM_WIDTH = 16;
 
-    private final RouteProviderClient routeProviderClient;
+    private final CourseRouteProviderClient routeProviderClient;
 
-    public CourseFastPlanner(RouteProviderClient routeProviderClient) {
+    public CourseFastPlanner(CourseRouteProviderClient routeProviderClient) {
         this.routeProviderClient = routeProviderClient;
     }
 
@@ -101,7 +102,8 @@ public class CourseFastPlanner {
         PermutationPlan best = evaluateOrder(
                 request, places, scheduledStart, walkingRoutes, transitRoutes, order, rejectedReasons);
         if (best == null) {
-            return null;
+            return findFeasibleOrder(
+                    request, places, scheduledStart, walkingRoutes, transitRoutes, rejectedReasons);
         }
 
         boolean improved;
@@ -126,6 +128,39 @@ public class CourseFastPlanner {
             }
         } while (improved);
         return best;
+    }
+
+    private PermutationPlan findFeasibleOrder(
+            CoursePreviewRequest request,
+            List<ResolvedPlace> places,
+            LocalDateTime scheduledStart,
+            Map<DirectedLeg, RouteLookup> walkingRoutes,
+            Map<DirectedLeg, TransitLookup> transitRoutes,
+            Map<Integer, EnumSet<CourseFastPlanFailure.DiagnosticReason>> rejectedReasons) {
+        List<List<Integer>> beam = new ArrayList<>();
+        beam.add(List.of());
+        for (int depth = 0; depth < places.size(); depth++) {
+            List<PermutationPlan> expanded = new ArrayList<>();
+            for (List<Integer> prefix : beam) {
+                for (int destinationIndex = 0; destinationIndex < places.size(); destinationIndex++) {
+                    if (prefix.contains(destinationIndex)) continue;
+                    List<Integer> next = new ArrayList<>(prefix);
+                    next.add(destinationIndex);
+                    PermutationPlan candidate = evaluateOrder(
+                            request, places, scheduledStart, walkingRoutes, transitRoutes,
+                            next, rejectedReasons);
+                    if (candidate != null) expanded.add(candidate);
+                }
+            }
+            if (expanded.isEmpty()) return null;
+            expanded.sort(Comparator.comparingLong(PermutationPlan::totalTravelSeconds)
+                    .thenComparing(PermutationPlan::order, CourseFastPlanner::compareRequestOrder));
+            beam = expanded.stream().limit(FEASIBLE_ORDER_BEAM_WIDTH)
+                    .map(PermutationPlan::order).toList();
+        }
+        List<Integer> bestOrder = beam.getFirst();
+        return evaluateOrder(request, places, scheduledStart, walkingRoutes, transitRoutes,
+                bestOrder, rejectedReasons);
     }
 
     private List<Integer> nearestFeasibleOrder(
@@ -266,6 +301,11 @@ public class CourseFastPlanner {
         }
 
         LocalDateTime departure = effectiveArrival.plusMinutes(place.dwellMinutes());
+        if (request.availableMinutes() != null
+                && departure.isAfter(request.serviceDate().atTime(request.desiredStartTime())
+                .plusMinutes(request.availableMinutes()))) {
+            return CandidateResult.rejected(CourseFastPlanFailure.DiagnosticReason.OPERATING_HOURS_EXCEEDED);
+        }
         if (place.closeTime() != null
                 && departure.isAfter(request.serviceDate().atTime(place.closeTime()))) {
             return CandidateResult.rejected(CourseFastPlanFailure.DiagnosticReason.OPERATING_HOURS_EXCEEDED);

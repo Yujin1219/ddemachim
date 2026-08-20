@@ -28,11 +28,14 @@ public record PlaceDetailResponse(
         String imageUrl,
         String imageSource,
         String imageAttribution,
+        List<PlaceMenuResponse> menus,
         PlaceTrendResponse trend) {
 
     public static PlaceDetailResponse of(
             Place place,
-            List<PlaceOperatingHoursResponse> operatingHours) {
+            List<PlaceOperatingHoursResponse> operatingHours,
+            List<PlaceMenuResponse> menus,
+            PlaceTrendResponse trend) {
         Double latitude = place.getLocation() != null ? place.getLocation().getY() : null;
         Double longitude = place.getLocation() != null ? place.getLocation().getX() : null;
 
@@ -57,6 +60,10 @@ public record PlaceDetailResponse(
                 place.getAccessibility(),
                 place.getTags(),
                 operatingHours,
-                PlaceImageResponse.from(place));
+                place.getImageUrl(),
+                place.getImageSource(),
+                place.getImageAttribution(),
+                menus,
+                trend);
     }
 }

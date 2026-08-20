@@ -1,0 +1,108 @@
+spring:
+  application:
+    name: server
+
+  ai:
+    mcp:
+      server:
+        protocol: STREAMABLE
+        name: ddemachim-mcp-server
+        version: 0.0.1
+        type: SYNC
+        streamable-http:
+          mcp-endpoint: /mcp
+
+  datasource:
+    url: jdbc:postgresql://localhost:5432/ddemachim
+    username: postgres
+    password: ${DB_PASSWORD}
+
+  data:
+    redis:
+      host: ${REDIS_HOST:localhost}
+      port: ${REDIS_PORT:6379}
+      connect-timeout: ${REDIS_CONNECT_TIMEOUT:2s}
+      timeout: ${REDIS_COMMAND_TIMEOUT:2s}
+
+  jpa:
+    hibernate:
+      ddl-auto: validate
+    properties:
+      hibernate:
+        format_sql: true
+    show-sql: true
+
+ddemachim:
+  ai-guide:
+    enabled: ${AI_GUIDE_ENABLED:true}
+    api-key: ${OPENAI_API_KEY:}
+    model: ${OPENAI_MODEL:gpt-5.6-luna}
+    base-url: ${OPENAI_BASE_URL:https://api.openai.com}
+    connect-timeout: ${OPENAI_CONNECT_TIMEOUT:3s}
+    read-timeout: ${OPENAI_READ_TIMEOUT:45s}
+    max-output-tokens: ${OPENAI_MAX_OUTPUT_TOKENS:1200}
+    max-tool-rounds: ${OPENAI_MAX_TOOL_ROUNDS:4}
+    max-tool-calls: ${OPENAI_MAX_TOOL_CALLS:8}
+
+  data-pipeline:
+    scheduler:
+      enabled: true
+      working-directory: /Users /yujin/Project/ddemachim/data-pipeline
+      timeout: 30m
+      zone: Asia/Seoul
+
+      tour-api-events:
+        script: scripts/run_events.py
+        cron: "0 0 6 ? * MON"
+
+      seoul-culture-events:
+        script: scripts/run_seoul_culture_event.py
+        cron: "0 10 6 ? * MON"
+
+      repeated-blog-trend:
+        script: scripts/repeated_blog_trend.py
+        cron: "0 30 4 ? * MON"
+
+  odsay:
+    base-url: https://api.odsay.com
+    api-key: ${ODSAY_API_KEY}
+    connect-timeout: 2s
+    read-timeout: 4s
+
+  tmap:
+    base-url: https://apis.openapi.sk.com
+    app-key: ${TMAP_APP_KEY}
+    connect-timeout: 2s
+    read-timeout: 4s
+    cache-ttl: 2m
+    cache-maximum-size: 1000
+
+  citydata:
+    seoul:
+      enabled: true
+      api-key: ${SEOUL_CITYDATA_API_KEY}
+      base-url: http://openapi.seoul.go.kr:8088
+      refresh-delay-millis: 300000
+      stale-after: 10m
+
+  kakao:
+    local:
+      rest-api-key: ${KAKAO_REST_API_KEY}
+      base-url: https://dapi.kakao.com
+
+  crowding:
+    mock:
+      enabled: true
+      seed: ${MOCK_CROWDING_SEED:ddemachim-demo-v1}
+      ttl: 24h
+      zone: Asia/Seoul
+      maximum-viewport-grids: 5000
+      maximum-batch-points: 300
+
+jwt:
+  secret: ${JWT_SECRET}
+  access-token-expire-time: 1209600000
+
+cors:
+  allowed-origins:
+    - http://localhost:5173

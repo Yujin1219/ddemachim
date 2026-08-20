@@ -1,15 +1,17 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { CircleHelp, X } from 'lucide-react';
+import { ArrowLeft, Camera } from 'lucide-react';
 
 import { createOverlayGesture } from './gesture.js';
 import { createSceneGeometry, geometryToCssVars } from './geometry.js';
+import { matchScoreFeedback } from './matchScore.js';
 import { normalizeFilmingLocationId } from './routes.js';
 import { SceneCameraRedirectNotice, SceneCameraVideo, SceneResultRouteGuard, useSceneCamera } from './SceneCameraSession.js';
 import { AutoFocusHeading, BeforeAfterComparison, BlockingAlert, OverlayControls, SceneReferenceGate } from './ui.js';
+import { useSceneMatchScore } from './useSceneMatchScore.js';
 
 export function SceneDetailCameraPanel({ id, go }) {
   const normalizedId = normalizeFilmingLocationId(id);
-  const { state, referenceStatus, prepareReference, startCamera, consumeCameraEntryFocus } = useSceneCamera();
+  const { state, referenceStatus, prepareReference, consumeCameraEntryFocus } = useSceneCamera();
   const entryButtonRef = useRef(null);
 
   useEffect(() => {
@@ -31,7 +33,7 @@ export function SceneDetailCameraPanel({ id, go }) {
       error={state.error?.message}
       buttonRef={entryButtonRef}
       onRetry={() => prepareReference(normalizedId, { force: true })}
-      onStart={() => startCamera(normalizedId, go)}
+      onStart={() => go('camera', normalizedId)}
     />
   </>;
 }
@@ -39,8 +41,10 @@ export function SceneDetailCameraPanel({ id, go }) {
 export function SceneCameraScreen({ id, go }) {
   const normalizedId = normalizeFilmingLocationId(id);
   const { state, referenceReady, capture, close, startCamera, dispatch } = useSceneCamera();
-  const [controlsOpen, setControlsOpen] = useState(false);
+  const [permissionRequested, setPermissionRequested] = useState(() => state.flowState !== 'idle');
+  const [showEntryGuide, setShowEntryGuide] = useState(false);
   const stageRef = useRef(null);
+  const videoRef = useRef(null);
   const gestureRef = useRef(null);
   const overlayRef = useRef(state.overlay);
   overlayRef.current = state.overlay;
@@ -87,11 +91,54 @@ export function SceneCameraScreen({ id, go }) {
 
   const canCapture = state.flowState === 'camera-ready' && referenceReady;
   const canRestart = referenceReady && !['preparing', 'camera-ready', 'capturing'].includes(state.flowState);
+  const matchResult = useSceneMatchScore({
+    videoRef,
+    outlineUrl: state.reference?.outlineUrl,
+    overlay: state.overlay,
+    enabled: canCapture && Boolean(state.reference?.outlineUrl) && state.overlay.visible,
+  });
+  const matchFeedback = !state.overlay.visible
+    ? '참고 장면을 표시하면 분석해요'
+    : matchResult.status === 'unavailable'
+      ? '이 브라우저에서는 분석할 수 없어요'
+      : matchScoreFeedback(matchResult.score);
+  const highMatch = Number.isFinite(matchResult.score) && matchResult.score >= 90;
+
+  useEffect(() => {
+    if (!canCapture) return undefined;
+    setShowEntryGuide(true);
+    const timeout = window.setTimeout(() => setShowEntryGuide(false), 2800);
+    return () => window.clearTimeout(timeout);
+  }, [canCapture]);
+
+  const requestCamera = () => {
+    setPermissionRequested(true);
+    startCamera(normalizedId, () => {});
+  };
+
+  const permissionDenied = permissionRequested && state.error?.code === 'NotAllowedError';
+
+  if (!permissionRequested || permissionDenied) {
+    return <section className="phone scene-camera-screen scene-camera-permission" aria-labelledby="scene-camera-permission-title">
+      <header className="scene-camera-header camera-safe-top">
+        <button type="button" aria-label="장면 상세로 돌아가기" onClick={handleClose}><ArrowLeft aria-hidden="true" size={22} strokeWidth={2} /></button>
+        <span>장면 비교</span>
+        <i aria-hidden="true" />
+      </header>
+      <main className="scene-camera-permission-content">
+        <div className="scene-camera-permission-icon"><Camera aria-hidden="true" size={32} strokeWidth={1.8} /></div>
+        <h1 id="scene-camera-permission-title">{permissionDenied ? '카메라 권한이 필요해요' : <>장면과 지금 모습을<br />겹쳐서 비교해볼까요?</>}</h1>
+        <p>{permissionDenied ? <>장면과 실제 장소를 비교하려면<br />카메라 사용 권한을 허용해주세요.</> : <>카메라를 켜면 이곳에서 촬영된 장면과<br />현재 모습을 함께 볼 수 있어요.</>}</p>
+        <button type="button" className="ui-button primary" onClick={requestCamera}>{permissionDenied ? '다시 시도' : '카메라 켜기'}</button>
+      </main>
+    </section>;
+  }
+
   return <section className="phone scene-camera-screen" aria-labelledby="scene-camera-title">
     <header className="scene-camera-header camera-safe-top">
-      <button type="button" aria-label="카메라 닫기" onClick={handleClose}><X aria-hidden="true" size={22} strokeWidth={2} /></button>
-      <AutoFocusHeading id="scene-camera-title">장면 구도 맞추기</AutoFocusHeading>
-      <button type="button" aria-label="촬영 도움말 및 참고 장면 조절" aria-expanded={controlsOpen} aria-controls="scene-camera-help" onClick={() => setControlsOpen((open) => !open)}><CircleHelp aria-hidden="true" size={22} strokeWidth={2} /></button>
+      <button type="button" aria-label="장면 상세로 돌아가기" onClick={handleClose}><ArrowLeft aria-hidden="true" size={22} strokeWidth={2} /></button>
+      <AutoFocusHeading id="scene-camera-title">장면 비교</AutoFocusHeading>
+      <i aria-hidden="true" />
     </header>
     <div className="scene-camera-workspace">
       <div
@@ -103,25 +150,24 @@ export function SceneCameraScreen({ id, go }) {
         onPointerUp={onPointerEnd}
         onPointerCancel={onPointerEnd}
       >
-        <SceneCameraVideo className="scene-camera-video" />
-        {state.reference && state.overlay.visible && <img className="scene-camera-overlay" src={state.reference.url} alt="" draggable="false" aria-hidden="true" />}
+        <SceneCameraVideo className="scene-camera-video" videoRef={videoRef} />
+        {state.reference && state.overlay.visible && (state.overlay.mode === 'image'
+          ? <img className="scene-camera-overlay" src={state.reference.url} alt="" draggable="false" aria-hidden="true" />
+          : <img className="scene-camera-overlay scene-camera-outline" src={state.reference.outlineUrl} alt="" draggable="false" aria-hidden="true" />)}
       </div>
-      {state.reference && <article className="scene-camera-reference-card" aria-label="촬영 참고 장면">
-        <img src={state.reference.url} alt={state.reference.altText} />
-        <div><strong>참고 장면</strong><span>같은 위치와 시선으로 맞춰보세요</span><small>참고 이미지 · 장면 1</small></div>
-      </article>}
-      <section id="scene-camera-help" className="scene-camera-help-panel" aria-label="촬영 도움말 및 참고 장면 조절" hidden={!controlsOpen}>
-        <p className="scene-camera-instruction"><strong>같은 시선으로 장면을 다시 담아보세요.</strong><span>참고 이미지를 드래그하거나 아래 버튼과 슬라이더로 위치, 크기, 불투명도를 조절할 수 있어요.</span></p>
-        <OverlayControls overlay={state.overlay} onPatch={(patch) => dispatch({ type: 'SET_OVERLAY', patch })} onReset={() => dispatch({ type: 'RESET_OVERLAY' })} />
-      </section>
+      {state.reference && canCapture && <div className={`scene-match-score${highMatch ? ' is-high' : ''}`} aria-label={`구도 일치도 ${Number.isFinite(matchResult.score) ? `${matchResult.score}%` : '분석 중'}`}>
+        <span>구도 일치도</span>
+        <strong>{Number.isFinite(matchResult.score) ? `${matchResult.score}%` : '—'}</strong>
+        <small>{matchFeedback}</small>
+      </div>}
+      {showEntryGuide && <div className="scene-camera-entry-guide" role="status"><strong>장면을 실제 장소와 맞춰보세요</strong><span>드래그해서 이동 · 핀치해서 확대</span></div>}
       {state.error
         ? <BlockingAlert className="scene-camera-status" title="카메라를 준비하지 못했어요" message={state.error.message}>{canRestart && <button type="button" onClick={() => startCamera(normalizedId, () => {})}>카메라 다시 켜기</button>}</BlockingAlert>
         : <div className={`scene-camera-status${canCapture ? ' is-ready' : ''}`} role="status" aria-live="polite">{canCapture ? '카메라가 준비됐어요.' : canRestart ? '카메라가 꺼져 있어요. 다시 켜려면 버튼을 눌러주세요.' : '카메라 화면을 준비하고 있어요.'}{canRestart && <button type="button" onClick={() => startCamera(normalizedId, () => {})}>카메라 다시 켜기</button>}</div>}
     </div>
-    <div className="scene-camera-shutter camera-safe-bottom">
-      <span className="scene-camera-mode">장면 촬영</span>
+    <div className="scene-camera-controls camera-safe-bottom">
+      <OverlayControls overlay={state.overlay} onPatch={(patch) => dispatch({ type: 'SET_OVERLAY', patch })} onReset={() => dispatch({ type: 'RESET_OVERLAY' })} />
       <button type="button" className="scene-camera-capture" aria-label={state.flowState === 'capturing' ? '장면 담는 중' : '현재 화면 촬영'} disabled={!canCapture || state.flowState === 'capturing'} onClick={handleCapture} />
-      <span className="scene-camera-lens" aria-label="카메라 렌즈 배율 1배">1× 렌즈</span>
     </div>
   </section>;
 }

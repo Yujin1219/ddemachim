@@ -52,7 +52,8 @@ test('publishes complete metadata for each public course', () => {
     assert.ok(course.title);
     assert.ok(Number.isInteger(course.placeCount) && course.placeCount > 0);
     assert.ok(course.duration);
-    assert.ok(Number.isInteger(course.saveCount) && course.saveCount >= 0);
+    assert.equal(course.places.length, course.placeCount);
+    assert.ok(course.places.every((place) => typeof place === 'string' && place.trim()));
     assert.ok(course.image.startsWith('/assets/'));
     assert.ok(Object.isFrozen(course));
   }

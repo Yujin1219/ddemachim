@@ -2,8 +2,10 @@ package com.ddemachim.server.domain.place.entity;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
-import jakarta.persistence.Enumerated;
+import com.ddemachim.server.domain.place.enums.BlogTrendRunStatus;
+import com.ddemachim.server.domain.place.enums.PlaceTrendStatus;
 import jakarta.persistence.EnumType;
+import jakarta.persistence.Enumerated;
 import jakarta.persistence.FetchType;
 import jakarta.persistence.ManyToOne;
 import jakarta.persistence.Table;
@@ -19,70 +21,69 @@ class PlaceTrendEntityMappingTest {
     private static final String ENTITY_PACKAGE = "com.ddemachim.server.domain.place.entity.";
 
     @Test
-    void trendEntitiesMapToNormalizedTablesWithExpectedIdentities() throws Exception {
-        Class<?> observation = loadClass(ENTITY_PACKAGE + "BlogTrendObservation");
-        Class<?> snapshot = loadClass(ENTITY_PACKAGE + "PlaceTrendSnapshot");
+    void trendEntitiesMapToFinalTablesWithExpectedIdentities() throws Exception {
+        Class<?> run = loadClass(ENTITY_PACKAGE + "BlogTrendRun");
+        Class<?> result = loadClass(ENTITY_PACKAGE + "PlaceTrendResult");
 
-        assertThat(observation).isNotNull();
-        assertThat(snapshot).isNotNull();
-        assertTableIdentity(
-                observation,
-                "blog_trend_observation",
-                Set.of("collection_date", "query", "post_url"));
-        assertTableIdentity(
-                snapshot,
-                "place_trend_snapshot",
-                Set.of("place_id", "snapshot_date"));
+        assertThat(run).isNotNull();
+        assertThat(result).isNotNull();
+        assertThat(loadClass(ENTITY_PACKAGE + "BlogTrendObservation")).isNull();
+        assertThat(loadClass(ENTITY_PACKAGE + "PlaceTrendSnapshot")).isNull();
+        assertTableIdentity(run, "blog_trend_run", Set.of("run_week"));
+        assertTableIdentity(result, "place_trend_result", Set.of("run_id", "place_id"));
     }
 
     @Test
-    void snapshotKeepsTrendAndSearchTrendStateWithoutBlogExplanationFields() {
-        Class<?> observation = loadClass(ENTITY_PACKAGE + "BlogTrendObservation");
-        Class<?> snapshot = loadClass(ENTITY_PACKAGE + "PlaceTrendSnapshot");
+    void finalEntitiesContainOnlyContractFields() throws Exception {
+        Class<?> run = loadClass(ENTITY_PACKAGE + "BlogTrendRun");
+        Class<?> result = loadClass(ENTITY_PACKAGE + "PlaceTrendResult");
 
-        assertThat(observation).isNotNull();
-        assertThat(snapshot).isNotNull();
-        Set<String> observationFieldNames = Arrays.stream(observation.getDeclaredFields())
-                .map(Field::getName)
-                .collect(Collectors.toSet());
-        Set<String> fieldNames = Arrays.stream(snapshot.getDeclaredFields())
-                .map(Field::getName)
-                .collect(Collectors.toSet());
-
-        assertThat(fieldNames).contains(
-                "status",
-                "snapshotDate",
-                "trendAvailable",
-                "trendRising",
-                "trendRatio",
-                "recentTrendValue",
-                "previousTrendValue",
-                "recentNonzeroObservations",
-                "baselineNonzeroObservations",
-                "trendReason",
-                "trendCheckedAt");
-        assertThat(fieldNames).doesNotContain(
-                "explanationAvailable",
-                "explanationSummary",
-                "explanationSource",
-                "explanationMinimumAuthors",
-                "explanationReason");
-        assertThat(observationFieldNames).doesNotContain("bodyTopicCandidates");
+        assertThat(Arrays.stream(run.getDeclaredFields()).map(Field::getName).collect(Collectors.toSet()))
+                .contains(
+                        "id",
+                        "runWeek",
+                        "status",
+                        "startedAt",
+                        "finishedAt",
+                        "processedPlaceCount",
+                        "resultCount",
+                        "failureReason",
+                        "createdAt",
+                        "updatedAt");
+        assertThat(Arrays.stream(result.getDeclaredFields()).map(Field::getName).collect(Collectors.toSet()))
+                .contains(
+                        "id",
+                        "run",
+                        "place",
+                        "status",
+                        "recentInterestAverage",
+                        "previousInterestAverage",
+                        "interestChangePercent",
+                        "measuredAt",
+                        "expiresAt",
+                        "createdAt",
+                        "updatedAt");
+        assertThat(Arrays.stream(result.getDeclaredFields()).map(Field::getName).collect(Collectors.toSet()))
+                .doesNotContain("snapshotDate", "trendAvailable", "trendReason", "semantics");
+        assertThat(BlogTrendRunStatus.values()).containsExactly(
+                BlogTrendRunStatus.RUNNING, BlogTrendRunStatus.SUCCESS, BlogTrendRunStatus.FAILED);
+        assertThat(PlaceTrendStatus.values()).containsExactly(
+                PlaceTrendStatus.WATCH, PlaceTrendStatus.TRENDING);
     }
 
     @Test
-    void snapshotStatusUsesStringEnumAndPlaceAssociationsAreLazy() throws Exception {
-        Class<?> observation = loadClass(ENTITY_PACKAGE + "BlogTrendObservation");
-        Class<?> snapshot = loadClass(ENTITY_PACKAGE + "PlaceTrendSnapshot");
+    void statusesUseStringEnumsAndBothResultAssociationsAreLazy() throws Exception {
+        Class<?> run = loadClass(ENTITY_PACKAGE + "BlogTrendRun");
+        Class<?> result = loadClass(ENTITY_PACKAGE + "PlaceTrendResult");
 
-        assertThat(observation).isNotNull();
-        assertThat(snapshot).isNotNull();
-
-        Enumerated enumerated = snapshot.getDeclaredField("status").getAnnotation(Enumerated.class);
-        assertThat(enumerated).isNotNull();
-        assertThat(enumerated.value()).isEqualTo(EnumType.STRING);
-        assertLazyManyToOne(observation.getDeclaredField("place"));
-        assertLazyManyToOne(snapshot.getDeclaredField("place"));
+        Enumerated runStatus = run.getDeclaredField("status").getAnnotation(Enumerated.class);
+        Enumerated resultStatus = result.getDeclaredField("status").getAnnotation(Enumerated.class);
+        assertThat(runStatus).isNotNull();
+        assertThat(runStatus.value()).isEqualTo(EnumType.STRING);
+        assertThat(resultStatus).isNotNull();
+        assertThat(resultStatus.value()).isEqualTo(EnumType.STRING);
+        assertLazyManyToOne(result.getDeclaredField("run"));
+        assertLazyManyToOne(result.getDeclaredField("place"));
     }
 
     private static Class<?> loadClass(String name) {

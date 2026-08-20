@@ -18,7 +18,7 @@ public enum PlaceErrorStatus implements BaseErrorCode {
     INVALID_PLACE_TREND_LIMIT(
             HttpStatus.BAD_REQUEST,
             "PLACE4003",
-            "장소 트렌드 limit은 1 이상 20 이하이어야 합니다."),
+            "장소 트렌드 limit은 1 이상 50 이하이어야 합니다."),
     PLACE_NOT_FOUND(HttpStatus.NOT_FOUND, "PLACE4041", "찾을 수 없는 장소입니다."),
     ;
 

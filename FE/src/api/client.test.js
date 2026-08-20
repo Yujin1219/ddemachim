@@ -55,6 +55,127 @@ test('fetchKakaoPlaces sends available location options and preserves the abort 
   }
 });
 
+test('sendAiGuideMessage posts the bounded chat contract with an optional JWT', async () => {
+  const client = await import('./client.js');
+  assert.equal(typeof client.sendAiGuideMessage, 'function', 'AI guide API function must exist');
+
+  const originalFetch = globalThis.fetch;
+  const originalWindow = globalThis.window;
+  const controller = new AbortController();
+  const localStorage = createStorage({ accessToken: 'guide-token' });
+  let request;
+  const result = { answer: '안국의 조용한 카페를 추천할게요.', responseId: 'response-1' };
+  globalThis.window = { localStorage };
+  globalThis.fetch = async (url, options) => {
+    request = { url, options };
+    return successResponse(result);
+  };
+
+  try {
+    const response = await client.sendAiGuideMessage({
+      message: '안국에서 조용한 카페를 추천해줘',
+      history: [
+        { role: 'ASSISTANT', content: '어떤 여행을 도와드릴까요?' },
+        { role: 'USER', content: '카페를 찾고 있어.' },
+      ],
+      currentLocation: { latitude: 37.577, longitude: 126.972 },
+      previousResponseId: 'response-before-search',
+      signal: controller.signal,
+    });
+
+    assert.equal(request.url, '/api/v1/ai-guide/chats');
+    assert.equal(request.options.method, 'POST');
+    assert.equal(request.options.headers.get('Authorization'), 'Bearer guide-token');
+    assert.deepEqual(JSON.parse(request.options.body), {
+      message: '안국에서 조용한 카페를 추천해줘',
+      history: [
+        { role: 'ASSISTANT', content: '어떤 여행을 도와드릴까요?' },
+        { role: 'USER', content: '카페를 찾고 있어.' },
+      ],
+      currentLocation: { latitude: 37.577, longitude: 126.972 },
+      previousResponseId: 'response-before-search',
+    });
+    assert.equal(request.options.signal, controller.signal);
+    assert.deepEqual(response, result);
+  } finally {
+    globalThis.fetch = originalFetch;
+    globalThis.window = originalWindow;
+  }
+});
+
+test('AI guide quota errors preserve transport details and provide actionable guidance', async () => {
+  const client = await import('./client.js');
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async () => new Response(JSON.stringify({
+    isSuccess: false,
+    code: 'AIGUIDE4291',
+    message: 'AI 가이드 사용량 한도를 초과했습니다.',
+  }), { status: 429, headers: { 'Content-Type': 'application/json' } });
+
+  try {
+    await assert.rejects(
+      client.sendAiGuideMessage({ message: '종로역 혼잡도 알려줘' }),
+      (error) => {
+        assert.equal(error.status, 429);
+        assert.equal(error.code, 'AIGUIDE4291');
+        assert.equal(error.path, '/v1/ai-guide/chats');
+        const presentation = client.getAiGuideErrorPresentation(error);
+        assert.equal(presentation.title, 'OpenAI 사용량 한도를 초과했어요');
+        assert.equal(presentation.technical, 'HTTP 429 · AIGUIDE4291');
+        return true;
+      },
+    );
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test('AI guide network failures are distinguishable from backend JSON errors', async () => {
+  const client = await import('./client.js');
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async () => { throw new TypeError('fetch failed'); };
+
+  try {
+    await assert.rejects(
+      client.sendAiGuideMessage({ message: '종로역 혼잡도 알려줘' }),
+      (error) => {
+        assert.equal(error.status, 0);
+        assert.equal(error.code, 'NETWORK_ERROR');
+        assert.equal(error.cause.message, 'fetch failed');
+        assert.equal(client.getAiGuideErrorPresentation(error).title, '백엔드 서버에 연결하지 못했어요');
+        return true;
+      },
+    );
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test('non-JSON proxy failures are reported as invalid responses with HTTP status', async () => {
+  const client = await import('./client.js');
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async () => new Response('Bad Gateway', {
+    status: 502,
+    headers: { 'Content-Type': 'text/plain' },
+  });
+
+  try {
+    await assert.rejects(
+      client.sendAiGuideMessage({ message: '종로역 혼잡도 알려줘' }),
+      (error) => {
+        assert.equal(error.status, 502);
+        assert.equal(error.code, 'INVALID_RESPONSE');
+        const presentation = client.getAiGuideErrorPresentation(error);
+        assert.equal(presentation.title, '서버 응답을 읽지 못했어요');
+        assert.equal(presentation.technical, 'HTTP 502 · INVALID_RESPONSE');
+        return true;
+      },
+    );
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
 test('fetchKakaoPlaces omits missing location parameters', async () => {
   const client = await import('./client.js');
   const originalFetch = globalThis.fetch;
@@ -285,6 +406,136 @@ test('fetchCoursePreview posts the exact authenticated draft and preserves abort
   } finally {
     globalThis.fetch = originalFetch;
     globalThis.window = originalWindow;
+  }
+});
+
+test('course persistence APIs use authenticated save, list, detail, and start contracts', async () => {
+  const client = await import('./client.js');
+  const originalFetch = globalThis.fetch;
+  const originalWindow = globalThis.window;
+  const localStorage = createStorage({ accessToken: 'course-token' });
+  const requests = [];
+  globalThis.window = { localStorage };
+  globalThis.fetch = async (url, options = {}) => {
+    requests.push({ url, options });
+    return successResponse({ id: 31 });
+  };
+
+  try {
+    const createPayload = { strategy: 'FAST', startTiming: 'SCHEDULED' };
+    await client.createCourse(createPayload);
+    await client.fetchCourses({ status: 'READY' });
+    await client.fetchCourse(31);
+    await client.startCourse(31, { replaceActive: true });
+
+    assert.deepEqual(requests.map(({ url, options }) => [url, options.method || 'GET']), [
+      ['/api/courses', 'POST'],
+      ['/api/courses?status=READY', 'GET'],
+      ['/api/courses/31', 'GET'],
+      ['/api/courses/31/start', 'POST'],
+    ]);
+    assert.deepEqual(JSON.parse(requests[0].options.body), createPayload);
+    assert.deepEqual(JSON.parse(requests[3].options.body), { replaceActive: true });
+    requests.forEach(({ options }) => {
+      assert.equal(options.headers.get('Authorization'), 'Bearer course-token');
+    });
+  } finally {
+    globalThis.fetch = originalFetch;
+    globalThis.window = originalWindow;
+  }
+});
+
+test('fetchCoursePreview preserves the raw COURSE4222 result only for the exact 422 response', async () => {
+  const client = await import('./client.js');
+  const originalFetch = globalThis.fetch;
+  const result = {
+    requestedStopCount: 1,
+    diagnostics: [{
+      basketItemId: 11,
+      placeName: '서울공예박물관',
+      reason: 'PLACE_CLOSED',
+      adjustmentProposal: 'CHANGE_SERVICE_DATE',
+    }],
+  };
+  globalThis.fetch = async () => new Response(JSON.stringify({
+    isSuccess: false,
+    code: 'COURSE4222',
+    message: '조건에 맞는 빠른 코스를 생성할 수 없습니다.',
+    result,
+  }), { status: 422, headers: { 'Content-Type': 'application/json' } });
+
+  try {
+    await assert.rejects(
+      client.fetchCoursePreview({ places: [] }),
+      (error) => {
+        assert.equal(error.status, 422);
+        assert.equal(error.code, 'COURSE4222');
+        assert.deepEqual(error.result, result);
+        return true;
+      },
+    );
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test('non-preview COURSE4222 errors never expose the response result', async () => {
+  const client = await import('./client.js');
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async () => new Response(JSON.stringify({
+    isSuccess: false,
+    code: 'COURSE4222',
+    message: '다른 요청 오류',
+    result: { private: 'do not retain' },
+  }), { status: 422, headers: { 'Content-Type': 'application/json' } });
+
+  try {
+    await assert.rejects(
+      client.fetchRouteComparison({ origin: {}, destination: {} }),
+      (error) => Object.hasOwn(error, 'result') === false,
+    );
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test('preview COURSE4222 errors with a non-422 status never expose the response result', async () => {
+  const client = await import('./client.js');
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async () => new Response(JSON.stringify({
+    isSuccess: false,
+    code: 'COURSE4222',
+    message: '잘못된 상태 오류',
+    result: { private: 'do not retain' },
+  }), { status: 400, headers: { 'Content-Type': 'application/json' } });
+
+  try {
+    await assert.rejects(
+      client.fetchCoursePreview({ places: [] }),
+      (error) => Object.hasOwn(error, 'result') === false,
+    );
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test('preview 422 errors with another code never expose the response result', async () => {
+  const client = await import('./client.js');
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async () => new Response(JSON.stringify({
+    isSuccess: false,
+    code: 'COURSE4221',
+    message: '장소 좌표 오류',
+    result: { private: 'do not retain' },
+  }), { status: 422, headers: { 'Content-Type': 'application/json' } });
+
+  try {
+    await assert.rejects(
+      client.fetchCoursePreview({ places: [] }),
+      (error) => Object.hasOwn(error, 'result') === false,
+    );
+  } finally {
+    globalThis.fetch = originalFetch;
   }
 });
 

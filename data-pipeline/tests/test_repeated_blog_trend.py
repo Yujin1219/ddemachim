@@ -28,6 +28,7 @@ from repeated_blog_trend import (  # noqa: E402
     select_body_targets,
     trend_signal,
 )
+from src.loaders.blog_trend_loader import _search_trend_status  # noqa: E402
 
 
 CONFIG_PATH = Path(__file__).resolve().parents[1] / "config" / "blog_trend_discovery.json"
@@ -95,7 +96,13 @@ class RepeatedBlogTrendTest(unittest.TestCase):
     def test_default_query_generation_is_nine_regions_times_two_fixed_intents(self) -> None:
         queries = generate_queries(self.config, AS_OF)
         expected = [
-            (f"{region} {intent}", region, intent, "FOOD", CANONICAL_ALIASES[region])
+            (
+                f"{region} {intent}",
+                region,
+                intent,
+                "CAFE" if intent == "카페" else "RESTAURANT",
+                CANONICAL_ALIASES[region],
+            )
             for region in CANONICAL_REGIONS
             for intent in ("카페", "맛집")
         ]
@@ -116,11 +123,14 @@ class RepeatedBlogTrendTest(unittest.TestCase):
         )
         self.assertEqual(len({row["region"] for row in queries}), 9)
 
-    def test_query_plan_keeps_one_food_evidence_category(self) -> None:
+    def test_query_plan_uses_only_cafe_and_restaurant_intents(self) -> None:
         queries = generate_queries(self.config, AS_OF)
 
         self.assertEqual({row["intent"] for row in queries}, {"카페", "맛집"})
-        self.assertTrue(all(row["intentCategory"] == "FOOD" for row in queries))
+        self.assertEqual(
+            {row["intentCategory"] for row in queries},
+            {"CAFE", "RESTAURANT"},
+        )
         self.assertFalse(
             any(
                 term in row["query"]
@@ -135,36 +145,6 @@ class RepeatedBlogTrendTest(unittest.TestCase):
         following = generate_queries(self.config, date(2026, 8, 14))
         self.assertEqual(first, repeated)
         self.assertEqual(first, following)
-
-    def test_place_category_uses_distinct_post_counts_per_intent(self) -> None:
-        rows = [
-            {**observation(place_id="NAVER_MAP:1", query="안국 카페"), "intent": "카페"},
-            {
-                **observation(place_id="NAVER_MAP:1", query="안국 카페"),
-                "intent": "카페",
-            },
-            {
-                **observation(
-                    place_id="NAVER_MAP:1",
-                    query="안국 맛집",
-                    url="https://blog.naver.com/b/2",
-                ),
-                "intent": "맛집",
-            },
-            {
-                **observation(
-                    place_id="NAVER_MAP:1",
-                    query="서촌 카페",
-                    url="https://blog.naver.com/c/3",
-                ),
-                "intent": "카페",
-            },
-        ]
-
-        evidence = aggregate_place_evidence(rows, as_of=AS_OF, config=self.config)[0]
-
-        self.assertEqual(evidence["uniquePostCountsByIntent"], {"카페": 2, "맛집": 1})
-        self.assertEqual(evidence["categoryCode"], "CAFE")
 
     def test_region_aliases_are_metadata_without_alias_queries(self) -> None:
         queries = generate_queries(self.config, AS_OF)
@@ -193,11 +173,501 @@ class RepeatedBlogTrendTest(unittest.TestCase):
 
         result = json.loads(output.getvalue())
         self.assertEqual(exit_code, 0)
-        self.assertEqual(result["maximumMetadata"], 9000)
-        self.assertEqual(result["pageCount"], 90)
+        self.assertEqual(result["maximumMetadata"], 5400)
+        self.assertEqual(result["pageCount"], 54)
         self.assertEqual(result["pageSize"], 100)
-        self.assertEqual(result["bodyLimit"], 500)
+        self.assertEqual(result["maxResultsPerQuery"], 300)
+        self.assertEqual(result["windowDays"], 7)
+        self.assertEqual(result["overlapDays"], 1)
+        self.assertNotIn("bodyLimit", result)
         self.assertEqual(len(result["queryPlan"]), 18)
+
+    def test_config_removes_live_body_sampling_limits(self) -> None:
+        search = self.config["search"]
+        trend = self.config["trend"]
+
+        self.assertEqual(search["pageSize"], 100)
+        self.assertEqual(search["maxResultsPerQuery"], 300)
+        self.assertEqual(search["windowDays"], 7)
+        self.assertEqual(search["overlapDays"], 1)
+        self.assertNotIn("bodyLimit", self.config.get("selection", {}))
+        self.assertNotIn("quotas", self.config.get("selection", {}))
+        self.assertEqual(trend["timeUnit"], "month")
+        self.assertEqual(trend["baselineMonths"], 3)
+        self.assertNotIn("recentDays", trend)
+        self.assertNotIn("baselineDays", trend)
+        self.assertNotIn("minimumRecentNonzeroObservations", trend)
+        self.assertNotIn("minimumBaselineNonzeroObservations", trend)
+
+    def test_bootstrap_window_is_last_seven_calendar_days_inclusive(self) -> None:
+        derive_window = getattr(repeated_blog_trend_module, "derive_collection_window", None)
+        self.assertIsNotNone(derive_window, "weekly collection window helper must exist")
+
+        window = derive_window(self.config, collection_date=AS_OF)
+
+        self.assertEqual(window["start"], date(2026, 8, 7))
+        self.assertEqual(window["end"], AS_OF)
+        self.assertEqual(window["mode"], "bootstrap")
+
+    def test_incremental_window_overlaps_latest_successful_boundary_by_one_day(self) -> None:
+        derive_window = getattr(repeated_blog_trend_module, "derive_collection_window", None)
+        self.assertIsNotNone(derive_window, "weekly collection window helper must exist")
+
+        window = derive_window(
+            self.config,
+            collection_date=AS_OF,
+            latest_successful_boundary=date(2026, 8, 10),
+        )
+
+        self.assertEqual(window["start"], date(2026, 8, 9))
+        self.assertEqual(window["end"], AS_OF)
+        self.assertEqual(window["mode"], "incremental")
+        self.assertEqual(window["latestSuccessfulBoundary"], "2026-08-10")
+
+    def test_page_stops_after_page_contains_posts_older_than_window(self) -> None:
+        calls: list[tuple[int, int]] = []
+
+        def page(
+            _client_id: str,
+            _client_secret: str,
+            _query: str,
+            start: int,
+            display: int,
+        ) -> dict:
+            calls.append((start, display))
+            if start == 1:
+                dates = ["20260813"] * display
+            else:
+                dates = ["20260807"] * 4 + ["20260806"] * (display - 4)
+            return {
+                "items": [
+                    {
+                        "link": f"https://blog.naver.com/author/{start + offset}",
+                        "postdate": postdate,
+                    }
+                    for offset, postdate in enumerate(dates)
+                ]
+            }
+
+        items = repeated_blog_trend_module.fetch_query_pages(
+            "client-id",
+            "client-secret",
+            "안국 카페",
+            300,
+            window_start=date(2026, 8, 7),
+            window_end=AS_OF,
+            search_page=page,
+        )
+
+        self.assertEqual(len(items), 104)
+        self.assertEqual(calls, [(1, 100), (101, 100)])
+
+    def test_page_stops_when_response_has_no_next_page(self) -> None:
+        calls: list[tuple[int, int]] = []
+
+        def page(
+            _client_id: str,
+            _client_secret: str,
+            _query: str,
+            start: int,
+            display: int,
+        ) -> dict:
+            calls.append((start, display))
+            return {
+                "items": [
+                    {
+                        "link": f"https://blog.naver.com/author/{index}",
+                        "postdate": "20260813",
+                    }
+                    for index in range(40)
+                ]
+            }
+
+        items = repeated_blog_trend_module.fetch_query_pages(
+            "client-id",
+            "client-secret",
+            "안국 카페",
+            300,
+            window_start=date(2026, 8, 7),
+            window_end=AS_OF,
+            search_page=page,
+        )
+
+        self.assertEqual(len(items), 40)
+        self.assertEqual(calls, [(1, 100)])
+
+    def test_page_fetch_honors_hard_cap_of_three_pages_per_query(self) -> None:
+        calls: list[tuple[int, int]] = []
+
+        def page(
+            _client_id: str,
+            _client_secret: str,
+            _query: str,
+            start: int,
+            display: int,
+        ) -> dict:
+            calls.append((start, display))
+            return {
+                "items": [
+                    {
+                        "link": f"https://blog.naver.com/author/{start + offset}",
+                        "postdate": "20260813",
+                    }
+                    for offset in range(display)
+                ]
+            }
+
+        items = repeated_blog_trend_module.fetch_query_pages(
+            "client-id",
+            "client-secret",
+            "안국 카페",
+            300,
+            window_start=date(2026, 8, 7),
+            window_end=AS_OF,
+            search_page=page,
+        )
+
+        self.assertEqual(len(items), 300)
+        self.assertEqual(calls, [(1, 100), (101, 100), (201, 100)])
+
+    def test_cross_query_dedupe_uses_normalized_url(self) -> None:
+        grouped = group_posts(
+            [
+                observation(url="https://blog.naver.com/a/1?trackingCode=first", query="안국 카페"),
+                observation(url="https://blog.naver.com/a/1?trackingCode=second", query="안국 맛집"),
+            ]
+        )
+
+        self.assertEqual(len(grouped), 1)
+        self.assertEqual(grouped[0]["queries"], ["안국 맛집", "안국 카페"])
+
+        post_view_grouped = group_posts(
+            [
+                observation(
+                    url=(
+                        "https://blog.naver.com/PostView.naver?blogId=a&logNo=1"
+                        "&trackingCode=first"
+                    ),
+                    query="안국 카페",
+                ),
+                observation(
+                    url=(
+                        "https://blog.naver.com/PostView.naver?trackingCode=second"
+                        "&logNo=1&blogId=a"
+                    ),
+                    query="안국 맛집",
+                ),
+            ]
+        )
+
+        self.assertEqual(len(post_view_grouped), 1)
+
+    def test_all_unique_in_window_posts_are_body_targets(self) -> None:
+        select_all = getattr(repeated_blog_trend_module, "select_all_body_targets", None)
+        self.assertIsNotNone(select_all, "live body target selection must be unbounded")
+        grouped = group_posts(
+            [
+                observation(url="https://blog.naver.com/a/1", query="안국 카페"),
+                observation(url="https://blog.naver.com/a/1", query="안국 맛집"),
+                observation(url="https://blog.naver.com/b/2", query="서촌 카페"),
+            ]
+        )
+
+        selected = select_all(grouped)
+
+        self.assertEqual({post["postUrl"] for post in selected}, {
+            "https://blog.naver.com/a/1",
+            "https://blog.naver.com/b/2",
+        })
+        self.assertEqual(
+            selected[0]["sampleQueries"],
+            selected[0]["queries"],
+        )
+
+    def test_live_path_sends_all_unique_in_window_posts_to_body_extractor(self) -> None:
+        config = json.loads(json.dumps(self.config, ensure_ascii=False))
+        config["regions"] = ["안국"]
+        config["queryGeneration"]["intents"] = [{"category": "FOOD", "phrase": "카페"}]
+        captured: list[dict] = []
+
+        def extract(
+            selected_posts,
+            *,
+            fetch_bodies,
+            fetcher,
+        ):
+            captured.extend(selected_posts)
+            return (
+                [],
+                repeated_blog_trend_module.Counter(),
+                {
+                    "fetched_posts": 0,
+                    "map_found_posts": 0,
+                    "extracted_place_count": 0,
+                },
+            )
+
+        items = [
+            {
+                "link": "https://blog.naver.com/a/1",
+                "title": "one",
+                "postdate": "20260813",
+                "bloggerlink": "https://blog.naver.com/a",
+            },
+            {
+                "link": "https://blog.naver.com/a/1?trackingCode=duplicate",
+                "title": "duplicate",
+                "postdate": "20260813",
+                "bloggerlink": "https://blog.naver.com/a",
+            },
+            {
+                "link": "https://blog.naver.com/b/2",
+                "title": "two",
+                "postdate": "20260812",
+                "bloggerlink": "https://blog.naver.com/b",
+            },
+        ]
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            with patch.object(repeated_blog_trend_module, "load_dotenv"), patch.dict(
+                repeated_blog_trend_module.os.environ,
+                {
+                    "NAVER_API_HUB_CLIENT_ID": "test-client-id",
+                    "NAVER_API_HUB_CLIENT_SECRET": "test-client-secret",
+                },
+            ), patch.object(
+                repeated_blog_trend_module,
+                "_fetch_query_pages_with_stats",
+                return_value=(items, 1),
+            ), patch.object(
+                repeated_blog_trend_module,
+                "extract_selected_posts",
+                side_effect=extract,
+            ), patch.object(repeated_blog_trend_module, "_fetch_trends", return_value={}):
+                result = repeated_blog_trend_module.run_live(
+                    config,
+                    collection_date=AS_OF,
+                    regions=None,
+                    results_per_query=300,
+                    body_limit=1,
+                    output_dir=Path(temp_dir),
+                    persist_db=False,
+                )
+
+        self.assertEqual(result["stats"]["selectedBodyTargets"], 2)
+        self.assertEqual(
+            {post["link"] for post in captured},
+            {"https://blog.naver.com/a/1", "https://blog.naver.com/b/2"},
+        )
+
+    def test_live_trend_path_uses_monthly_summary_for_classification_and_persistence(self) -> None:
+        config = json.loads(json.dumps(self.config, ensure_ascii=False))
+        config["regions"] = ["안국"]
+        config["queryGeneration"]["intents"] = [{"category": "FOOD", "phrase": "카페"}]
+
+        class MonthlyTrendClient:
+            def __init__(self) -> None:
+                self.calls = []
+
+            def search(self, groups, *, start_date, end_date, time_unit="date"):
+                self.calls.append(
+                    {
+                        "groups": groups,
+                        "start_date": start_date,
+                        "end_date": end_date,
+                        "time_unit": time_unit,
+                    }
+                )
+                return [
+                    {
+                        "title": group.group_name,
+                        "data": [
+                            {"period": "2026-05-01", "ratio": 31.0},
+                            {"period": "2026-06-01", "ratio": 30.0},
+                            {"period": "2026-07-01", "ratio": 31.0},
+                            {"period": "2026-08-01", "ratio": 26.0},
+                        ],
+                    }
+                    for group in groups
+                ]
+
+        class Cursor:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *_args):
+                return None
+
+            def execute(self, *_args):
+                return None
+
+            def fetchone(self):
+                return None
+
+        class Connection:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *_args):
+                return None
+
+            def cursor(self):
+                return Cursor()
+
+        items = [
+            {
+                "link": "https://blog.naver.com/a/1",
+                "title": "one",
+                "postdate": "20260813",
+                "bloggerlink": "https://blog.naver.com/a",
+            },
+            {
+                "link": "https://blog.naver.com/b/2",
+                "title": "two",
+                "postdate": "20260812",
+                "bloggerlink": "https://blog.naver.com/b",
+            },
+        ]
+        representative = {
+            "placeId": "map-1",
+            "name": "테스트카페",
+            "address": "서울 종로구 율곡로 1",
+            "latlng": "37.580000,126.990000",
+        }
+
+        def extract(selected_posts, *, fetch_bodies, fetcher):
+            return (
+                [
+                    {
+                        **selected,
+                        "body_status": "fetched",
+                        "places": [representative],
+                        "representative_status": "auto_confirmed",
+                        "representative_place": representative,
+                    }
+                    for selected in selected_posts
+                ],
+                repeated_blog_trend_module.Counter(),
+                {
+                    "body_requests": len(selected_posts),
+                    "fetched_posts": len(selected_posts),
+                    "map_found_posts": len(selected_posts),
+                    "extracted_place_count": len(selected_posts),
+                    "body_failed": 0,
+                },
+            )
+
+        trend_client = MonthlyTrendClient()
+        persisted: list[dict] = []
+
+        def persist(result, **_kwargs):
+            persisted.append(result)
+            return {"runsUpserted": 1, "resultsUpserted": 1}
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            with patch.object(repeated_blog_trend_module, "load_dotenv"), patch.dict(
+                repeated_blog_trend_module.os.environ,
+                {
+                    "NAVER_API_HUB_CLIENT_ID": "test-client-id",
+                    "NAVER_API_HUB_CLIENT_SECRET": "test-client-secret",
+                },
+                clear=True,
+            ), patch.object(
+                repeated_blog_trend_module,
+                "_fetch_query_pages_with_stats",
+                return_value=(items, 1),
+            ), patch.object(
+                repeated_blog_trend_module,
+                "extract_selected_posts",
+                side_effect=extract,
+            ), patch.object(
+                repeated_blog_trend_module,
+                "persist_result_to_database",
+                side_effect=persist,
+            ):
+                result = repeated_blog_trend_module.run_live(
+                    config,
+                    collection_date=AS_OF,
+                    regions=None,
+                    max_results_per_query=300,
+                    output_dir=Path(temp_dir),
+                    persist_db=True,
+                    connection_factory=lambda: Connection(),
+                    trend_client=trend_client,
+                )
+
+        self.assertEqual(len(trend_client.calls), 1)
+        self.assertEqual(trend_client.calls[0]["time_unit"], "month")
+        self.assertNotEqual(trend_client.calls[0]["time_unit"], "date")
+        self.assertEqual(trend_client.calls[0]["start_date"], date(2026, 5, 1))
+        self.assertEqual(trend_client.calls[0]["end_date"], AS_OF)
+        self.assertEqual(len(persisted), 1)
+        trend = persisted[0]["evidence"][0]["trend"]
+        self.assertEqual(trend["status"], "SURGING")
+        self.assertEqual(trend["recentSearchInterestAverage"], 2.0)
+        self.assertEqual(trend["previous14dSearchInterestAverage"], 1.0)
+        self.assertEqual(trend["ratio"], 2.0)
+        self.assertEqual(trend["recentNonzeroObservations"], 1)
+        self.assertEqual(trend["baselineNonzeroObservations"], 3)
+        self.assertEqual(_search_trend_status(trend), "TRENDING")
+        self.assertEqual(result["evidence"][0]["classification"]["status"], "WATCH")
+        self.assertEqual(result["stats"]["TRENDING"], 1)
+        self.assertEqual(result["stats"]["WATCH"], 0)
+        self.assertEqual(result["stats"]["INSUFFICIENT_EVIDENCE"], 0)
+        console = io.StringIO()
+        with redirect_stdout(console):
+            repeated_blog_trend_module._print_result(result)
+        self.assertIn("WATCH=0 TRENDING=1 INSUFFICIENT=0", console.getvalue())
+        self.assertIn("[TRENDING]", console.getvalue())
+        self.assertEqual(result["database"]["status"], "persisted")
+
+    def test_last_successful_run_lookup_is_db_only_and_secret_free(self) -> None:
+        class Cursor:
+            def __init__(self) -> None:
+                self.sql = ""
+                self.params = None
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *_args):
+                return None
+
+            def execute(self, sql, params=None) -> None:
+                self.sql = sql
+                self.params = params
+
+            def fetchone(self):
+                return (date(2026, 8, 10),)
+
+        class Connection:
+            def __init__(self) -> None:
+                self.cursor_value = Cursor()
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *_args):
+                return None
+
+            def cursor(self):
+                return self.cursor_value
+
+        connection = Connection()
+        lookup = getattr(
+            repeated_blog_trend_module,
+            "get_last_successful_blog_trend_boundary",
+            None,
+        )
+        self.assertIsNotNone(lookup, "last-successful run lookup must exist")
+
+        with patch.dict(repeated_blog_trend_module.os.environ, {}, clear=True):
+            boundary = lookup(connection)
+
+        self.assertEqual(boundary, date(2026, 8, 10))
+        self.assertIn("FROM blog_trend_run", connection.cursor_value.sql)
+        self.assertIn("status", connection.cursor_value.sql)
+        self.assertEqual(connection.cursor_value.params, ("SUCCESS",))
 
     def test_blog_search_uses_five_naver_pages_for_a_500_result_target(self) -> None:
         calls: list[tuple[str, int, int]] = []
@@ -493,6 +963,31 @@ class RepeatedBlogTrendTest(unittest.TestCase):
         self.assertTrue(connection.committed)
         self.assertEqual(result, {"snapshotsUpserted": 1})
 
+    def test_database_persistence_commits_loader_failure_state_before_reraising(self) -> None:
+        class Connection:
+            def __init__(self) -> None:
+                self.commits = 0
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *_args):
+                return None
+
+            def commit(self) -> None:
+                self.commits += 1
+
+        connection = Connection()
+
+        with self.assertRaises(RuntimeError):
+            repeated_blog_trend_module.persist_result_to_database(
+                {"collectionDate": "2026-08-13", "evidence": []},
+                connection_factory=lambda: connection,
+                loader=lambda _connection, _result: (_ for _ in ()).throw(RuntimeError("failed")),
+            )
+
+        self.assertEqual(connection.commits, 1)
+
     def test_search_trend_failure_is_recorded_without_aborting_place_collection(self) -> None:
         config = json.loads(json.dumps(self.config, ensure_ascii=False))
         config["regions"] = []
@@ -556,6 +1051,17 @@ class RepeatedBlogTrendTest(unittest.TestCase):
         self.assertEqual(evidence["uniqueQueries"], 2)
         self.assertEqual(evidence.get("uniqueIntentCategories"), 1)
         self.assertEqual(evidence["collectionDays"], 2)
+
+    def test_evidence_counts_distinct_posts_per_query_intent(self) -> None:
+        rows = [
+            observation(place_id="k1", url="https://blog.naver.com/a/1", query="안국 카페"),
+            observation(place_id="k1", url="https://blog.naver.com/a/1", query="안국 카페"),
+            observation(place_id="k1", url="https://blog.naver.com/b/2", query="안국 맛집"),
+        ]
+
+        evidence = aggregate_place_evidence(rows, as_of=AS_OF, config=self.config)[0]
+
+        self.assertEqual(evidence["uniquePostCountsByIntent"], {"카페": 1, "맛집": 1})
 
     def test_synonymous_queries_are_one_independent_intent_category(self) -> None:
         rows = [

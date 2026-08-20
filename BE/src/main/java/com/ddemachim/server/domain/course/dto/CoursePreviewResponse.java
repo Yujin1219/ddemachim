@@ -93,7 +93,24 @@ public record CoursePreviewResponse(
             @Schema(description = "서버가 이 구간에 선택한 이동수단", example = "WALK") RouteMode selectedMode,
             @Schema(description = "서버가 일정과 합계에 반영한 경로") RouteOption selectedRoute,
             @Schema(description = "사용자가 전환할 수 있는 대체 경로. 없으면 null") RouteOption alternativeRoute,
-            @Schema(description = "직전 지점에서 현재 장소까지의 선택 경로. 기존 클라이언트 호환 필드") RouteOption incomingRoute) {
+            @Schema(description = "직전 지점에서 현재 장소까지의 선택 경로. 기존 클라이언트 호환 필드") RouteOption incomingRoute,
+            @Schema(description = "내부 장소 ID. 외부 사용자 장소이면 null", example = "31") Long placeId) {
+
+        public Stop(
+                Integer sequenceNo, Long basketItemId, String placeName, String address, Double latitude,
+                Double longitude, Integer defaultDwellMinutes, Integer dwellMinutes, CourseDwellSource dwellSource,
+                LocalTime arrivalDeadline, Integer arrivalBufferMinutes, LocalTime scheduledArrival,
+                LocalTime scheduledDeparture, Integer travelMinutesFromPrevious, Integer travelDistanceMeters,
+                BigDecimal ascentMeters, BigDecimal congestionScore, CourseHoursSourceType hoursSourceType,
+                LocalTime openTime, LocalTime closeTime, Long eventId, LocalTime eventEndTime,
+                RouteMode selectedMode, RouteOption selectedRoute, RouteOption alternativeRoute,
+                RouteOption incomingRoute) {
+            this(sequenceNo, basketItemId, placeName, address, latitude, longitude, defaultDwellMinutes,
+                    dwellMinutes, dwellSource, arrivalDeadline, arrivalBufferMinutes, scheduledArrival,
+                    scheduledDeparture, travelMinutesFromPrevious, travelDistanceMeters, ascentMeters,
+                    congestionScore, hoursSourceType, openTime, closeTime, eventId, eventEndTime,
+                    selectedMode, selectedRoute, alternativeRoute, incomingRoute, null);
+        }
 
         public Stop(
                 Integer sequenceNo, Long basketItemId, String placeName, String address, Double latitude,
@@ -107,7 +124,7 @@ public record CoursePreviewResponse(
                     dwellMinutes, dwellSource, arrivalDeadline, arrivalBufferMinutes, scheduledArrival,
                     scheduledDeparture, travelMinutesFromPrevious, travelDistanceMeters, ascentMeters,
                     congestionScore, hoursSourceType, openTime, closeTime, eventId, eventEndTime,
-                    incomingRoute == null ? null : incomingRoute.mode(), incomingRoute, null, incomingRoute);
+                    incomingRoute == null ? null : incomingRoute.mode(), incomingRoute, null, incomingRoute, null);
         }
     }
 }

@@ -80,6 +80,11 @@ public class CoursePreviewService {
                 memberId,
                 request.serviceDate(),
                 request.places());
+        return previewResolved(request, resolvedPlaces);
+    }
+
+    /** Common planning layer used by both basket and stateless AI course inputs. */
+    public CoursePreviewResponse previewResolved(CoursePreviewRequest request, List<ResolvedPlace> resolvedPlaces) {
         FastPlan plan = fastPlanner.plan(request, resolvedPlaces);
         List<CoursePreviewResponse.Option> options = new ArrayList<>();
         options.add(toOption(plan));
@@ -260,7 +265,8 @@ public class CoursePreviewService {
                 incomingRoute == null ? null : incomingRoute.mode(),
                 incomingRoute,
                 plannedStop.alternativeRoute(),
-                incomingRoute);
+                incomingRoute,
+                place.placeId());
     }
 
     private CoursePreviewResponse.Stop toStopWithCongestion(PlannedStop plannedStop) {
@@ -274,7 +280,7 @@ public class CoursePreviewService {
                 stop.scheduledArrival(), stop.scheduledDeparture(), stop.travelMinutesFromPrevious(),
                 stop.travelDistanceMeters(), stop.ascentMeters(), score, stop.hoursSourceType(),
                 stop.openTime(), stop.closeTime(), stop.eventId(), stop.eventEndTime(), stop.selectedMode(),
-                stop.selectedRoute(), stop.alternativeRoute(), stop.incomingRoute());
+                stop.selectedRoute(), stop.alternativeRoute(), stop.incomingRoute(), stop.placeId());
     }
 
     private CoursePreviewResponse.Stop toStop(PlannedQuietStop plannedStop) {
@@ -306,7 +312,8 @@ public class CoursePreviewService {
                 incomingRoute == null ? null : incomingRoute.mode(),
                 incomingRoute,
                 null,
-                incomingRoute);
+                incomingRoute,
+                place.placeId());
     }
 
     private CoursePreviewResponse.Stop toStop(EasyPlannedStop easyStop) {
@@ -339,7 +346,8 @@ public class CoursePreviewService {
                 incomingRoute == null ? null : incomingRoute.mode(),
                 incomingRoute,
                 plannedStop.alternativeRoute(),
-                incomingRoute);
+                incomingRoute,
+                place.placeId());
     }
 
     private static RouteOption rebuildRoute(

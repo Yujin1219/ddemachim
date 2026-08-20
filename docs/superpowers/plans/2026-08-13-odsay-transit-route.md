@@ -1,6 +1,5 @@
 # ODsay Transit Route Integration Implementation Plan
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** 홈에서 장소를 선택하면 현재 위치 기준 대중교통 최단 예상시간을 ODsay 단일 호출로 계산하고, 기존 장소 행동 행을 이동수단 탭으로 교체하며 ODsay 실패 시 대중교통 탭을 숨긴다.
 

@@ -11,12 +11,11 @@ const {
   resolveCongestionPreference,
 } = mapHomeFilters;
 
-test('exposes the approved seven map categories in service order', () => {
+test('exposes the approved six map categories in service order', () => {
   assert.deepEqual(MAP_HOME_FILTERS.map(({ key, label }) => [key, label]), [
     ['ALL', '전체'],
     ['FILMING', '촬영지'],
     ['HOT', 'HOT'],
-    ['POPUP', '팝업'],
     ['EVENT', '전시·행사'],
     ['RESTAURANT', '음식점'],
     ['CAFE_DESSERT', '카페·디저트'],
@@ -29,7 +28,6 @@ test('maps place-backed categories to the existing map API contract', () => {
   assert.deepEqual(mapFilterApiParams(byKey.ALL), {});
   assert.deepEqual(mapFilterApiParams(byKey.FILMING), { tag: 'FILMING_LOCATION' });
   assert.deepEqual(mapFilterApiParams(byKey.HOT), {});
-  assert.deepEqual(mapFilterApiParams(byKey.POPUP), { category: 'POPUP' });
   assert.deepEqual(mapFilterApiParams(byKey.EVENT), { category: 'EXHIBITION' });
   assert.deepEqual(mapFilterApiParams(byKey.RESTAURANT), { category: 'RESTAURANT' });
   assert.deepEqual(mapFilterApiParams(byKey.CAFE_DESSERT), { category: 'CAFE,DESSERT' });
@@ -52,7 +50,6 @@ test('uses the all chip to select or clear every marker category', () => {
   assert.deepEqual(allSelected, [
     'FILMING',
     'HOT',
-    'POPUP',
     'EVENT',
     'RESTAURANT',
     'CAFE_DESSERT',

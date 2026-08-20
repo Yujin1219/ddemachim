@@ -9,7 +9,7 @@ import com.ddemachim.server.domain.route.enums.RouteMode;
 import com.ddemachim.server.domain.route.enums.RouteStatus;
 import com.ddemachim.server.domain.route.exception.RouteProviderException;
 import com.ddemachim.server.domain.route.service.PedestrianSearchOption;
-import com.ddemachim.server.domain.route.service.RouteProviderClient;
+import com.ddemachim.server.domain.route.service.RoadRouteProviderClient;
 import com.ddemachim.server.domain.route.service.SelectedTransitRoute;
 import com.ddemachim.server.domain.route.service.TransitWalkSegment;
 import java.util.ArrayList;
@@ -25,11 +25,11 @@ public class CourseEasyWalkSelector {
 
     private static final int MAX_EASY_WALK_DURATION_SECONDS = 20 * 60;
 
-    private final RouteProviderClient routeProviderClient;
+    private final RoadRouteProviderClient routeProviderClient;
     private final ElevationProfileService elevationProfileService;
 
     public CourseEasyWalkSelector(
-            RouteProviderClient routeProviderClient,
+            RoadRouteProviderClient routeProviderClient,
             ElevationProfileService elevationProfileService) {
         this.routeProviderClient = routeProviderClient;
         this.elevationProfileService = elevationProfileService;
@@ -171,7 +171,9 @@ public class CourseEasyWalkSelector {
         LineStringGeometry geometry = new LineStringGeometry(segment.geometry().stream()
                 .map(point -> List.of(point.longitude(), point.latitude()))
                 .toList());
-        return profilesByGeometry.computeIfAbsent(geometry, elevationProfileService::profile);
+        ElevationProfileService.ProfileResult profile =
+                profilesByGeometry.computeIfAbsent(geometry, elevationProfileService::profile);
+        return profile == null ? ElevationProfileService.ProfileResult.unavailable() : profile;
     }
 
     private static boolean isViable(RouteOption route) {

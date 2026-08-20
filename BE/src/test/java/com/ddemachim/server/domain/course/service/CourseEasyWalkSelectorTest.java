@@ -21,7 +21,7 @@ import com.ddemachim.server.domain.route.enums.RouteStatus;
 import com.ddemachim.server.domain.route.enums.RouteUnavailableReason;
 import com.ddemachim.server.domain.route.exception.RouteProviderException;
 import com.ddemachim.server.domain.route.service.PedestrianSearchOption;
-import com.ddemachim.server.domain.route.service.RouteProviderClient;
+import com.ddemachim.server.domain.route.service.RoadRouteProviderClient;
 import com.ddemachim.server.domain.route.service.SelectedTransitRoute;
 import com.ddemachim.server.domain.route.service.TransitWalkSegment;
 import java.time.LocalDateTime;
@@ -37,7 +37,7 @@ class CourseEasyWalkSelectorTest {
         TransitWalkSegment firstWalk = walk(1, 0, coordinate(126.0), coordinate(126.001));
         TransitWalkSegment secondWalk = walk(2, 2, coordinate(126.002), coordinate(126.003));
         SelectedTransitRoute selectedTransit = new SelectedTransitRoute(
-                transitRoute(), List.of(firstWalk, secondWalk));
+                selectedWalkingRoute(), List.of(firstWalk, secondWalk));
         FastPlan fastPlan = fastPlan(selectedTransit);
         RecordingProvider provider = new RecordingProvider();
         ElevationProfileService profiles = mock(ElevationProfileService.class);
@@ -67,7 +67,7 @@ class CourseEasyWalkSelectorTest {
     @Test
     void allProfiledCandidatesPreferLowerSlopeBurdenOverTheFasterRoute() {
         TransitWalkSegment walk = walk(1, 0, coordinate(126.0), coordinate(126.001));
-        FastPlan fastPlan = fastPlan(new SelectedTransitRoute(transitRoute(), List.of(walk)));
+        FastPlan fastPlan = fastPlan(new SelectedTransitRoute(selectedWalkingRoute(), List.of(walk)));
         LineStringGeometry steepGeometry = geometry(126.0);
         LineStringGeometry easyGeometry = geometry(126.01);
         RecordingProvider provider = new RecordingProvider((origin, destination, option) -> switch (option) {
@@ -93,7 +93,7 @@ class CourseEasyWalkSelectorTest {
     @Test
     void identicalCandidateGeometryIsProfiledOnceWithoutDiscardingDistinctCandidates() {
         TransitWalkSegment walk = walk(1, 0, coordinate(126.0), coordinate(126.001));
-        FastPlan fastPlan = fastPlan(new SelectedTransitRoute(transitRoute(), List.of(walk)));
+        FastPlan fastPlan = fastPlan(new SelectedTransitRoute(selectedWalkingRoute(), List.of(walk)));
         LineStringGeometry sharedGeometry = geometry(126.0);
         RecordingProvider provider = new RecordingProvider((origin, destination, option) ->
                 walkingRoute(option, 100, 200 + option.stableOrder(), sharedGeometry));
@@ -114,7 +114,7 @@ class CourseEasyWalkSelectorTest {
     @Test
     void allVariantFailuresRetainTheOriginalSegmentAsTypedTransitFallback() {
         TransitWalkSegment walk = walk(1, 0, coordinate(126.0), coordinate(126.001));
-        SelectedTransitRoute selectedTransit = new SelectedTransitRoute(transitRoute(), List.of(walk));
+        SelectedTransitRoute selectedTransit = new SelectedTransitRoute(selectedWalkingRoute(), List.of(walk));
         FastPlan fastPlan = fastPlan(selectedTransit);
         RecordingProvider provider = new RecordingProvider((origin, destination, option) -> {
             throw new RouteProviderException(RouteUnavailableReason.NO_ROUTE);
@@ -135,13 +135,15 @@ class CourseEasyWalkSelectorTest {
         assertThat(selection.elevationProfile().profile()).isNull();
         assertThat(selection.elevationProfile().ascentMeters()).isNull();
         assertThat(provider.calls()).hasSize(4);
-        verify(profiles, times(0)).profile(any());
+        verify(profiles, times(1)).profile(new LineStringGeometry(List.of(
+                List.of(126.0, 37.0),
+                List.of(126.001, 37.0))));
     }
 
     @Test
     void mixedProfilesSelectsOnlyAmongProfiledCandidatesEvenWhenUnprofiledIsFaster() {
         TransitWalkSegment walk = walk(1, 0, coordinate(126.0), coordinate(126.001));
-        FastPlan fastPlan = fastPlan(new SelectedTransitRoute(transitRoute(), List.of(walk)));
+        FastPlan fastPlan = fastPlan(new SelectedTransitRoute(selectedWalkingRoute(), List.of(walk)));
         LineStringGeometry fastGeometry = geometry(126.0);
         LineStringGeometry profiledGeometry = geometry(126.01);
         RecordingProvider provider = new RecordingProvider((origin, destination, option) -> switch (option) {
@@ -171,7 +173,7 @@ class CourseEasyWalkSelectorTest {
     @Test
     void allUnavailableProfilesUseDurationFallbackAcrossViableCandidates() {
         TransitWalkSegment walk = walk(1, 0, coordinate(126.0), coordinate(126.001));
-        FastPlan fastPlan = fastPlan(new SelectedTransitRoute(transitRoute(), List.of(walk)));
+        FastPlan fastPlan = fastPlan(new SelectedTransitRoute(selectedWalkingRoute(), List.of(walk)));
         LineStringGeometry fastGeometry = geometry(126.0);
         LineStringGeometry slowGeometry = geometry(126.01);
         RecordingProvider provider = new RecordingProvider((origin, destination, option) -> switch (option) {
@@ -203,7 +205,8 @@ class CourseEasyWalkSelectorTest {
         return new ElevationProfileService.ProfileResult(
                 List.of(new ElevationProfileService.ProfilePoint(0.0, 126.0, 37.0, 10.0)),
                 ascent,
-                steepDistance);
+                steepDistance,
+                100.0);
     }
 
     private static FastPlan fastPlan(SelectedTransitRoute selectedTransit) {
@@ -237,18 +240,18 @@ class CourseEasyWalkSelectorTest {
         return new Coordinate(37.0, longitude);
     }
 
-    private static RouteOption transitRoute() {
-        RouteLeg busLeg = new RouteLeg(RouteMode.TRANSIT, "버스", 300, 1_000, null);
+    private static RouteOption selectedWalkingRoute() {
+        RouteLeg walkLeg = new RouteLeg(RouteMode.WALK, null, 300, 1_000, null);
         return new RouteOption(
-                RouteMode.TRANSIT,
+                RouteMode.WALK,
                 RouteStatus.AVAILABLE,
                 300,
                 1_000,
-                1_500,
-                0,
-                200,
                 null,
-                List.of(busLeg));
+                null,
+                1_000,
+                null,
+                List.of(walkLeg));
     }
 
     private static RouteOption walkingRoute(PedestrianSearchOption option) {
@@ -285,7 +288,7 @@ class CourseEasyWalkSelectorTest {
             Coordinate origin, Coordinate destination, PedestrianSearchOption option) {
     }
 
-    private static final class RecordingProvider implements RouteProviderClient {
+    private static final class RecordingProvider implements RoadRouteProviderClient {
 
         private final List<VariantCall> calls = new ArrayList<>();
         private final VariantFunction variants;
@@ -310,11 +313,6 @@ class CourseEasyWalkSelectorTest {
             PedestrianSearchOption option) {
             calls.add(new VariantCall(origin, destination, option));
             return variants.apply(origin, destination, option);
-        }
-
-        @Override
-        public RouteOption findTransit(Coordinate origin, Coordinate destination) {
-            throw new AssertionError("EASY selector must use retained transit routes");
         }
 
         @Override

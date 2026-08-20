@@ -8,6 +8,8 @@ import org.springframework.data.jpa.repository.JpaRepository;
 
 public interface CourseBasketItemRepository extends JpaRepository<CourseBasketItem, Long> {
 
+    Optional<CourseBasketItem> findByIdAndMemberId(Long id, Long memberId);
+
     @EntityGraph(attributePaths = {"place", "place.category"})
     Optional<CourseBasketItem> findByMemberIdAndPlaceId(Long memberId, Long placeId);
 
@@ -19,4 +21,6 @@ public interface CourseBasketItemRepository extends JpaRepository<CourseBasketIt
 
     @EntityGraph(attributePaths = {"place", "userPlace"})
     List<CourseBasketItem> findAllByMemberIdAndIdIn(Long memberId, List<Long> ids);
+
+    void deleteAllByMemberIdAndIdIn(Long memberId, List<Long> ids);
 }

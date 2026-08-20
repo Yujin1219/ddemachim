@@ -10,8 +10,23 @@ import VectorLayer from 'ol/layer/Vector.js'
 import VectorSource from 'ol/source/Vector.js'
 import XYZ from 'ol/source/XYZ.js'
 import { boundingExtent } from 'ol/extent.js'
+import { easeOut } from 'ol/easing.js'
 import { fromLonLat, transformExtent } from 'ol/proj.js'
-import { Fill, Stroke, Style } from 'ol/style.js'
+import { Fill, Stroke, Style, Text } from 'ol/style.js'
+import Point from 'ol/geom/Point.js'
+import { __iconNode as calendarDaysIcon } from 'lucide-react/dist/esm/icons/calendar-days.mjs'
+import { __iconNode as cameraIcon } from 'lucide-react/dist/esm/icons/camera.mjs'
+import { __iconNode as coffeeIcon } from 'lucide-react/dist/esm/icons/coffee.mjs'
+import { __iconNode as flameIcon } from 'lucide-react/dist/esm/icons/flame.mjs'
+import { __iconNode as imageIcon } from 'lucide-react/dist/esm/icons/image.mjs'
+import { __iconNode as landmarkIcon } from 'lucide-react/dist/esm/icons/landmark.mjs'
+import { __iconNode as mapPinIcon } from 'lucide-react/dist/esm/icons/map-pin.mjs'
+import { __iconNode as paletteIcon } from 'lucide-react/dist/esm/icons/palette.mjs'
+import { __iconNode as routeIcon } from 'lucide-react/dist/esm/icons/route.mjs'
+import { __iconNode as shoppingBagIcon } from 'lucide-react/dist/esm/icons/shopping-bag.mjs'
+import { __iconNode as sparklesIcon } from 'lucide-react/dist/esm/icons/sparkles.mjs'
+import { __iconNode as treesIcon } from 'lucide-react/dist/esm/icons/trees.mjs'
+import { __iconNode as utensilsIcon } from 'lucide-react/dist/esm/icons/utensils.mjs'
 import 'ol/ol.css'
 import '../vworld-map.css'
 import VWorldMapRegion from './VWorldMapRegion.js'
@@ -26,13 +41,46 @@ import {
   toMockCrowdingFeatureCollection,
   toMockCrowdingGridDetail,
 } from '../utils/mockCrowdingMap.js'
-import { routeFitPointCoordinates, routeLegFeatureSpecs } from '../utils/routeGeometry.js'
+import {
+  chevronAnchors,
+  lineStringLength,
+  partialLineString,
+  routeFitPointCoordinates,
+  routeLegFeatureSpecs,
+} from '../utils/routeGeometry.js'
 import { resolveRouteFitDuration } from '../utils/routeComparison.js'
 
 const DEFAULT_CENTER = [126.978, 37.5665]
 const DEFAULT_ROUTE_FIT_PADDING = [120, 36, 380, 36]
 const CLUSTER_ZOOM_MAX = 14.5
 const CLUSTER_PIXEL_RADIUS = 44
+const MARKER_STAGGER_STEP = 22
+const MARKER_STAGGER_MAX = 340
+const ROUTE_CHEVRON_SPACING_PX = 78
+const ROUTE_CHEVRON_MAX_PER_LEG = 8
+const ROUTE_DRAW_DURATION = 1250
+const ROUTE_GLOW_DURATION = 620
+const MARKER_ARRIVAL_RADIUS_PX = 26
+const MARKER_ARRIVAL_DURATION = 640
+const GHOST_ROUTE_FADED_OPACITY = 0.45
+const SVG_NAMESPACE = 'http://www.w3.org/2000/svg'
+const MAP_MARKER_ICONS = Object.freeze({
+  restaurant: utensilsIcon,
+  'cafe-dessert': coffeeIcon,
+  hot: flameIcon,
+  event: calendarDaysIcon,
+  attraction: landmarkIcon,
+  culture: paletteIcon,
+  exhibition: paletteIcon,
+  shopping: shoppingBagIcon,
+  popup: sparklesIcon,
+  park: treesIcon,
+  walk: routeIcon,
+  'photo-spot': imageIcon,
+  filming: cameraIcon,
+  search: mapPinIcon,
+  default: mapPinIcon,
+})
 const CROWDING_GRID_COLORS = {
   여유: { fill: 'rgba(34, 197, 94, 0.22)', stroke: 'rgba(21, 128, 61, 0.72)' },
   보통: { fill: 'rgba(59, 130, 246, 0.20)', stroke: 'rgba(29, 78, 216, 0.70)' },
@@ -42,9 +90,64 @@ const CROWDING_GRID_COLORS = {
 }
 
 export const ROUTE_STYLES = {
-  WALK: new Style({ stroke: new Stroke({ color: '#2563eb', width: 5, lineDash: [3, 8] }) }),
-  TRANSIT: new Style({ stroke: new Stroke({ color: '#0f766e', width: 6 }) }),
-  TAXI: new Style({ stroke: new Stroke({ color: '#f2b705', width: 6 }) }),
+  WALK: new Style({ stroke: new Stroke({ color: '#7dd3fc', width: 2.2, lineCap: 'round' }) }),
+  TRANSIT: new Style({ stroke: new Stroke({ color: '#7dd3fc', width: 2.2, lineCap: 'round' }) }),
+  TAXI: new Style({ stroke: new Stroke({ color: '#7dd3fc', width: 2.2, lineCap: 'round' }) }),
+}
+
+const ROUTE_RIBBON_HALO = new Style({ stroke: new Stroke({ color: 'rgba(255,255,255,0.92)', width: 11, lineCap: 'round', lineJoin: 'round' }) })
+const ROUTE_RIBBON_BODY = new Style({ stroke: new Stroke({ color: '#1d4ed8', width: 6.5, lineCap: 'round', lineJoin: 'round' }) })
+const ROUTE_GLOW_STYLE = new Style({ stroke: new Stroke({ color: 'rgba(96,165,250,0.85)', width: 16, lineCap: 'round', lineJoin: 'round' }) })
+const GHOST_ROUTE_STYLE = new Style({ stroke: new Stroke({ color: 'rgba(71,85,105,0.9)', width: 2.5, lineDash: [2, 8], lineCap: 'round' }) })
+const GHOST_HIGHLIGHT_STYLE = [
+  new Style({ stroke: new Stroke({ color: 'rgba(249,115,22,0.20)', width: 12, lineCap: 'round', lineJoin: 'round' }) }),
+  new Style({ stroke: new Stroke({ color: '#ea580c', width: 3, lineDash: [2, 8], lineCap: 'round' }) }),
+]
+
+const prefersReducedMotion = () => typeof window !== 'undefined'
+  && (window.matchMedia?.('(prefers-reduced-motion: reduce)').matches ?? false)
+const motionDuration = (duration) => (prefersReducedMotion() ? 0 : duration)
+const markerStaggerDelay = (order) => (prefersReducedMotion() ? 0 : Math.min(order * MARKER_STAGGER_STEP, MARKER_STAGGER_MAX))
+
+function createMarkerIcon(tone) {
+  const iconNode = MAP_MARKER_ICONS[tone] || MAP_MARKER_ICONS.default
+  const svg = document.createElementNS(SVG_NAMESPACE, 'svg')
+  svg.setAttribute('viewBox', '0 0 24 24')
+  svg.setAttribute('fill', 'none')
+  svg.setAttribute('stroke', 'currentColor')
+  svg.setAttribute('stroke-width', '2')
+  svg.setAttribute('stroke-linecap', 'round')
+  svg.setAttribute('stroke-linejoin', 'round')
+  svg.setAttribute('aria-hidden', 'true')
+
+  iconNode.forEach(([tag, attributes]) => {
+    const node = document.createElementNS(SVG_NAMESPACE, tag)
+    Object.entries(attributes).forEach(([name, value]) => {
+      if (name === 'key') return
+      node.setAttribute(name.replace(/[A-Z]/g, (letter) => `-${letter.toLowerCase()}`), String(value))
+    })
+    svg.appendChild(node)
+  })
+  return svg
+}
+
+function ribbonStyle(feature, resolution = 1) {
+  const styles = [ROUTE_RIBBON_HALO, ROUTE_RIBBON_BODY, ROUTE_STYLES.TRANSIT]
+  if (feature.get('drawing')) return styles
+  const coordinates = feature.getGeometry()?.getCoordinates()
+  chevronAnchors(coordinates, ROUTE_CHEVRON_SPACING_PX * resolution, ROUTE_CHEVRON_MAX_PER_LEG)
+    .forEach((anchor) => styles.push(new Style({
+      geometry: new Point(anchor.coordinate),
+      text: new Text({
+        text: '›',
+        font: '700 15px system-ui, -apple-system, "Segoe UI", sans-serif',
+        fill: new Fill({ color: 'rgba(255,255,255,0.95)' }),
+        rotation: anchor.rotation,
+        rotateWithView: true,
+        offsetY: -1,
+      }),
+    })))
+  return styles
 }
 
 function normalizeCenter(center) {
@@ -77,7 +180,7 @@ function crowdingGridStyle(feature) {
 }
 
 export default function VWorldMap({
-  center = DEFAULT_CENTER,
+  center = null,
   zoom = 15,
   interactive = true,
   className = '',
@@ -88,6 +191,9 @@ export default function VWorldMap({
   placeMarkerFilter = null,
   placeMarkerFilterKey = '',
   placeMarkerLabel = null,
+  placeMarkerEntrance = 'pop',
+  selectedPlaceKey = '',
+  focusedPlaceKey = '',
   clusterPlaces = true,
   fitPlaceMarkers = false,
   fitUserLocation = false,
@@ -103,19 +209,37 @@ export default function VWorldMap({
   routeLegs = [],
   routeMode = 'WALK',
   routeFitKey = '',
+  routeFitCoordinates = [],
   routeFitPadding = DEFAULT_ROUTE_FIT_PADDING,
+  routeDrawKey = '',
+  routeDrawDelay = 0,
+  ghostRouteLegs = [],
+  ghostHighlightLegs = [],
+  onRouteDrawEnd = null,
 }) {
   const targetRef = useRef(null)
   const mapRef = useRef(null)
   const locationOverlayRef = useRef(null)
   const congestionAreaLayerRef = useRef(null)
   const routeLayerRef = useRef(null)
+  const routeGlowLayerRef = useRef(null)
+  const ghostLayerRef = useRef(null)
+  const ghostHighlightLayerRef = useRef(null)
+  const sparkOverlayRef = useRef(null)
   const placeOverlaysRef = useRef([])
   const rawPlacesRef = useRef([])
   const placeAbortRef = useRef(null)
   const crowdingRequestRef = useRef(null)
   const fittedPlaceKeyRef = useRef('')
   const fittedRouteKeyRef = useRef('')
+  const pendingPlaceFitRef = useRef(true)
+  const pendingMarkerEntranceRef = useRef(true)
+  const appliedRouteShapeRef = useRef('')
+  const appliedGhostShapeRef = useRef('')
+  const routeDrawRef = useRef({ key: '', frame: 0, timer: null, arrivalTimers: [] })
+  const onRouteDrawEndRef = useRef(onRouteDrawEnd)
+  const selectedPlaceKeyRef = useRef(selectedPlaceKey)
+  const focusedPlaceKeyRef = useRef(focusedPlaceKey)
   const loadVisiblePlacesRef = useRef(null)
   const lastPlaceRequestKeyRef = useRef(placeRequestKey)
   const loadPlacesRef = useRef(loadPlacesInBounds)
@@ -131,6 +255,7 @@ export default function VWorldMap({
   const [liveUserLocation, setLiveUserLocation] = useState(userLocation)
   const [tileError, setTileError] = useState(false)
   const apiKey = import.meta.env?.VITE_VWORLD_API_KEY?.trim()
+  const hasExplicitCenter = Array.isArray(center) && center.length >= 2
   const [longitude, latitude] = normalizeCenter(center)
   const safeZoom = Number.isFinite(Number(zoom)) ? Number(zoom) : 15
   if (!crowdingRequestRef.current) crowdingRequestRef.current = createLatestViewportRequest()
@@ -146,7 +271,10 @@ export default function VWorldMap({
     selectedCongestionGridCodeRef.current = selectedCongestionGridCode
     showCongestionAreasRef.current = showCongestionAreas
     onPlacesChangeRef.current = onPlacesChange
-  }, [loadPlacesInBounds, loadCongestionInBounds, placeMarkerFilter, placeMarkerLabel, onMapClick, onPlaceClick, onCongestionAreaClick, onPlacesChange, selectedCongestionGridCode, showCongestionAreas])
+    onRouteDrawEndRef.current = onRouteDrawEnd
+    selectedPlaceKeyRef.current = selectedPlaceKey
+    focusedPlaceKeyRef.current = focusedPlaceKey
+  }, [loadPlacesInBounds, loadCongestionInBounds, placeMarkerFilter, placeMarkerLabel, onMapClick, onPlaceClick, onCongestionAreaClick, onPlacesChange, selectedCongestionGridCode, showCongestionAreas, onRouteDrawEnd, selectedPlaceKey, focusedPlaceKey])
 
   function clearPlaceOverlays(map) {
     placeOverlaysRef.current.forEach((overlay) => map.removeOverlay(overlay))
@@ -179,7 +307,28 @@ export default function VWorldMap({
     onMapClickRef.current?.()
   }
 
-  function addPlaceOverlay(map, place) {
+  function isSelectedPlace(place) {
+    return selectedPlaceKeyRef.current
+      && `${place.externalSource || 'INTERNAL'}:${place.id}` === selectedPlaceKeyRef.current
+  }
+
+  function focusPlace(map, placeKey) {
+    if (!map || !placeKey) return
+    const place = rawPlacesRef.current.find((item) => (
+      `${item.externalSource || 'INTERNAL'}:${item.id}` === placeKey
+    ))
+    const coordinate = place && getPlaceCoordinate(place)
+    if (!coordinate) return
+    const view = map.getView()
+    view.cancelAnimations()
+    view.animate({
+      center: fromLonLat(coordinate),
+      duration: motionDuration(240),
+      easing: easeOut,
+    })
+  }
+
+  function addPlaceOverlay(map, place, order = -1) {
     const coordinate = getPlaceCoordinate(place)
     if (!coordinate) return
 
@@ -190,14 +339,19 @@ export default function VWorldMap({
       markerLabel: hasMarkerLabel ? markerLabel : null,
       grid: getCrowdingGridAtCoordinate(coordinate),
     })
+    const markerTone = resolveMapMarkerTone(place)
     const marker = document.createElement('button')
     marker.className = [
       'vworld-place-marker',
-      `is-${resolveMapMarkerTone(place)}`,
+      `is-${markerTone}`,
       markerSizeClass(map),
       crowdingPresentation.className,
+      isSelectedPlace(place) ? 'is-selected' : '',
+      order >= 0 ? 'is-entering' : '',
+      order >= 0 && placeMarkerEntrance === 'renumber' ? 'is-renumber' : '',
     ].filter(Boolean).join(' ')
     marker.type = 'button'
+    if (order >= 0) marker.style.setProperty('--marker-delay', `${markerStaggerDelay(order)}ms`)
     if (hasMarkerLabel) {
       marker.classList.add('is-numbered')
       const markerNumber = Number(markerLabel)
@@ -214,7 +368,9 @@ export default function VWorldMap({
       ? `${place.name} · 혼잡도 ${crowdingPresentation.levelLabel}`
       : place.name
     const markerContent = document.createElement('span')
-    markerContent.textContent = hasMarkerLabel ? String(markerLabel) : ''
+    markerContent.className = 'vworld-place-marker__content'
+    if (hasMarkerLabel) markerContent.textContent = String(markerLabel)
+    else markerContent.appendChild(createMarkerIcon(markerTone))
     marker.appendChild(markerContent)
     marker.addEventListener('click', () => onPlaceClickRef.current?.(place))
 
@@ -261,9 +417,10 @@ export default function VWorldMap({
     return clusters
   }
 
-  function addClusterOverlay(map, cluster) {
+  function addClusterOverlay(map, cluster, order = -1) {
     const marker = document.createElement('button')
-    marker.className = `vworld-place-cluster is-${resolveMapClusterTone(cluster.places)} ${markerSizeClass(map)}`
+    marker.className = `vworld-place-cluster is-${resolveMapClusterTone(cluster.places)} ${markerSizeClass(map)}${order >= 0 ? ' is-entering' : ''}`
+    if (order >= 0) marker.style.setProperty('--marker-delay', `${markerStaggerDelay(order)}ms`)
     marker.type = 'button'
     marker.setAttribute('aria-label', `${cluster.places.length}개 장소 모아보기`)
     marker.title = `${cluster.places.length}개 장소`
@@ -274,7 +431,8 @@ export default function VWorldMap({
       view.animate({
         center: fromLonLat(cluster.coordinate),
         zoom: Math.min(currentZoom + 2, 19),
-        duration: 240,
+        duration: motionDuration(380),
+        easing: easeOut,
       })
     })
 
@@ -295,15 +453,19 @@ export default function VWorldMap({
     const zoomLevel = map.getView().getZoom() ?? safeZoom
 
     if (clusterPlaces && zoomLevel <= CLUSTER_ZOOM_MAX) {
-      buildClusters(map, visiblePlaces).forEach((cluster) => {
-        if (cluster.places.length > 1) addClusterOverlay(map, cluster)
-        else addPlaceOverlay(map, cluster.places[0])
+      const entering = pendingMarkerEntranceRef.current
+      pendingMarkerEntranceRef.current = false
+      buildClusters(map, visiblePlaces).forEach((cluster, index) => {
+        if (cluster.places.length > 1) addClusterOverlay(map, cluster, entering ? index : -1)
+        else addPlaceOverlay(map, cluster.places[0], entering ? index : -1)
       })
       fitVisiblePlaces(map, visiblePlaces)
       return
     }
 
-    visiblePlaces.forEach((place) => addPlaceOverlay(map, place))
+    const entering = pendingMarkerEntranceRef.current
+    pendingMarkerEntranceRef.current = false
+    visiblePlaces.forEach((place, index) => addPlaceOverlay(map, place, entering ? index : -1))
     fitVisiblePlaces(map, visiblePlaces)
   }
 
@@ -314,18 +476,19 @@ export default function VWorldMap({
       .filter(Boolean)
       .map((coordinate) => fromLonLat(coordinate))
     if (!coordinates.length) return
-    const coordinateKey = coordinates.map((coordinate) => coordinate.join(',')).join('|')
-    if (fittedPlaceKeyRef.current === coordinateKey) return
-    fittedPlaceKeyRef.current = coordinateKey
+    if (!pendingPlaceFitRef.current) return
+    const size = map.getSize()
+    if (!size || !size[0] || !size[1]) return
+    pendingPlaceFitRef.current = false
     if (coordinates.length === 1) {
-      map.getView().setCenter(coordinates[0])
-      map.getView().setZoom(17)
+      map.getView().animate({ center: coordinates[0], zoom: 17, duration: motionDuration(420), easing: easeOut })
       return
     }
     map.getView().fit(boundingExtent(coordinates), {
       padding: [34, 34, 58, 34],
       maxZoom: 17,
-      duration: 0,
+      duration: motionDuration(420),
+      easing: easeOut,
     })
   }
 
@@ -388,12 +551,47 @@ export default function VWorldMap({
     congestionAreaLayerRef.current = congestionAreaLayer
     const routeLayer = new VectorLayer({
       source: new VectorSource(),
-      style: (feature) => ROUTE_STYLES[feature.get('mode')] || ROUTE_STYLES[routeMode] || ROUTE_STYLES.WALK,
+      style: ribbonStyle,
       zIndex: 2,
       properties: { name: 'selected-route-legs' },
     })
     map.addLayer(routeLayer)
     routeLayerRef.current = routeLayer
+    const ghostLayer = new VectorLayer({
+      source: new VectorSource(),
+      style: GHOST_ROUTE_STYLE,
+      opacity: GHOST_ROUTE_FADED_OPACITY,
+      zIndex: 1.5,
+      properties: { name: 'route-ghost' },
+    })
+    const ghostHighlightLayer = new VectorLayer({
+      source: new VectorSource(),
+      style: GHOST_HIGHLIGHT_STYLE,
+      zIndex: 1.6,
+      properties: { name: 'route-ghost-highlight' },
+    })
+    const routeGlowLayer = new VectorLayer({
+      source: new VectorSource(),
+      style: ROUTE_GLOW_STYLE,
+      opacity: 0,
+      zIndex: 2.5,
+      properties: { name: 'route-glow' },
+    })
+    map.addLayer(ghostLayer)
+    map.addLayer(ghostHighlightLayer)
+    map.addLayer(routeGlowLayer)
+    ghostLayerRef.current = ghostLayer
+    ghostHighlightLayerRef.current = ghostHighlightLayer
+    routeGlowLayerRef.current = routeGlowLayer
+    const spark = document.createElement('span')
+    spark.className = 'vworld-route-spark'
+    const sparkOverlay = new Overlay({
+      element: spark,
+      positioning: 'center-center',
+      stopEvent: false,
+    })
+    map.addOverlay(sparkOverlay)
+    sparkOverlayRef.current = sparkOverlay
     mapRef.current = map
 
     const handleCongestionAreaClick = (event) => {
@@ -437,6 +635,7 @@ export default function VWorldMap({
           rawPlacesRef.current = Array.isArray(places) ? places : []
           onPlacesChangeRef.current?.(rawPlacesRef.current)
           renderPlaceOverlays(map, rawPlacesRef.current)
+          focusPlace(map, focusedPlaceKeyRef.current)
         })
         .catch((error) => {
           if (error?.name === 'AbortError') return
@@ -510,8 +709,14 @@ export default function VWorldMap({
     map.once('postrender', loadViewportData)
     map.on('moveend', loadViewportData)
     document.addEventListener('visibilitychange', handleCrowdingVisibility)
+    const resizeObserver = typeof ResizeObserver !== 'undefined' && targetRef.current
+      ? new ResizeObserver(() => { map.updateSize(); map.render(); if (pendingPlaceFitRef.current) renderPlaceOverlays(map, rawPlacesRef.current) })
+      : null
+    resizeObserver?.observe(targetRef.current)
+    const firstFrame = requestAnimationFrame(() => { map.updateSize(); map.render() })
 
     return () => {
+      cancelRouteDraw()
       map.un('postrender', loadViewportData)
       map.un('moveend', loadViewportData)
       if (interactive) map.un('singleclick', handleCongestionAreaClick)
@@ -521,38 +726,196 @@ export default function VWorldMap({
       crowdingRequestRef.current.abort()
       if (crowdingSlotTimerId !== null) globalThis.clearTimeout(crowdingSlotTimerId)
       document.removeEventListener('visibilitychange', handleCrowdingVisibility)
+      resizeObserver?.disconnect()
+      cancelAnimationFrame(firstFrame)
       if (congestionAreaLayerRef.current === congestionAreaLayer) congestionAreaLayerRef.current = null
       if (routeLayerRef.current === routeLayer) routeLayerRef.current = null
+      if (routeGlowLayerRef.current === routeGlowLayer) routeGlowLayerRef.current = null
+      if (ghostLayerRef.current === ghostLayer) ghostLayerRef.current = null
+      if (ghostHighlightLayerRef.current === ghostHighlightLayer) ghostHighlightLayerRef.current = null
+      if (sparkOverlayRef.current === sparkOverlay) sparkOverlayRef.current = null
       map.removeLayer(congestionAreaLayer)
       map.removeLayer(routeLayer)
+      map.removeLayer(ghostLayer)
+      map.removeLayer(ghostHighlightLayer)
+      map.removeLayer(routeGlowLayer)
+      map.removeOverlay(sparkOverlay)
       source.un('tileloaderror', handleTileError)
       source.un('tileloadend', handleTileSuccess)
       map.setTarget(undefined)
       mapRef.current = null
+      fittedRouteKeyRef.current = ''
+      pendingPlaceFitRef.current = true
+      pendingMarkerEntranceRef.current = true
+      routeDrawRef.current.key = ''
+      appliedRouteShapeRef.current = ''
+      appliedGhostShapeRef.current = ''
     }
   }, [apiKey, interactive, Boolean(loadPlacesInBounds), Boolean(loadCongestionInBounds), placeLimit, clusterPlaces, fitPlaceMarkers])
 
-  useEffect(() => {
-    const layer = routeLayerRef.current
-    if (!layer) return
+  function cancelRouteDraw() {
+    const state = routeDrawRef.current
+    if (state.frame) cancelAnimationFrame(state.frame)
+    if (state.timer) clearTimeout(state.timer)
+    state.frame = 0
+    state.timer = null
+    state.arrivalTimers.forEach((timer) => clearTimeout(timer))
+    state.arrivalTimers = []
+    sparkOverlayRef.current?.setPosition(undefined)
+  }
 
-    const source = layer.getSource()
+  function popMarkerOnArrival(element) {
+    if (!element || prefersReducedMotion()) return
+    element.classList.remove('is-arrived')
+    void element.offsetWidth
+    element.classList.add('is-arrived')
+    const timer = setTimeout(() => element.classList.remove('is-arrived'), MARKER_ARRIVAL_DURATION)
+    routeDrawRef.current.arrivalTimers.push(timer)
+  }
+
+  function collectArrivalTargets(map) {
+    return placeOverlaysRef.current.map((overlay) => ({
+      element: overlay.getElement(),
+      position: overlay.getPosition(),
+    })).filter((target) => target.element && Array.isArray(target.position))
+      .map((target) => ({ ...target, position: target.position.slice() }))
+  }
+
+  function playRouteGlow(paths) {
+    const layer = routeGlowLayerRef.current
+    const source = layer?.getSource()
+    if (!layer || !source || prefersReducedMotion()) {
+      layer?.setOpacity(0)
+      source?.clear()
+      return
+    }
     source.clear()
-    const features = routeLegFeatureSpecs(routeLegs, fromLonLat).map((spec) => {
-      const feature = new Feature({ geometry: new LineString(spec.coordinates) })
-      feature.setProperties({ mode: spec.mode, routeName: spec.routeName }, false)
-      return feature
+    source.addFeatures(paths.filter((path) => path.length >= 2).map((path) => new Feature({ geometry: new LineString(path) })))
+    const startedAt = performance.now()
+    const step = (now) => {
+      const progress = Math.min(1, (now - startedAt) / ROUTE_GLOW_DURATION)
+      layer.setOpacity(progress < 0.3 ? (progress / 0.3) * 0.75 : 0.75 * (1 - (progress - 0.3) / 0.7))
+      if (progress < 1) requestAnimationFrame(step)
+      else {
+        layer.setOpacity(0)
+        source.clear()
+      }
+    }
+    requestAnimationFrame(step)
+  }
+
+  function playRouteDraw(features, delay, map) {
+    cancelRouteDraw()
+    const paths = features.map((feature) => feature.getGeometry()?.getCoordinates() || [])
+    const lengths = paths.map(lineStringLength)
+    const total = lengths.reduce((sum, length) => sum + length, 0)
+    const finish = (notify = true) => {
+      paths.forEach((path, index) => features[index].getGeometry()?.setCoordinates(path))
+      features.forEach((feature) => feature.set('drawing', false, false))
+      routeLayerRef.current?.changed()
+      sparkOverlayRef.current?.setPosition(undefined)
+      ghostLayerRef.current?.setOpacity(GHOST_ROUTE_FADED_OPACITY)
+      if (notify) onRouteDrawEndRef.current?.()
+    }
+    if (!(total > 0)) {
+      features.forEach((feature) => feature.set('drawing', false, false))
+      return
+    }
+    if (prefersReducedMotion()) {
+      finish()
+      return
+    }
+    ghostLayerRef.current?.setOpacity(ghostRouteLegs?.length ? 1 : 0)
+    features.forEach((feature) => {
+      feature.set('drawing', true, false)
+      feature.getGeometry()?.setCoordinates([])
     })
-    source.addFeatures(features)
-    layer.changed()
-  }, [routeLegs])
+    const start = () => {
+      const startedAt = performance.now()
+      const pending = collectArrivalTargets(map)
+      const arrivalRadius = MARKER_ARRIVAL_RADIUS_PX * (map.getView().getResolution() || 1)
+      const step = (now) => {
+        const progress = Math.min(1, (now - startedAt) / ROUTE_DRAW_DURATION)
+        const eased = easeOut(progress)
+        let drawn = eased * total
+        let head = null
+        paths.forEach((path, index) => {
+          const length = lengths[index]
+          const ratio = length > 0 ? Math.max(0, Math.min(1, drawn / length)) : (drawn > 0 ? 1 : 0)
+          const partial = partialLineString(path, ratio)
+          features[index].getGeometry()?.setCoordinates(partial || [])
+          if (partial && ratio > 0) head = partial[partial.length - 1]
+          drawn -= length
+        })
+        if (head) {
+          sparkOverlayRef.current?.setPosition(head)
+          for (let index = pending.length - 1; index >= 0; index -= 1) {
+            const target = pending[index]
+            if (Math.hypot(head[0] - target.position[0], head[1] - target.position[1]) > arrivalRadius) continue
+            pending.splice(index, 1)
+            popMarkerOnArrival(target.element)
+          }
+        }
+        ghostLayerRef.current?.setOpacity(1 - (1 - GHOST_ROUTE_FADED_OPACITY) * eased)
+        if (progress < 1) routeDrawRef.current.frame = requestAnimationFrame(step)
+        else {
+          routeDrawRef.current.frame = 0
+          finish()
+          playRouteGlow(paths)
+        }
+      }
+      routeDrawRef.current.frame = requestAnimationFrame(step)
+    }
+    if (delay > 0) routeDrawRef.current.timer = setTimeout(start, delay)
+    else start()
+  }
 
   useEffect(() => {
     const layer = routeLayerRef.current
     if (!layer) return
-    layer.setStyle((feature) => ROUTE_STYLES[feature.get('mode')] || ROUTE_STYLES[routeMode] || ROUTE_STYLES.WALK)
+    const shapeKey = JSON.stringify([routeMode, (routeLegs || []).map((leg) => [leg?.mode, leg?.geometry?.coordinates || null])])
+    const source = layer.getSource()
+    if (appliedRouteShapeRef.current !== shapeKey) {
+      appliedRouteShapeRef.current = shapeKey
+      source.clear()
+      const features = routeLegFeatureSpecs(routeLegs, fromLonLat).map((spec) => {
+        const feature = new Feature({ geometry: new LineString(spec.coordinates) })
+        feature.setProperties({ mode: spec.mode || routeMode, routeName: spec.routeName }, false)
+        return feature
+      })
+      source.addFeatures(features)
+      layer.changed()
+    }
+    const features = source.getFeatures()
+    const key = routeDrawKey || routeFitKey
+    if (!key || routeDrawRef.current.key === key) {
+      if (!key) routeDrawRef.current.key = ''
+      cancelRouteDraw()
+      return
+    }
+    routeDrawRef.current.key = key
+    playRouteDraw(features, routeDrawDelay, mapRef.current)
+  }, [routeLegs, routeMode, routeDrawKey, routeFitKey, routeDrawDelay])
+
+  useEffect(() => {
+    const layer = ghostLayerRef.current
+    const highlightLayer = ghostHighlightLayerRef.current
+    if (!layer || !highlightLayer) return
+    const shapeKey = JSON.stringify([
+      (ghostRouteLegs || []).map((leg) => leg?.geometry?.coordinates || null),
+      (ghostHighlightLegs || []).map((leg) => leg?.geometry?.coordinates || null),
+    ])
+    if (appliedGhostShapeRef.current === shapeKey) return
+    appliedGhostShapeRef.current = shapeKey
+    layer.getSource().clear()
+    highlightLayer.getSource().clear()
+    const add = (target, legs) => target.getSource().addFeatures(routeLegFeatureSpecs(legs, fromLonLat).map((spec) => new Feature({ geometry: new LineString(spec.coordinates) })))
+    add(layer, ghostRouteLegs)
+    add(highlightLayer, ghostHighlightLegs)
+    layer.setOpacity(ghostRouteLegs?.length ? GHOST_ROUTE_FADED_OPACITY : 0)
     layer.changed()
-  }, [routeMode])
+    highlightLayer.changed()
+  }, [ghostRouteLegs, ghostHighlightLegs])
 
   useEffect(() => {
     const map = mapRef.current
@@ -565,25 +928,38 @@ export default function VWorldMap({
     }
     if (fittedRouteKeyRef.current === routeFitKey) return
 
-    const extents = layer.getSource().getFeatures()
-      .map((feature) => feature.getGeometry()?.getExtent())
-      .filter((extent) => Array.isArray(extent) && extent.length === 4)
-    const fitPoints = routeFitPointCoordinates(routeFitCoordinates, fromLonLat)
-    if (fitPoints.length) extents.push(boundingExtent(fitPoints))
-    if (!extents.length) return
-    const extent = extents.reduce((combined, current) => [
-      Math.min(combined[0], current[0]),
-      Math.min(combined[1], current[1]),
-      Math.max(combined[2], current[2]),
-      Math.max(combined[3], current[3]),
-    ], extents[0])
-    fittedRouteKeyRef.current = routeFitKey
-    map.getView().fit(extent, {
-      padding: routeFitPadding,
-      maxZoom: 17,
-      duration: resolveRouteFitDuration(),
-    })
-  }, [routeFitKey, routeLegs, routeFitPadding])
+    const applyFit = () => {
+      const size = map.getSize()
+      if (!size || !size[0] || !size[1]) return false
+      const extents = layer.getSource().getFeatures()
+        .map((feature) => feature.getGeometry()?.getExtent())
+        .filter((extent) => Array.isArray(extent) && extent.length === 4 && extent.every(Number.isFinite))
+      const fitPoints = routeFitPointCoordinates(routeFitCoordinates, fromLonLat)
+      if (fitPoints.length) extents.push(boundingExtent(fitPoints))
+      if (!extents.length) return false
+      const extent = extents.reduce((combined, current) => [
+        Math.min(combined[0], current[0]),
+        Math.min(combined[1], current[1]),
+        Math.max(combined[2], current[2]),
+        Math.max(combined[3], current[3]),
+      ], extents[0])
+      if (!extent.every(Number.isFinite)) return false
+      map.getView().fit(extent, {
+        size,
+        padding: routeFitPadding,
+        maxZoom: 17,
+        duration: motionDuration(resolveRouteFitDuration()),
+        easing: easeOut,
+      })
+      fittedRouteKeyRef.current = routeFitKey
+      return true
+    }
+    if (applyFit()) return undefined
+    const retryFit = () => { if (applyFit()) map.un('rendercomplete', retryFit) }
+    map.on('rendercomplete', retryFit)
+    map.render()
+    return () => map.un('rendercomplete', retryFit)
+  }, [routeFitCoordinates, routeFitKey, routeLegs, routeFitPadding])
 
   useEffect(() => {
     congestionAreaLayerRef.current?.setVisible(showCongestionAreas)
@@ -593,24 +969,36 @@ export default function VWorldMap({
   useEffect(() => {
     if (lastPlaceRequestKeyRef.current === placeRequestKey) return
     lastPlaceRequestKeyRef.current = placeRequestKey
-    fittedPlaceKeyRef.current = ''
+    pendingPlaceFitRef.current = true
+    pendingMarkerEntranceRef.current = true
     loadVisiblePlacesRef.current?.()
   }, [placeRequestKey])
 
   useEffect(() => {
     const map = mapRef.current
     if (!map) return
-
+    pendingMarkerEntranceRef.current = true
+    pendingPlaceFitRef.current = true
     renderPlaceOverlays(map, rawPlacesRef.current)
   }, [placeMarkerFilterKey])
 
   useEffect(() => {
+    const map = mapRef.current
+    if (!map) return
+    renderPlaceOverlays(map, rawPlacesRef.current)
+  }, [selectedPlaceKey, placeMarkerEntrance])
+
+  useEffect(() => {
+    focusPlace(mapRef.current, focusedPlaceKey)
+  }, [focusedPlaceKey])
+
+  useEffect(() => {
     const view = mapRef.current?.getView()
-    if (!view) return
+    if (!view || !hasExplicitCenter) return
 
     view.setCenter(fromLonLat([longitude, latitude]))
     view.setZoom(safeZoom)
-  }, [longitude, latitude, safeZoom])
+  }, [longitude, latitude, safeZoom, hasExplicitCenter])
 
   useEffect(() => {
     const map = mapRef.current

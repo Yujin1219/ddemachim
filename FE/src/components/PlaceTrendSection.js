@@ -21,6 +21,16 @@ export function getTrendStatusLabel(status) {
   return TREND_STATUS_LABELS[status] || null;
 }
 
+export function getTrendChangeLabel(interestChangePercent) {
+  if (typeof interestChangePercent !== 'number' || !Number.isFinite(interestChangePercent)) return null;
+  if (interestChangePercent === 0) return null;
+
+  const percent = new Intl.NumberFormat('ko-KR', { maximumFractionDigits: 1 })
+    .format(Math.abs(interestChangePercent));
+  const direction = interestChangePercent > 0 ? '늘었어요' : '줄었어요';
+  return `이전 기간보다 검색 관심도가 ${percent}% ${direction}`;
+}
+
 export function getPlaceTrendSearchText(place) {
   const toSearchText = (value) => {
     if (typeof value !== 'string' && typeof value !== 'number') return '';
@@ -78,7 +88,7 @@ export function PlaceTrendSection({
     : h('p', { className: 'explore-inline-state' }, '트렌드 장소 목록을 표시할 수 없어요.');
   const sectionProps = {
     title: '요즘 이곳에서는',
-    subtitle: '상태가 확인된 장소를 모아봤어요.',
+    subtitle: '지금 주목받는 장소를 모았어요.',
     action: typeof onViewAll === 'function' ? '전체보기' : undefined,
     onAction: onViewAll,
     children: content,
@@ -97,6 +107,7 @@ export function PlaceTrendSection({
 
 export function PlaceTrendReason({ trend }) {
   if (!isVisiblePlaceTrend(trend)) return null;
+  const changeLabel = getTrendChangeLabel(trend.interestChangePercent);
 
   return h(
     'section',
@@ -110,7 +121,8 @@ export function PlaceTrendReason({ trend }) {
     h(
       'div',
       { className: 'why-card place-trend-reason-card' },
-      h('time', { dateTime: trend.updatedAt || undefined }, `관찰일 ${trendDateLabel(trend.updatedAt)}`),
+      changeLabel ? h('strong', { className: 'place-trend-change' }, changeLabel) : null,
+      h('p', null, h('time', { dateTime: trend.updatedAt || undefined }, `관찰일 ${trendDateLabel(trend.updatedAt)}`)),
     ),
   );
 }

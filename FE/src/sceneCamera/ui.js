@@ -1,5 +1,5 @@
 import React, { useEffect, useRef } from 'react';
-import { ChevronDown, ChevronLeft, ChevronRight, ChevronUp, Eye, EyeOff, Move, RotateCcw } from 'lucide-react';
+import { Eye, EyeOff, RotateCcw } from 'lucide-react';
 
 const h = React.createElement;
 
@@ -21,7 +21,7 @@ export function BlockingAlert({ title, message, children, className = '' }) {
 }
 
 export function SceneReferenceGate({ status, error, onStart, onRetry, buttonRef }) {
-  if (status === 'ready') return h('button', { ref: buttonRef, type: 'button', className: 'ui-button primary scene-camera-entry', onClick: onStart }, '구도 맞추기');
+  if (status === 'ready') return h('button', { ref: buttonRef, type: 'button', className: 'ui-button primary scene-camera-entry', onClick: onStart }, '장면 비교 시작하기');
   if (status === 'checking') return h('div', { className: 'scene-reference-gate', role: 'status', 'aria-live': 'polite' },
     h('p', null, '참고 장면을 안전하게 확인하고 있어요.'),
     h('button', { type: 'button', className: 'ui-button primary', disabled: true }, '확인 중'));
@@ -32,24 +32,20 @@ export function SceneReferenceGate({ status, error, onStart, onRetry, buttonRef 
 }
 
 export function OverlayControls({ overlay, onPatch, onReset }) {
-  const step = 0.025;
-  const scalePercent = Math.round(overlay.scale * 100);
   const opacityPercent = Math.round(overlay.opacity * 100);
-  const positionButton = (label, patch, Icon) => h('button', { type: 'button', 'aria-label': label, onClick: () => onPatch(patch) }, h(Icon, { 'aria-hidden': true, size: 19, strokeWidth: 2 }));
+  const visibilityLabel = overlay.visible
+    ? '장면 숨기기'
+    : '장면 보기';
   return h('section', { className: 'scene-overlay-controls', 'aria-label': '참고 장면 조절' },
-    h('div', { className: 'scene-overlay-control-heading' },
-      h('span', null, h(Move, { 'aria-hidden': true, size: 18, strokeWidth: 2 }), '참고 장면 조절'),
-      h('div', { className: 'scene-overlay-actions' },
-        h('button', { type: 'button', 'aria-label': '참고 장면 표시', 'aria-pressed': overlay.visible, onClick: () => onPatch({ visible: !overlay.visible }) }, h(overlay.visible ? Eye : EyeOff, { 'aria-hidden': true, size: 18, strokeWidth: 2 }), h('span', null, '참고 장면')),
-        h('button', { type: 'button', 'aria-label': '참고 장면 위치와 크기 초기화', onClick: onReset }, h(RotateCcw, { 'aria-hidden': true, size: 18, strokeWidth: 2 }), h('span', null, '초기화')))),
-    h('div', { className: 'scene-overlay-direction', role: 'group', 'aria-label': '참고 장면 위치 조절' },
-      positionButton('참고 장면 왼쪽으로', { x: overlay.x - step }, ChevronLeft),
-      positionButton('참고 장면 위로', { y: overlay.y - step }, ChevronUp),
-      positionButton('참고 장면 아래로', { y: overlay.y + step }, ChevronDown),
-      positionButton('참고 장면 오른쪽으로', { x: overlay.x + step }, ChevronRight)),
-    h('div', { className: 'scene-overlay-ranges' },
-      h('label', null, h('span', { className: 'scene-overlay-range-label' }, h('span', null, '크기'), h('output', null, `${scalePercent}%`)), h('input', { type: 'range', min: 0.5, max: 2, step: 0.05, value: overlay.scale, 'aria-label': '참고 장면 크기', 'aria-valuetext': `${scalePercent}%`, onChange: (event) => onPatch({ scale: Number(event.target.value) }) })),
-      h('label', null, h('span', { className: 'scene-overlay-range-label' }, h('span', null, '겹침'), h('output', null, `${opacityPercent}%`)), h('input', { type: 'range', min: 0.1, max: 1, step: 0.05, value: overlay.opacity, 'aria-label': '참고 장면 불투명도', 'aria-valuetext': `${opacityPercent}%`, onChange: (event) => onPatch({ opacity: Number(event.target.value) }) }))),
+    h('div', { className: 'scene-overlay-mode', role: 'group', 'aria-label': '참고 장면 표시 방식' },
+      h('button', { type: 'button', 'aria-pressed': overlay.mode === 'image', onClick: () => onPatch({ mode: 'image' }) }, '전체 장면'),
+      h('button', { type: 'button', 'aria-pressed': overlay.mode !== 'image', onClick: () => onPatch({ mode: 'outline' }) }, '실루엣')),
+    h('label', { className: 'scene-overlay-opacity', style: { '--scene-opacity-progress': `${((overlay.opacity - 0.1) / 0.9) * 100}%` } },
+      h('span', null, h('b', null, '현재'), h('output', null, `${opacityPercent}%`), h('b', null, '장면')),
+      h('input', { type: 'range', min: 0.1, max: 1, step: 0.05, value: overlay.opacity, 'aria-label': '참고 장면 불투명도', 'aria-valuetext': `${opacityPercent}%`, onChange: (event) => onPatch({ opacity: Number(event.target.value) }) })),
+    h('div', { className: 'scene-overlay-actions' },
+      h('button', { type: 'button', 'aria-label': visibilityLabel, 'aria-pressed': overlay.visible, onClick: () => onPatch({ visible: !overlay.visible }) }, h(overlay.visible ? Eye : EyeOff, { 'aria-hidden': true, size: 19, strokeWidth: 2 }), h('span', null, visibilityLabel)),
+      h('button', { type: 'button', 'aria-label': '참고 장면 위치와 크기 초기화', onClick: onReset }, h(RotateCcw, { 'aria-hidden': true, size: 19, strokeWidth: 2 }), h('span', null, '초기화'))),
   );
 }
 

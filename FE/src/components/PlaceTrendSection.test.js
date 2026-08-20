@@ -53,6 +53,7 @@ const visibleTrends = [
     longitude: 126.985,
     trend: {
       status: 'TRENDING',
+      interestChangePercent: 32.456,
       updatedAt: '2026-08-13',
     },
   },
@@ -192,14 +193,34 @@ test('renders loading and recoverable empty/error states without inventing trend
   assert.equal(retryCount, 1);
 });
 
-test('renders only the detail trend status and observed date', async () => {
+test('renders the rounded search interest increase in the detail trend card', async () => {
   const renderer = await render(createElement(PlaceTrendReason, { trend: visibleTrends[0].trend }));
   const copy = textContent(renderer.toJSON());
 
   assert.equal(copy.includes('트렌드 상태'), true);
   assert.equal(copy.includes('요즘 많이 언급돼요'), true);
+  assert.equal(copy.includes('이전 기간보다 검색 관심도가 32.5% 늘었어요'), true);
   assert.equal(copy.includes('요즘 주목받는 이유'), false);
   assert.equal(copy.includes('공개된 블로그 글'), false);
   assert.equal(copy.includes('주제'), false);
   assert.equal(copy.includes('관찰일 2026.08.13'), true);
+});
+
+test('renders a search interest decrease without a negative sign', async () => {
+  const renderer = await render(createElement(PlaceTrendReason, {
+    trend: { status: 'WATCH', interestChangePercent: -7.04, updatedAt: '2026-08-13' },
+  }));
+
+  assert.equal(
+    textContent(renderer.toJSON()).includes('이전 기간보다 검색 관심도가 7% 줄었어요'),
+    true,
+  );
+});
+
+test('hides the search interest comparison when the change is missing', async () => {
+  const renderer = await render(createElement(PlaceTrendReason, {
+    trend: { status: 'WATCH', interestChangePercent: null, updatedAt: '2026-08-13' },
+  }));
+
+  assert.equal(textContent(renderer.toJSON()).includes('검색 관심도가'), false);
 });

@@ -1,6 +1,5 @@
 # Jongno DEM PostGIS Ingestion Implementation Plan
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Reproducibly validate, clean, tile, and idempotently replace `public.dem_jongno` with the one-metre Jongno elevation band from `/Users/yujin/Project/jongro_gu.tif`.
 

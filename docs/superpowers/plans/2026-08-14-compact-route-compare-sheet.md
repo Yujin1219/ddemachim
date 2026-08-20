@@ -1,6 +1,5 @@
 # Compact Route Compare Sheet Implementation Plan
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Replace the oversized selected-place sheet with a compact route comparison list and keep the fixed origin and destination visible above it.
 

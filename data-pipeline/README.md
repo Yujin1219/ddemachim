@@ -346,17 +346,16 @@ python3 scripts/repeated_blog_trend.py \
 저장하지 않는다. Search Trend의 keyword group은 장소 대표명과 별칭을 네이버
 API에 전달하기 위한 입력 계약이며 표시용 본문 키워드가 아니다.
 
-일반 실행은 JSONL 감사 기록을 남긴 뒤 `DATABASE_URL`의 PostgreSQL에도 같은
-결과를 한 트랜잭션으로 적재한다. 종로구 네이버 지도 장소는 기존 `place`와
-`place_source(source=NAVER_MAP)`에 보수적으로 병합하고 다음 두 테이블을
-사용한다.
+일반 실행은 JSONL 감사 기록을 남기되 블로그 관측·본문 근거·중간 집계는 DB에
+저장하지 않는다. 종로구 네이버 지도 장소는 기존 `place`와
+`place_source(source=NAVER_MAP)`에 보수적으로 병합하고, PostgreSQL에는 다음
+두 테이블만 사용한다.
 
-- `blog_trend_observation`: 검색일·검색어·게시글 URL 단위 원시 관측과 장소·표본 근거
-- `place_trend_snapshot`: 장소·기준일 단위 누적 수치, 판정 상태, Search Trend 신호
+- `blog_trend_run`: 월요일 기준 수집 주차별 실행 상태와 처리·저장 건수
+- `place_trend_result`: 성공한 실행의 장소별 `WATCH`/`TRENDING` Search Trend 결과
 
-같은 날짜에 다시 실행하면 관측은 `(collection_date, query, post_url)`, 스냅샷은
-`(place_id, snapshot_date)` 기준으로 UPSERT한다. DB 오류가 발생하면 트랜잭션을
-롤백하고 프로세스를 실패 처리하므로
+같은 주차에 다시 실행하면 실행 행을 재사용하고 해당 실행의 결과 행을 교체한다.
+DB 오류가 발생하면 부분 결과를 롤백하고 실행을 `FAILED`로 기록하므로
 Spring 스케줄러에서도 성공으로 오인하지 않는다. 테이블을 수동 생성해야 하는
 환경에서는 `src/db/add_blog_trend_tables.sql`을 적용한다. 파일 결과만 확인할 때는
 명시적으로 `--skip-db`를 사용한다.
@@ -392,8 +391,8 @@ current가 양수면 `NEWLY_EMERGING`, baseline이 양수이고 ratio가 2 미�
 `trend.rising`은 기존 `WATCH`/`TRENDING` 호환을 위해 `SURGING` 또는
 `NEWLY_EMERGING`일 때만 true로 저장한다. 재평가 결과는 JSON의 `searchTrend`,
 각 evidence의 `trend`에 `monthValues`, `partialMonthAdjusted`,
-`baselineMonths=3`, `comparisonLabel`을 남기고, 같은 값을
-`place_trend_snapshot`의 월간 상태·ratio·window 컬럼에 idempotent upsert한다.
+`baselineMonths=3`, `comparisonLabel`을 남긴다. DB에는 프런트 표시용 최근 평균,
+이전 평균, 변화율, 측정·만료 시각만 `place_trend_result`에 저장한다.
 
 이 파이프라인의 기본 검색 의도는 대표 지역의 `카페`·`맛집` 발견으로
 고정한다. 수집 날짜에 따라 query를 바꾸지 않으며, 이벤트성 발견은
@@ -409,7 +408,7 @@ current가 양수면 `NEWLY_EMERGING`, baseline이 양수이고 ratio가 2 미�
 ```
 
 `relativeMentionRate`, `sampledMentionPosts`, `sampledAuthorCount`, `sampledQueryCount`,
-`queryMentionRates`는 결과 JSON과 `place_trend_snapshot`에 저장한다. 절대
+`queryMentionRates`는 감사용 결과 JSON에만 저장하고 DB에는 적재하지 않는다. 절대
 게시글·작성자 수는 순위가 아니라 최소 2개 게시글·2명 작성자 신뢰도 검증과
 감사 근거로만 보존한다.
 

@@ -59,8 +59,8 @@ export const publicCourses = immutableCourses([
     title: '정원 사이로 걷는 오후',
     placeCount: 4,
     duration: '3시간 20분',
-    saveCount: 128,
     image: '/assets/cafe-garden.png',
+    places: ['창덕궁', '북촌한옥마을', '카페 어니언 안국', '운현궁'],
   },
   {
     id: 'public-palace-light',
@@ -68,8 +68,8 @@ export const publicCourses = immutableCourses([
     title: '궁궐에 머무는 맑은 날',
     placeCount: 3,
     duration: '2시간 30분',
-    saveCount: 94,
     image: '/assets/palace-garden.png',
+    places: ['경복궁', '국립고궁박물관', '통인시장'],
   },
   {
     id: 'public-seochon-film-walk',
@@ -77,7 +77,7 @@ export const publicCourses = immutableCourses([
     title: '서촌 장면을 따라 걷기',
     placeCount: 5,
     duration: '4시간',
-    saveCount: 76,
     image: '/assets/figma/explore-cafe.jpeg',
+    places: ['경복궁', '서촌마을', '대오서점', '이상의집', '통인시장'],
   },
 ]);

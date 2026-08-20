@@ -16,6 +16,7 @@ from collections import Counter, defaultdict
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Callable, Iterable, Mapping, Sequence
+from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
 from dotenv import load_dotenv
 
@@ -23,17 +24,16 @@ ROOT = Path(__file__).resolve().parent.parent
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from blog_place_pipeline import BlogBodyFetcher, extract_selected_posts, normalize_blog_url
+from blog_place_pipeline import BlogBodyFetcher, extract_selected_posts, normalize_blog_url, parse_post_date
 from blog_trend_pilot import search_blog_page
 from naver_search_trend import (
     MAX_KEYWORDS_PER_GROUP,
-    NaverSearchTrendClient,
     TrendKeywordGroup,
-    summarize_trend_ratio,
 )
 from src.cleaners.common import extract_district
 from src.db.connection import get_connection
 from src.loaders.blog_trend_loader import (
+    _search_trend_status,
     classify_trend_place_category,
     persist_blog_trend_run,
     trend_intent_phrase,
@@ -43,7 +43,13 @@ from src.loaders.blog_trend_loader import (
 DEFAULT_CONFIG_PATH = ROOT / "config" / "blog_trend_discovery.json"
 DEFAULT_OUTPUT_DIR = ROOT / "results" / "repeated_blog_trend"
 SCHEMA_VERSION = 1
-STATUSES = ("WATCH", "TRENDING", "INSUFFICIENT_EVIDENCE")
+FINAL_SEARCH_TREND_STATUSES = ("WATCH", "TRENDING", "INSUFFICIENT_EVIDENCE")
+LEGACY_SELECTION_QUOTAS = {
+    "relevance": 300,
+    "cross_query": 100,
+    "diversity": 50,
+    "exploration": 50,
+}
 REUSED_PLACE_FIELDS = (
     "canonicalPlaceId",
     "canonicalPlaceName",
@@ -75,6 +81,101 @@ def _unique_text(values: Iterable[Any]) -> list[str]:
         seen.add(key)
         output.append(candidate)
     return output
+
+
+def _normalize_post_identity(value: Any) -> str | None:
+    """Normalize a post URL for cross-query identity without breaking PostView URLs."""
+
+    normalized = normalize_blog_url(value)
+    if normalized is None:
+        return None
+    parsed = urlsplit(normalized)
+    if parsed.path.casefold().endswith("/postview.naver"):
+        query_pairs = parse_qsl(parsed.query, keep_blank_values=True)
+        canonical_pairs = [
+            (key, value)
+            for key, value in query_pairs
+            if key.casefold() in {"blogid", "logno"}
+        ]
+        query = urlencode(sorted(canonical_pairs or query_pairs))
+    else:
+        query = ""
+    return urlunsplit((parsed.scheme, parsed.netloc, parsed.path, query, ""))
+
+
+def _post_date(value: Any) -> date | None:
+    if isinstance(value, date):
+        return value
+    return parse_post_date(_text(value))
+
+
+def _search_settings(config: Mapping[str, Any]) -> dict[str, int]:
+    raw = config.get("search", {})
+    settings = raw if isinstance(raw, Mapping) else {}
+    return {
+        "pageSize": int(settings.get("pageSize", 100)),
+        "maxResultsPerQuery": int(settings.get("maxResultsPerQuery", 300)),
+        "windowDays": int(settings.get("windowDays", 7)),
+        "overlapDays": int(settings.get("overlapDays", 1)),
+    }
+
+
+def derive_collection_window(
+    config: Mapping[str, Any],
+    *,
+    collection_date: date,
+    latest_successful_boundary: date | None = None,
+) -> dict[str, Any]:
+    """Return the inclusive blog search window for this collection run."""
+
+    settings = _search_settings(config)
+    window_days = settings["windowDays"]
+    overlap_days = settings["overlapDays"]
+    if window_days <= 0:
+        raise ValueError("search.windowDays must be positive")
+    if overlap_days < 0:
+        raise ValueError("search.overlapDays must be non-negative")
+    if latest_successful_boundary is None:
+        start = collection_date - timedelta(days=window_days - 1)
+        mode = "bootstrap"
+    else:
+        start = latest_successful_boundary - timedelta(days=overlap_days)
+        mode = "incremental"
+    if start > collection_date:
+        raise ValueError("blog search window start cannot be after collection date")
+    return {
+        "start": start,
+        "end": collection_date,
+        "mode": mode,
+        "windowDays": window_days,
+        "overlapDays": overlap_days,
+        "latestSuccessfulBoundary": (
+            latest_successful_boundary.isoformat()
+            if latest_successful_boundary is not None
+            else None
+        ),
+    }
+
+
+def get_last_successful_blog_trend_boundary(connection: Any) -> date | None:
+    """Read the latest successful run boundary without reading credentials."""
+
+    with connection.cursor() as cursor:
+        cursor.execute(
+            """
+            SELECT run_week
+            FROM blog_trend_run
+            WHERE status = %s
+            ORDER BY run_week DESC
+            LIMIT 1
+            """,
+            ("SUCCESS",),
+        )
+        row = cursor.fetchone()
+    if not row:
+        return None
+    value = row[0] if isinstance(row, Sequence) and not isinstance(row, (str, bytes)) else row
+    return _post_date(value)
 
 
 def load_config(path: Path = DEFAULT_CONFIG_PATH) -> dict[str, Any]:
@@ -180,7 +281,7 @@ def normalize_search_item(
     collected_at: str,
     config: Mapping[str, Any],
 ) -> dict[str, Any] | None:
-    post_url = normalize_blog_url(item.get("link"))
+    post_url = _normalize_post_identity(item.get("link"))
     if post_url is None:
         return None
     ad_suspected, ad_signals = _ad_evidence(item, config)
@@ -213,7 +314,7 @@ def group_posts(observations: Sequence[Mapping[str, Any]]) -> list[dict[str, Any
 
     grouped: dict[str, list[dict[str, Any]]] = defaultdict(list)
     for raw in observations:
-        post_url = normalize_blog_url(raw.get("postUrl", raw.get("link")))
+        post_url = _normalize_post_identity(raw.get("postUrl", raw.get("link")))
         if post_url:
             observation = dict(raw)
             observation["postUrl"] = post_url
@@ -274,6 +375,24 @@ def filter_observations_to_query_plan(
     ]
 
 
+def filter_observations_to_window(
+    observations: Sequence[Mapping[str, Any]],
+    query_specs: Sequence[Mapping[str, Any]],
+    *,
+    window_start: date,
+    window_end: date,
+) -> list[dict[str, Any]]:
+    """Keep only active-plan evidence collected inside the inclusive window."""
+
+    rows = filter_observations_to_query_plan(observations, query_specs)
+    output: list[dict[str, Any]] = []
+    for row in rows:
+        collected_date = _post_date(row.get("collectionDate"))
+        if collected_date is not None and window_start <= collected_date <= window_end:
+            output.append(row)
+    return output
+
+
 def _selection_score(post: Mapping[str, Any]) -> int:
     score = max(0, 30 - int(post.get("bestSearchRank", 30)))
     score += 12 * max(0, len(post.get("queries", [])) - 1)
@@ -305,7 +424,7 @@ def select_body_targets(
     seed: str | int | None = None,
 ) -> list[dict[str, Any]]:
     selection = config.get("selection", {})
-    raw_quotas = dict(selection.get("quotas", {}))
+    raw_quotas = dict(selection.get("quotas", {})) or dict(LEGACY_SELECTION_QUOTAS)
     limit = int(body_limit if body_limit is not None else sum(int(value) for value in raw_quotas.values()))
     quotas = _scaled_quotas(raw_quotas, limit)
     # A non-positive cap means unlimited.  Body selection must not discard
@@ -469,6 +588,28 @@ def select_body_targets(
     return selected
 
 
+def select_all_body_targets(grouped_posts: Sequence[Mapping[str, Any]]) -> list[dict[str, Any]]:
+    """Mark every unique in-window post for body extraction.
+
+    This is the live collector's only body-target selector. The older
+    ``select_body_targets`` helper remains available for artifact compatibility
+    tests and offline analyses, but is not part of the live path.
+    """
+
+    selected: list[dict[str, Any]] = []
+    for raw in grouped_posts:
+        post_url = _normalize_post_identity(raw.get("postUrl"))
+        if post_url is None:
+            continue
+        post = dict(raw)
+        post["postUrl"] = post_url
+        post["selectionBucket"] = "all_in_window"
+        post["selectionScore"] = _selection_score(post)
+        post["sampleQueries"] = list(post.get("queries", []))
+        selected.append(post)
+    return selected
+
+
 class ObservationStore:
     """Append-only JSONL store keyed by collection day, query, and post URL."""
 
@@ -479,7 +620,7 @@ class ObservationStore:
     def identity(record: Mapping[str, Any]) -> tuple[str, str, str] | None:
         collection_date = _text(record.get("collectionDate"))
         query = _text(record.get("query"))
-        post_url = normalize_blog_url(record.get("postUrl", record.get("link")))
+        post_url = _normalize_post_identity(record.get("postUrl", record.get("link")))
         if not collection_date or not query or post_url is None:
             return None
         return collection_date, query, post_url
@@ -526,23 +667,80 @@ class ObservationStore:
 
 
 def trend_signal(trend: Mapping[str, Any] | None, config: Mapping[str, Any]) -> dict[str, Any]:
-    trend_config = config.get("trend", {})
     if not isinstance(trend, Mapping):
         return {"available": False, "rising": False, "reason": "trend_missing"}
-    recent = float(trend.get("recent_ratio_average", 0) or 0)
-    baseline = float(trend.get("baseline_ratio_average", 0) or 0)
-    recent_nonzero = int(trend.get("recent_nonzero_observations", 0) or 0)
-    baseline_nonzero = int(trend.get("baseline_nonzero_observations", 0) or 0)
-    ratio = None if baseline <= 0 else recent / baseline
+
+    def numeric(keys: Sequence[str], default: float = 0.0) -> float:
+        for key in keys:
+            value = trend.get(key)
+            if value in (None, ""):
+                continue
+            try:
+                return float(value)
+            except (TypeError, ValueError):
+                continue
+        return default
+
+    recent = numeric(
+        (
+            "recentSearchInterestAverage",
+            "recent_interest_average",
+            "current",
+            "recent_ratio_average",
+            "recentRatioAverage",
+            "recentTrendValue",
+            "recent_trend_value",
+        )
+    )
+    baseline = numeric(
+        (
+            "previous14dSearchInterestAverage",
+            "previous_interest_average",
+            "baseline",
+            "baseline_ratio_average",
+            "baselineInterestAverage",
+            "previousTrendValue",
+            "previous_trend_value",
+        )
+    )
+    recent_nonzero = int(
+        trend.get("recent_nonzero_observations", trend.get("recentNonzeroObservations", 0)) or 0
+    )
+    baseline_nonzero = int(
+        trend.get(
+            "baseline_nonzero_observations",
+            trend.get("baselineNonzeroObservations", 0),
+        )
+        or 0
+    )
+    ratio = numeric(("ratio", "trendRatio", "monthlyRatio", "shortRatio"), default=-1.0)
+    if ratio < 0:
+        ratio = None if baseline <= 0 else recent / baseline
+    status = _text(trend.get("status")).upper()
     result = {
-        "available": True,
+        **dict(trend),
+        "available": trend.get("available") is not False,
+        "status": status or None,
         "rising": False,
+        "ratio": ratio,
         "trendRatio": ratio,
+        "recentSearchInterestAverage": recent,
+        "previous14dSearchInterestAverage": baseline,
         "recentTrendValue": recent,
         "previousTrendValue": baseline,
         "recentNonzeroObservations": recent_nonzero,
         "baselineNonzeroObservations": baseline_nonzero,
     }
+    if status:
+        return {
+            **result,
+            "rising": status in {"SURGING", "NEWLY_EMERGING"},
+            "reason": _text(trend.get("reason")) or status.casefold(),
+        }
+
+    # Keep old saved daily summaries readable, but the live path above uses
+    # the monthly status and values from re_evaluate_search_trend.py.
+    trend_config = config.get("trend", {})
     if baseline <= 0:
         return {
             **result,
@@ -607,6 +805,13 @@ def classify_place(evidence: Mapping[str, Any], config: Mapping[str, Any]) -> di
     }
 
 
+def _final_search_trend_status(evidence: Mapping[str, Any]) -> str:
+    trend = evidence.get("trend")
+    if not isinstance(trend, Mapping):
+        trend = {}
+    return _search_trend_status(trend) or "INSUFFICIENT_EVIDENCE"
+
+
 def aggregate_place_evidence(
     records: Sequence[Mapping[str, Any]],
     *,
@@ -626,7 +831,7 @@ def aggregate_place_evidence(
     recent_start = as_of - timedelta(days=max(0, recent_days - 1))
     output: list[dict[str, Any]] = []
     for place_id, rows in sorted(grouped.items()):
-        post_urls = {normalize_blog_url(row.get("postUrl")) for row in rows}
+        post_urls = {_normalize_post_identity(row.get("postUrl")) for row in rows}
         post_urls.discard(None)
         authors = {_text(row.get("author")) for row in rows if _text(row.get("author"))}
         queries = {_text(row.get("query")) for row in rows if _text(row.get("query"))}
@@ -638,7 +843,7 @@ def aggregate_place_evidence(
         days = {_text(row.get("collectionDate")) for row in rows if _text(row.get("collectionDate"))}
         published_by_url: dict[str, date] = {}
         for row in rows:
-            url = normalize_blog_url(row.get("postUrl"))
+            url = _normalize_post_identity(row.get("postUrl"))
             raw_date = _text(row.get("publishedAt"))
             try:
                 parsed = datetime.strptime(raw_date[:8], "%Y%m%d").date()
@@ -649,21 +854,20 @@ def aggregate_place_evidence(
         recent_posts = sum(1 for value in published_by_url.values() if recent_start <= value <= as_of)
         ranks = [int(row["searchRank"]) for row in rows if str(row.get("searchRank", "")).isdigit()]
         ad_urls = {
-            normalize_blog_url(row.get("postUrl"))
+            _normalize_post_identity(row.get("postUrl"))
             for row in rows
-            if row.get("isAdSuspected") and normalize_blog_url(row.get("postUrl"))
+            if row.get("isAdSuspected") and _normalize_post_identity(row.get("postUrl"))
         }
         trend = trend_signal((trends or {}).get(place_id), config)
         post_urls_by_intent: dict[str, set[str]] = {"카페": set(), "맛집": set()}
         for row in rows:
-            post_url = normalize_blog_url(row.get("postUrl"))
+            post_url = _normalize_post_identity(row.get("postUrl"))
             intent = trend_intent_phrase(row)
             if post_url and intent:
                 post_urls_by_intent[intent].add(post_url)
         unique_post_counts_by_intent = {
-            intent: len(urls)
-            for intent, urls in post_urls_by_intent.items()
-            if urls
+            intent: len(post_urls)
+            for intent, post_urls in post_urls_by_intent.items()
         }
         canonical_name = next(
             (_text(row.get("canonicalPlaceName")) for row in rows if _text(row.get("canonicalPlaceName"))),
@@ -683,7 +887,7 @@ def aggregate_place_evidence(
             if not row.get("sampledForQuery"):
                 continue
             query = _text(row.get("query"))
-            url = normalize_blog_url(row.get("postUrl"))
+            url = _normalize_post_identity(row.get("postUrl"))
             if query and url:
                 sampled_mentions[query].add(url)
                 author = _text(row.get("author"))
@@ -739,7 +943,7 @@ def aggregate_place_evidence(
             "trend": {**trend, "trendCheckedAt": _utc_now()} if trend.get("available") else trend,
             "evidence": [dict(row) for row in rows],
         }
-        evidence["categoryCode"], _category_name = classify_trend_place_category(evidence)
+        evidence["categoryCode"] = classify_trend_place_category(evidence)
         evidence["classification"] = classify_place(evidence, config)
         output.append(evidence)
     return output
@@ -862,57 +1066,71 @@ def build_place_trend_groups(
 
 
 def _fetch_trends(
-    evidence: Sequence[Mapping[str, Any]], config: Mapping[str, Any], as_of: date
+    evidence: Sequence[Mapping[str, Any]],
+    config: Mapping[str, Any],
+    as_of: date,
+    *,
+    client: Any = None,
 ) -> dict[str, Mapping[str, Any]]:
+    # Import lazily: the reevaluation command imports this collector only from
+    # compatibility helpers, so keeping the dependency local avoids an import
+    # cycle while sharing the one monthly window/summarizer implementation.
+    from re_evaluate_search_trend import fetch_all_trends
+
     groups = build_place_trend_groups(evidence, config)
     if not groups:
         return {}
     trend_config = config.get("trend", {})
-    baseline_days = int(trend_config.get("baselineDays", 28))
-    recent_days = int(trend_config.get("recentDays", 7))
-    start = as_of - timedelta(days=baseline_days + recent_days - 1)
-    raw = NaverSearchTrendClient.from_env().search(
-        groups,
-        start_date=start,
-        end_date=as_of,
-        time_unit=_text(trend_config.get("timeUnit")) or "date",
-    )
-    recent_start = as_of - timedelta(days=recent_days - 1)
-    baseline_end = recent_start - timedelta(days=1)
-    baseline_start = baseline_end - timedelta(days=baseline_days - 1)
-    by_id: dict[str, Mapping[str, Any]] = {}
-    group_index = {group.group_name: group for group in groups}
-    for result in raw:
-        group = group_index.get(_text(result.get("title")))
-        if not group or not group.kakao_place_id:
-            continue
-        by_id[group.kakao_place_id] = summarize_trend_ratio(
-            result,
-            recent_start=recent_start,
-            recent_end=as_of,
-            baseline_start=baseline_start,
-            baseline_end=baseline_end,
-        )
-    return by_id
+    configured_time_unit = _text(trend_config.get("timeUnit")) or "month"
+    configured_baseline_months = int(trend_config.get("baselineMonths", 3))
+    if configured_time_unit != "month":
+        raise ValueError("trend.timeUnit must be month")
+    if configured_baseline_months != 3:
+        raise ValueError("trend.baselineMonths must be 3")
+    candidate_ids = {
+        _text(group.kakao_place_id)
+        for group in groups
+        if _text(group.kakao_place_id)
+    }
+    candidate_evidence = [
+        row
+        for row in evidence
+        if _text(row.get("canonicalPlaceId")) in candidate_ids
+    ]
+    return dict(fetch_all_trends(candidate_evidence, as_of=as_of, client=client))
 
 
 def _fetch_query_pages_with_stats(
     client_id: str,
     client_secret: str,
     query: str,
-    results_per_query: int,
+    results_per_query: int | None = None,
     *,
     page_size: int = 100,
+    max_results_per_query: int | None = None,
+    window_start: date | None = None,
+    window_end: date | None = None,
     search_page: Callable[[str, str, str, int, int], Mapping[str, Any]] | None = None,
 ) -> tuple[list[dict[str, Any]], int]:
-    """Fetch a bounded Naver Blog window without exceeding display=100."""
+    """Fetch latest Naver Blog pages, filtering and stopping at the window boundary."""
 
-    target = int(results_per_query)
+    target_value = (
+        max_results_per_query
+        if max_results_per_query is not None
+        else results_per_query
+        if results_per_query is not None
+        else 300
+    )
+    target = int(target_value)
     display_limit = int(page_size)
     if target < 0:
-        raise ValueError("results_per_query must be non-negative")
+        raise ValueError("max_results_per_query must be non-negative")
     if display_limit <= 0 or display_limit > 100:
         raise ValueError("Naver Blog display must be between 1 and 100")
+    if (window_start is None) != (window_end is None):
+        raise ValueError("window_start and window_end must be provided together")
+    if window_start is not None and window_start > window_end:
+        raise ValueError("window_start cannot be after window_end")
     if target == 0:
         return [], 0
 
@@ -926,7 +1144,21 @@ def _fetch_query_pages_with_stats(
         page_items = payload.get("items", [])
         if not isinstance(page_items, list):
             raise ValueError("Naver Blog response items must be a list")
-        items.extend(item for item in page_items[:display] if isinstance(item, Mapping))
+        page_items = page_items[:display]
+        reached_window_boundary = False
+        for item in page_items:
+            if not isinstance(item, Mapping):
+                continue
+            if window_start is None:
+                items.append(dict(item))
+                continue
+            post_date = _post_date(item.get("postdate"))
+            if post_date is not None and post_date < window_start:
+                reached_window_boundary = True
+            if post_date is not None and window_start <= post_date <= window_end:
+                items.append(dict(item))
+        if reached_window_boundary:
+            break
         if len(page_items) < display:
             break
     return items[:target], page_count
@@ -936,12 +1168,15 @@ def fetch_query_pages(
     client_id: str,
     client_secret: str,
     query: str,
-    results_per_query: int,
+    results_per_query: int | None = None,
     *,
     page_size: int = 100,
+    max_results_per_query: int | None = None,
+    window_start: date | None = None,
+    window_end: date | None = None,
     search_page: Callable[[str, str, str, int, int], Mapping[str, Any]] | None = None,
 ) -> list[dict[str, Any]]:
-    """Fetch one query's metadata; kept public for pagination contract tests."""
+    """Fetch one query's in-window metadata; kept public for pagination tests."""
 
     items, _page_count = _fetch_query_pages_with_stats(
         client_id,
@@ -949,6 +1184,9 @@ def fetch_query_pages(
         query,
         results_per_query,
         page_size=page_size,
+        max_results_per_query=max_results_per_query,
+        window_start=window_start,
+        window_end=window_end,
         search_page=search_page,
     )
     return items
@@ -969,7 +1207,13 @@ def persist_result_to_database(
 
     try:
         with connection_factory() as connection:
-            stats = loader(connection, result)
+            try:
+                stats = loader(connection, result)
+            except Exception:
+                # The loader records FAILED before re-raising. Commit that
+                # operational state so a retry can be diagnosed and reused.
+                connection.commit()
+                raise
             connection.commit()
     except Exception as exc:  # noqa: BLE001 - normalize DB/driver failures at the CLI boundary
         raise RuntimeError("blog trend database persistence failed") from exc
@@ -981,24 +1225,47 @@ def run_live(
     *,
     collection_date: date,
     regions: Sequence[str] | None,
-    results_per_query: int,
-    body_limit: int,
+    results_per_query: int | None = None,
+    body_limit: int | None = None,
     output_dir: Path,
     persist_db: bool = True,
+    max_results_per_query: int | None = None,
+    latest_successful_boundary: date | None = None,
+    connection_factory: Callable[[], Any] | None = None,
+    trend_client: Any = None,
 ) -> dict[str, Any]:
     load_dotenv(ROOT / ".env", override=True)
+    search_settings = _search_settings(config)
+    max_results = int(
+        max_results_per_query
+        if max_results_per_query is not None
+        else results_per_query
+        if results_per_query is not None
+        else search_settings["maxResultsPerQuery"]
+    )
+    if max_results < 0:
+        raise ValueError("search.maxResultsPerQuery must be non-negative")
+    db_connection_factory = connection_factory or get_connection
+    if latest_successful_boundary is None and persist_db:
+        try:
+            with db_connection_factory() as connection:
+                latest_successful_boundary = get_last_successful_blog_trend_boundary(connection)
+        except Exception as exc:  # noqa: BLE001 - hide connection details at the CLI boundary
+            raise RuntimeError("blog trend last successful run lookup failed") from exc
+    window = derive_collection_window(
+        config,
+        collection_date=collection_date,
+        latest_successful_boundary=latest_successful_boundary,
+    )
     client_id = _text(os.getenv("NAVER_API_HUB_CLIENT_ID"))
     client_secret = _text(os.getenv("NAVER_API_HUB_CLIENT_SECRET"))
     if not client_id or not client_secret:
         raise RuntimeError("NAVER_API_HUB_CLIENT_ID/SECRET is required")
     collected_at = _utc_now()
     query_specs = generate_queries(config, collection_date, regions=regions)
-    search_config = config.get("search", {})
-    page_size = (
-        int(search_config.get("pageSize", 100))
-        if isinstance(search_config, Mapping)
-        else 100
-    )
+    page_size = search_settings["pageSize"]
+    if page_size <= 0 or page_size > 100:
+        raise ValueError("search.pageSize must be between 1 and 100")
     observations: list[dict[str, Any]] = []
     query_stats: list[dict[str, Any]] = []
     page_count = 0
@@ -1007,8 +1274,10 @@ def run_live(
             client_id,
             client_secret,
             spec["query"],
-            results_per_query,
+            max_results,
             page_size=page_size,
+            window_start=window["start"],
+            window_end=window["end"],
         )
         page_count += pages
         query_stats.append(
@@ -1018,6 +1287,7 @@ def run_live(
                 "intent": spec["intent"],
                 "pages": pages,
                 "items": len(items),
+                "inWindowItems": len(items),
             }
         )
         for rank, item in enumerate(items, start=1):
@@ -1038,25 +1308,26 @@ def run_live(
     search_append = search_store.append(observations)
 
     grouped = group_posts(observations)
-    configured_seed = _text(config.get("selection", {}).get("seed"))
-    selected = select_body_targets(
-        grouped,
-        config,
-        body_limit=body_limit,
-        seed=f"{configured_seed}:{collection_date.isoformat()}",
-    )
-    sampled_query_by_url = {
-        _text(post.get("postUrl")): _text(post.get("sampleQueries", [""])[0])
+    selected = select_all_body_targets(grouped)
+    sampled_queries_by_url = {
+        _text(post.get("postUrl")): {
+            _text(query) for query in post.get("sampleQueries", []) if _text(query)
+        }
         for post in selected
         if _text(post.get("postUrl")) and post.get("sampleQueries")
     }
 
     # A previously resolved post does not need another body request.
     # Its appearance under a new query/day is still retained as new evidence.
-    active_place_rows = filter_observations_to_query_plan(place_store.read(), query_specs)
+    active_place_rows = filter_observations_to_window(
+        place_store.read(),
+        query_specs,
+        window_start=window["start"],
+        window_end=window["end"],
+    )
     known_by_url: dict[str, Mapping[str, Any]] = {}
     for row in active_place_rows:
-        post_url = normalize_blog_url(row.get("postUrl"))
+        post_url = _normalize_post_identity(row.get("postUrl"))
         if post_url and _text(row.get("canonicalPlaceId")):
             known_by_url[post_url] = row
     reused_rows: list[dict[str, Any]] = []
@@ -1065,9 +1336,8 @@ def run_live(
         if not known:
             continue
         reused = dict(observation)
-        reused["sampledForQuery"] = (
-            sampled_query_by_url.get(_text(observation.get("postUrl")))
-            == _text(observation.get("query"))
+        reused["sampledForQuery"] = _text(observation.get("query")) in sampled_queries_by_url.get(
+            _text(observation.get("postUrl")), set()
         )
         for field in REUSED_PLACE_FIELDS:
             value = known.get(field)
@@ -1079,25 +1349,23 @@ def run_live(
     extracted, reason_counts, fetch_stats = extract_selected_posts(
         _selected_for_extraction(unresolved), fetch_bodies=True, fetcher=BlogBodyFetcher()
     )
-    resolved_sample_urls = {
-        url for url in sampled_query_by_url if url in known_by_url
-    }
-    resolved_sample_urls.update(
-        _text(post.get("link"))
-        for post in extracted
-        if _text(post.get("body_status")) == "fetched" and _text(post.get("link"))
-    )
     query_sample_sizes = Counter(
-        sampled_query_by_url[url]
-        for url in resolved_sample_urls
-        if sampled_query_by_url.get(url)
+        _text(query)
+        for post in selected
+        for query in post.get("sampleQueries", [])
+        if _text(query)
     )
     new_place_append = place_store.append(_place_evidence_rows(extracted))
     place_append = {
         key: reused_append[key] + new_place_append[key]
         for key in ("appended", "skippedExisting", "skippedInvalid")
     }
-    active_place_rows = filter_observations_to_query_plan(place_store.read(), query_specs)
+    active_place_rows = filter_observations_to_window(
+        place_store.read(),
+        query_specs,
+        window_start=window["start"],
+        window_end=window["end"],
+    )
     historical_evidence = aggregate_place_evidence(
         active_place_rows,
         as_of=collection_date,
@@ -1105,7 +1373,12 @@ def run_live(
         query_sample_sizes=query_sample_sizes,
     )
     try:
-        trends = _fetch_trends(historical_evidence, config, collection_date)
+        trends = _fetch_trends(
+            historical_evidence,
+            config,
+            collection_date,
+            client=trend_client,
+        )
         search_trend_status = {"status": "available", "groups": len(trends)}
     except Exception as exc:  # noqa: BLE001 - trend is an optional corroborating signal
         trends = {}
@@ -1143,18 +1416,25 @@ def run_live(
             _text(row.get("canonicalPlaceName")),
         ),
     )
-    counts = Counter(row["classification"]["status"] for row in evidence)
+    counts = Counter(_final_search_trend_status(row) for row in evidence)
     stats = {
         "queryCount": len(query_specs),
         "pageCount": page_count,
-        "resultsPerQuery": results_per_query,
+        "maxResultsPerQuery": max_results,
         "pageSize": page_size,
+        "windowStart": window["start"].isoformat(),
+        "windowEnd": window["end"].isoformat(),
+        "windowMode": window["mode"],
+        "windowDays": window["windowDays"],
+        "overlapDays": window["overlapDays"],
         "searchObservations": len(observations),
         "rawObservations": len(observations),
         "searchMetadata": len(observations),
         "uniquePosts": len(grouped),
         "selectedBodyTargets": len(selected),
         "bodyTargets": len(selected),
+        "bodyRequests": int(fetch_stats.get("body_requests", 0)),
+        "bodyFetchFailures": int(fetch_stats.get("body_failed", 0)),
         "querySampleSizes": dict(sorted(query_sample_sizes.items())),
         "relativeCandidatePlaces": len(relative_ranking),
         "bodyFetchSuccess": int(fetch_stats.get("fetched_posts", 0)),
@@ -1163,12 +1443,23 @@ def run_live(
         "canonicalPlaces": len(evidence),
         "jongnoPlaceEvidence": len(evidence),
         "jongnoMapPlaces": len(evidence),
-        **{status: counts.get(status, 0) for status in STATUSES},
+        **{
+            status: counts.get(status, 0)
+            for status in FINAL_SEARCH_TREND_STATUSES
+        },
     }
     result = {
         "schemaVersion": SCHEMA_VERSION,
         "collectionDate": collection_date.isoformat(),
-        "semantics": "repeated observations in collected Naver search-result samples; not total Naver Blog volume",
+        "runWeek": collection_date.isoformat(),
+        "measuredAt": collected_at,
+        "collectionWindow": {
+            "start": window["start"].isoformat(),
+            "end": window["end"].isoformat(),
+            "mode": window["mode"],
+            "latestSuccessfulBoundary": window["latestSuccessfulBoundary"],
+        },
+        "semantics": "unique Naver Blog posts published in the inclusive weekly collection window; not total Naver Blog volume",
         "stats": stats,
         "queryPlan": query_specs,
         "queryStats": query_stats,
@@ -1182,7 +1473,7 @@ def run_live(
     if persist_db:
         result["database"] = {
             "status": "persisted",
-            **persist_result_to_database(result),
+            **persist_result_to_database(result, connection_factory=db_connection_factory),
         }
     else:
         result["database"] = {
@@ -1202,7 +1493,7 @@ def _print_result(result: Mapping[str, Any]) -> None:
         "WATCH={WATCH} TRENDING={TRENDING} INSUFFICIENT={INSUFFICIENT_EVIDENCE}".format(**stats)
     )
     for row in result.get("evidence", []):
-        status = row.get("classification", {}).get("status")
+        status = _final_search_trend_status(row)
         if status not in {"WATCH", "TRENDING"}:
             continue
         trend = row.get("trend", {})
@@ -1219,50 +1510,47 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser.add_argument("--config", type=Path, default=DEFAULT_CONFIG_PATH)
     parser.add_argument("--date", type=date.fromisoformat, default=date.today())
     parser.add_argument("--regions", nargs="*", default=None)
-    parser.add_argument("--results-per-query", type=int, default=None)
-    parser.add_argument("--body-limit", type=int, default=None)
+    parser.add_argument(
+        "--max-results-per-query",
+        "--results-per-query",
+        dest="max_results_per_query",
+        type=int,
+        default=None,
+    )
     parser.add_argument("--output-dir", type=Path, default=DEFAULT_OUTPUT_DIR)
     parser.add_argument("--dry-run", action="store_true")
     parser.add_argument("--skip-db", action="store_true")
     args = parser.parse_args(argv)
     try:
         config = load_config(args.config)
-        search_config = config.get("search", {})
-        selection_config = config.get("selection", {})
-        results_per_query = (
-            args.results_per_query
-            if args.results_per_query is not None
-            else int(search_config.get("resultsPerQuery", 100))
+        search_settings = _search_settings(config)
+        max_results = (
+            args.max_results_per_query
+            if args.max_results_per_query is not None
+            else search_settings["maxResultsPerQuery"]
         )
-        configured_body_limit = selection_config.get("bodyLimit")
-        body_limit = (
-            args.body_limit
-            if args.body_limit is not None
-            else int(
-                configured_body_limit
-                if configured_body_limit is not None
-                else sum(int(value) for value in selection_config.get("quotas", {}).values())
-            )
-        )
-        if results_per_query < 0 or body_limit < 0:
-            raise ValueError("results-per-query and body-limit must be non-negative")
+        if max_results < 0:
+            raise ValueError("max-results-per-query must be non-negative")
         queries = generate_queries(config, args.date, regions=args.regions)
         if args.dry_run:
-            page_size = int(search_config.get("pageSize", 100))
+            page_size = search_settings["pageSize"]
             if page_size <= 0 or page_size > 100:
                 raise ValueError("search.pageSize must be between 1 and 100")
             page_count = sum(
-                len(range(1, results_per_query + 1, page_size)) for _query in queries
+                len(range(1, max_results + 1, page_size)) for _query in queries
             )
             result = {
                 "schemaVersion": SCHEMA_VERSION,
                 "status": "dry_run",
                 "collectionDate": args.date.isoformat(),
                 "queryPlan": queries,
-                "maximumMetadata": len(queries) * results_per_query,
+                "maximumMetadata": len(queries) * max_results,
                 "pageCount": page_count,
                 "pageSize": page_size,
-                "bodyLimit": body_limit,
+                "maxResultsPerQuery": max_results,
+                "windowDays": search_settings["windowDays"],
+                "overlapDays": search_settings["overlapDays"],
+                "bodySelection": "all_unique_in_window",
                 "writes": False,
                 "network": False,
             }
@@ -1272,8 +1560,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             config,
             collection_date=args.date,
             regions=args.regions,
-            results_per_query=results_per_query,
-            body_limit=body_limit,
+            max_results_per_query=max_results,
             output_dir=args.output_dir,
             persist_db=not args.skip_db,
         )

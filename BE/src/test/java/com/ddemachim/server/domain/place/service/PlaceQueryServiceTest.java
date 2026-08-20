@@ -1,7 +1,7 @@
 package com.ddemachim.server.domain.place.service;
 
-import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
@@ -10,24 +10,27 @@ import static org.mockito.Mockito.when;
 import com.ddemachim.server.domain.place.dto.PlaceDetailResponse;
 import com.ddemachim.server.domain.place.dto.PlaceTrendSummaryResponse;
 import com.ddemachim.server.domain.place.entity.Place;
-import com.ddemachim.server.domain.place.entity.PlaceTrendSnapshot;
+import com.ddemachim.server.domain.place.entity.PlaceTrendResult;
 import com.ddemachim.server.domain.place.enums.PlaceTrendStatus;
 import com.ddemachim.server.domain.place.exception.InvalidFilmingContentTypeException;
 import com.ddemachim.server.domain.place.exception.InvalidPlaceTrendLimitException;
 import com.ddemachim.server.domain.place.repository.PlaceFilmingContentTypeProjection;
 import com.ddemachim.server.domain.place.repository.PlaceOperatingHoursRepository;
 import com.ddemachim.server.domain.place.repository.PlaceRepository;
-import com.ddemachim.server.domain.place.repository.PlaceTrendSnapshotRepository;
+import com.ddemachim.server.domain.place.repository.PlaceTrendResultRepository;
 import java.time.LocalDate;
+import java.time.OffsetDateTime;
+import java.time.ZoneOffset;
 import java.util.List;
 import java.util.Optional;
+import org.locationtech.jts.geom.Point;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
-import org.springframework.data.domain.PageImpl;
 import org.springframework.data.domain.Page;
+import org.springframework.data.domain.PageImpl;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Pageable;
 import org.springframework.test.util.ReflectionTestUtils;
@@ -42,7 +45,7 @@ class PlaceQueryServiceTest {
     private PlaceOperatingHoursRepository placeOperatingHoursRepository;
 
     @Mock
-    private PlaceTrendSnapshotRepository placeTrendSnapshotRepository;
+    private PlaceTrendResultRepository placeTrendResultRepository;
 
     @InjectMocks
     private PlaceQueryService placeQueryService;
@@ -94,71 +97,101 @@ class PlaceQueryServiceTest {
     }
 
     @Test
-    void getTrends_projectsStatusAndDateWithoutBlogTrendExplanation() {
+    void getTrends_projectsAllFinalTrendMetrics() {
         Place place = place(10L, "콘웨이커피 안국점", "종로구");
-        PlaceTrendSnapshot snapshot = snapshot(
-                place,
+        Point location = mock(Point.class);
+        when(location.getY()).thenReturn(37.5711);
+        when(location.getX()).thenReturn(126.9856);
+        when(place.getLocation()).thenReturn(location);
+        OffsetDateTime measuredAt = measuredAt();
+        PlaceTrendResult result = trendResult(
                 PlaceTrendStatus.TRENDING,
-                LocalDate.of(2026, 8, 13));
-        when(placeTrendSnapshotRepository.findLatestVisibleSnapshots(PageRequest.of(0, 6)))
-                .thenReturn(List.of(snapshot));
+                72.5,
+                65.0,
+                11.538,
+                measuredAt);
+        when(result.getPlace()).thenReturn(place);
+        when(placeTrendResultRepository.findLatestVisibleResults(PageRequest.of(0, 6)))
+                .thenReturn(List.of(result));
 
-        List<PlaceTrendSummaryResponse> result = placeQueryService.getTrends(6);
+        List<PlaceTrendSummaryResponse> trends = placeQueryService.getTrends(6);
 
-        assertThat(result).hasSize(1);
-        assertThat(result.getFirst().placeId()).isEqualTo(10L);
-        assertThat(result.getFirst().name()).isEqualTo("콘웨이커피 안국점");
-        assertThat(result.getFirst().imageUrl()).isNull();
-        assertThat(result.getFirst().trend().status()).isEqualTo(PlaceTrendStatus.TRENDING);
-        assertThat(result.getFirst().trend().updatedAt()).isEqualTo(LocalDate.of(2026, 8, 13));
-        verify(placeTrendSnapshotRepository).findLatestVisibleSnapshots(PageRequest.of(0, 6));
+        assertThat(trends).hasSize(1);
+        assertThat(trends.getFirst().placeId()).isEqualTo(10L);
+        assertThat(trends.getFirst().name()).isEqualTo("콘웨이커피 안국점");
+        assertThat(trends.getFirst().latitude()).isEqualTo(37.5711);
+        assertThat(trends.getFirst().longitude()).isEqualTo(126.9856);
+        assertThat(trends.getFirst().imageUrl()).isNull();
+        assertThat(trends.getFirst().trend().status()).isEqualTo(PlaceTrendStatus.TRENDING);
+        assertThat(trends.getFirst().trend().recentInterestAverage()).isEqualTo(72.5);
+        assertThat(trends.getFirst().trend().previousInterestAverage()).isEqualTo(65.0);
+        assertThat(trends.getFirst().trend().interestChangePercent()).isEqualTo(11.538);
+        assertThat(trends.getFirst().trend().measuredAt()).isEqualTo(measuredAt);
+        assertThat(trends.getFirst().trend().updatedAt()).isEqualTo(LocalDate.of(2026, 8, 13));
+        verify(placeTrendResultRepository).findLatestVisibleResults(PageRequest.of(0, 6));
     }
 
     @Test
     void getTrends_rejectsLimitsOutsideThePublicRange() {
         assertThatThrownBy(() -> placeQueryService.getTrends(0))
                 .isInstanceOf(InvalidPlaceTrendLimitException.class);
-        assertThatThrownBy(() -> placeQueryService.getTrends(21))
+        assertThatThrownBy(() -> placeQueryService.getTrends(51))
                 .isInstanceOf(InvalidPlaceTrendLimitException.class);
 
-        verifyNoInteractions(placeTrendSnapshotRepository);
+        verifyNoInteractions(placeTrendResultRepository);
     }
 
     @Test
-    void getDetail_returnsNullTrendWhenTheLatestSnapshotIsNotVisible() {
+    void getTrends_acceptsMaximumPublicLimit() {
+        when(placeTrendResultRepository.findLatestVisibleResults(PageRequest.of(0, 50)))
+                .thenReturn(List.of());
+
+        assertThat(placeQueryService.getTrends(50)).isEmpty();
+
+        verify(placeTrendResultRepository).findLatestVisibleResults(PageRequest.of(0, 50));
+    }
+
+    @Test
+    void getDetail_returnsNullTrendWhenThereIsNoVisibleResult() {
         Place place = place(55L, "관찰 중인 장소", "종로구");
-        PlaceTrendSnapshot latestSnapshot = mock(PlaceTrendSnapshot.class);
-        when(latestSnapshot.getStatus()).thenReturn(PlaceTrendStatus.INSUFFICIENT_EVIDENCE);
         when(placeRepository.findById(55L)).thenReturn(Optional.of(place));
         when(placeOperatingHoursRepository.findByPlaceIdOrderByDayOfWeek(55L)).thenReturn(List.of());
-        when(placeTrendSnapshotRepository.findFirstByPlaceIdOrderBySnapshotDateDesc(55L))
-                .thenReturn(Optional.of(latestSnapshot));
+        when(placeTrendResultRepository.findFirstVisibleByPlaceId(55L)).thenReturn(Optional.empty());
 
         PlaceDetailResponse result = placeQueryService.getDetail(55L);
 
         assertThat(result.trend()).isNull();
+        verify(placeTrendResultRepository).findFirstVisibleByPlaceId(55L);
     }
 
     @Test
-    void getDetail_projectsVisibleTrendWithoutBlogTrendExplanation() {
+    void getDetail_projectsAllFinalTrendMetrics() {
         Place place = place(56L, "주목할 장소", "종로구");
-        PlaceTrendSnapshot snapshot = detailSnapshot(
+        OffsetDateTime measuredAt = OffsetDateTime.of(2026, 8, 12, 16, 0, 0, 0, ZoneOffset.UTC);
+        PlaceTrendResult result = trendResult(
                 PlaceTrendStatus.WATCH,
-                LocalDate.of(2026, 8, 12));
+                null,
+                44.0,
+                null,
+                measuredAt);
         when(placeRepository.findById(56L)).thenReturn(Optional.of(place));
         when(placeOperatingHoursRepository.findByPlaceIdOrderByDayOfWeek(56L)).thenReturn(List.of());
         when(place.getImageUrl()).thenReturn("https://example.com/place.jpg");
         when(place.getImageSource()).thenReturn("KAKAO");
         when(place.getImageAttribution()).thenReturn("Kakao Local");
-        when(placeTrendSnapshotRepository.findFirstByPlaceIdOrderBySnapshotDateDesc(56L))
-                .thenReturn(Optional.of(snapshot));
-        PlaceDetailResponse result = placeQueryService.getDetail(56L);
+        when(placeTrendResultRepository.findFirstVisibleByPlaceId(56L)).thenReturn(Optional.of(result));
 
-        assertThat(result.trend().status()).isEqualTo(PlaceTrendStatus.WATCH);
-        assertThat(result.trend().updatedAt()).isEqualTo(LocalDate.of(2026, 8, 12));
-        assertThat(result.imageUrl()).isEqualTo("https://example.com/place.jpg");
-        assertThat(result.imageSource()).isEqualTo("KAKAO");
-        assertThat(result.imageAttribution()).isEqualTo("Kakao Local");
+        PlaceDetailResponse response = placeQueryService.getDetail(56L);
+
+        assertThat(response.trend().status()).isEqualTo(PlaceTrendStatus.WATCH);
+        assertThat(response.trend().recentInterestAverage()).isNull();
+        assertThat(response.trend().previousInterestAverage()).isEqualTo(44.0);
+        assertThat(response.trend().interestChangePercent()).isNull();
+        assertThat(response.trend().measuredAt()).isEqualTo(measuredAt);
+        assertThat(response.trend().updatedAt()).isEqualTo(LocalDate.of(2026, 8, 13));
+        assertThat(response.imageUrl()).isEqualTo("https://example.com/place.jpg");
+        assertThat(response.imageSource()).isEqualTo("KAKAO");
+        assertThat(response.imageAttribution()).isEqualTo("Kakao Local");
     }
 
     private static PlaceFilmingContentTypeProjection contentType(Long placeId, String contentType) {
@@ -176,22 +209,23 @@ class PlaceQueryServiceTest {
         return place;
     }
 
-    private static PlaceTrendSnapshot snapshot(
-            Place place,
+    private static PlaceTrendResult trendResult(
             PlaceTrendStatus status,
-            LocalDate snapshotDate) {
-        PlaceTrendSnapshot snapshot = mock(PlaceTrendSnapshot.class);
-        when(snapshot.getPlace()).thenReturn(place);
-        when(snapshot.getStatus()).thenReturn(status);
-        when(snapshot.getSnapshotDate()).thenReturn(snapshotDate);
-        return snapshot;
+            Double recentInterestAverage,
+            Double previousInterestAverage,
+            Double interestChangePercent,
+            OffsetDateTime measuredAt) {
+        PlaceTrendResult result = mock(PlaceTrendResult.class);
+        when(result.getStatus()).thenReturn(status);
+        when(result.getRecentInterestAverage()).thenReturn(recentInterestAverage);
+        when(result.getPreviousInterestAverage()).thenReturn(previousInterestAverage);
+        when(result.getInterestChangePercent()).thenReturn(interestChangePercent);
+        when(result.getMeasuredAt()).thenReturn(measuredAt);
+        return result;
     }
 
-    private static PlaceTrendSnapshot detailSnapshot(PlaceTrendStatus status, LocalDate snapshotDate) {
-        PlaceTrendSnapshot snapshot = mock(PlaceTrendSnapshot.class);
-        when(snapshot.getStatus()).thenReturn(status);
-        when(snapshot.getSnapshotDate()).thenReturn(snapshotDate);
-        return snapshot;
+    private static OffsetDateTime measuredAt() {
+        return OffsetDateTime.of(2026, 8, 13, 9, 0, 0, 0, ZoneOffset.ofHours(9));
     }
 
     private static class TestPlace extends Place {

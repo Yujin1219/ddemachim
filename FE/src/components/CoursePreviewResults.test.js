@@ -117,6 +117,76 @@ test.after(() => {
   else globalThis.IS_REACT_ACT_ENVIRONMENT = previousActEnvironment;
 });
 
+test('confirms the currently selected single course and hides editing in saved mode', async () => {
+  const confirmations = [];
+  let renderer;
+  await act(async () => {
+    renderer = create(createElement(CoursePreviewResults, {
+      preview,
+      status: 'success',
+      MapComponent: FakeMap,
+      onBack: () => {},
+      onConfirm: (selection) => confirmations.push(selection),
+      confirmLabel: '시작하기',
+      readOnly: true,
+    }));
+  });
+
+  const buttons = renderer.root.findAllByType('button');
+  const startButton = buttons.find((button) => textContent(button.props.children) === '시작하기');
+  assert.ok(startButton);
+  assert.equal(buttons.some((button) => textContent(button.props.children) === '출발 조건 수정'), false);
+  assert.equal(buttons.some((button) => textContent(button.props.children) === '장소별 시간 수정'), false);
+
+  await act(async () => startButton.props.onClick());
+  assert.equal(confirmations.length, 1);
+  assert.equal(confirmations[0].strategy, 'FAST');
+  assert.deepEqual(confirmations[0].routeSelections, {});
+});
+
+test('links marker selection to its itinerary stop and itinerary selection to the focused map place', async () => {
+  const scrollCalls = [];
+  let renderer;
+  await act(async () => {
+    renderer = create(createElement(CoursePreviewResults, {
+      preview,
+      status: 'success',
+      MapComponent: FakeMap,
+      onBack: () => {},
+    }), {
+      createNodeMock: (element) => (
+        typeof element.props.className === 'string' && element.props.className.startsWith('course-preview-stop')
+          ? { scrollIntoView: (options) => scrollCalls.push(options) }
+          : {}
+      ),
+    });
+  });
+
+  const map = () => renderer.root.findByType(FakeMap);
+  await act(async () => map().props.onPlaceClick({ id: '1-서울공예박물관' }));
+  assert.equal(map().props.focusedPlaceKey, 'INTERNAL:1-서울공예박물관');
+  assert.deepEqual(scrollCalls, [{ behavior: 'smooth', block: 'nearest' }]);
+
+  const secondStop = renderer.root.findAllByProps({ className: 'course-preview-stop-button' })[1];
+  await act(async () => secondStop.props.onClick());
+  assert.equal(map().props.focusedPlaceKey, 'INTERNAL:2-도토리가든');
+});
+
+test('keeps the resizable itinerary sheet over the map stage', async () => {
+  let renderer;
+  await act(async () => {
+    renderer = create(createElement(CoursePreviewResults, {
+      preview,
+      status: 'success',
+      MapComponent: FakeMap,
+      onBack: () => {},
+    }));
+  });
+
+  const stage = renderer.root.findByProps({ className: 'course-preview-stage' });
+  assert.ok(stage.findByProps({ className: 'course-preview-sheet-frame' }));
+});
+
 test('renders FAST schedule, authoritative hours, incoming legs, WALK steps, and map geometry', async () => {
   let renderer;
   await act(async () => {
@@ -357,7 +427,7 @@ test('hides EASY terrain metrics for transit and reveals them only for a short s
   assert.equal(textContent(renderer.toJSON()).includes('도보 경사 비교'), true);
 });
 
-test('announces course preview loading as a busy status', async () => {
+test('renders the animated course builder as a busy status while the preview is loading', async () => {
   let renderer;
   await act(async () => {
     renderer = create(createElement(CoursePreviewResults, {
@@ -367,9 +437,157 @@ test('announces course preview loading as a busy status', async () => {
     }));
   });
 
+  const screen = renderer.root.findByType('section');
   const status = renderer.root.findByProps({ role: 'status' });
+  const illustration = renderer.root.findByType('svg');
+  const copy = textContent(status);
+
+  assert.equal(screen.props['aria-busy'], true);
+  assert.equal(status.props['aria-live'], 'polite');
   assert.equal(status.props['aria-busy'], true);
-  assert.equal(textContent(status).includes('빠른 코스를 계산하고 있어요'), true);
+  assert.equal(copy.includes('최적화된 코스를 만들고 있어요'), true);
+  assert.equal(copy.includes('장소 사이 이동 시간을 비교하고 있어요'), true);
+  assert.equal(copy.includes('오르막 부담이 적은 길을 찾고 있어요'), true);
+  assert.equal(copy.includes('붐비는 시간대를 피해 순서를 조정하고 있어요'), true);
+  assert.equal(copy.includes('운영시간과 전체 일정을 확인하고 있어요'), true);
+  assert.equal(copy.includes('빠른 길'), true);
+  assert.equal(copy.includes('편한 길'), true);
+  assert.equal(copy.includes('한적한 길'), true);
+  assert.equal(copy.includes('세 가지 코스를 차례대로 확인하고 있어요'), true);
+  assert.equal(/완료|완성/.test(copy), false);
+  assert.equal(illustration.props.viewBox, '0 0 390 560');
+  assert.equal(illustration.props['aria-hidden'], true);
+  assert.equal(illustration.props.focusable, false);
+  assert.equal(renderer.root.findAllByProps({ className: 'course-preview-spinner' }).length, 0);
+  assert.equal(renderer.root.findAllByType(FakeMap).length, 0);
+});
+
+test('renders every structured failure message in semantic group order outside the concise alert', async () => {
+  const failure = {
+    groups: [
+      {
+        id: 'conditions',
+        label: '출발 조건',
+        action: 'conditions',
+        messages: [
+          '현재 출발 시각으로는 장소별 조건을 모두 맞추기 어려워요.',
+          '서울공예박물관: 선택한 날짜에는 운영하지 않아요.',
+        ],
+      },
+      {
+        id: 'stops',
+        label: '장소별 시간',
+        action: 'stops',
+        messages: ['도토리가든: 운영시간 안에 방문을 마치기 어려워요.'],
+      },
+      {
+        id: 'route',
+        label: '이동 경로',
+        action: 'route',
+        messages: ['북촌: 이용 가능한 이동 경로를 찾지 못했어요.'],
+      },
+    ],
+  };
+  let conditionsCount = 0;
+  let stopsCount = 0;
+  let retryCount = 0;
+  let renderer;
+  await act(async () => {
+    renderer = create(createElement(CoursePreviewResults, {
+      preview: null,
+      status: 'error',
+      message: 'COURSE4222 서버 원문 adjustmentProposal',
+      failure,
+      onBack: () => {},
+      onEditConditions: () => { conditionsCount += 1; },
+      onEditStops: () => { stopsCount += 1; },
+      onRetry: () => { retryCount += 1; },
+    }));
+  });
+
+  const alert = renderer.root.findByProps({ role: 'alert' });
+  assert.equal(textContent(alert), '입력한 조건으로는 코스를 만들기 어려워요확인된 이유와 바꿔볼 수 있는 조건을 정리했어요.');
+  const groups = renderer.root.findAllByProps({ className: 'course-preview-diagnostic-group' });
+  assert.deepEqual(groups.map((group) => textContent(group.findByType('h2'))), ['출발 조건', '장소별 시간', '이동 경로']);
+  assert.deepEqual(groups.flatMap((group) => group.findAllByType('li').map(textContent)), [
+    '현재 출발 시각으로는 장소별 조건을 모두 맞추기 어려워요.',
+    '서울공예박물관: 선택한 날짜에는 운영하지 않아요.',
+    '도토리가든: 운영시간 안에 방문을 마치기 어려워요.',
+    '북촌: 이용 가능한 이동 경로를 찾지 못했어요.',
+  ]);
+  assert.equal(textContent(renderer.toJSON()).includes('COURSE4222'), false);
+  assert.equal(textContent(renderer.toJSON()).includes('adjustmentProposal'), false);
+
+  const buttons = renderer.root.findAllByType('button');
+  const conditions = buttons.find((button) => textContent(button) === '출발 조건 수정');
+  const stops = buttons.find((button) => textContent(button) === '장소별 시간 수정');
+  const retry = buttons.find((button) => textContent(button) === '다시 계산하기');
+  assert.equal(conditions.props.className, 'ui-button primary');
+  assert.equal(stops.props.className, 'ui-button secondary');
+  assert.equal(retry.props.className, 'ui-button secondary');
+  await act(async () => conditions.props.onClick());
+  await act(async () => stops.props.onClick());
+  await act(async () => retry.props.onClick());
+  assert.equal(conditionsCount, 1);
+  assert.equal(stopsCount, 1);
+  assert.equal(retryCount, 1);
+});
+
+test('makes the first available structured action primary and omits unavailable callbacks', async () => {
+  const failure = {
+    groups: [
+      { id: 'conditions', label: '출발 조건', action: 'conditions', messages: ['출발 조건 이유'] },
+      { id: 'stops', label: '장소별 시간', action: 'stops', messages: ['장소 시간 이유'] },
+      { id: 'route', label: '이동 경로', action: 'route', messages: ['경로 이유'] },
+    ],
+  };
+  let renderer;
+  await act(async () => {
+    renderer = create(createElement(CoursePreviewResults, {
+      preview: null,
+      status: 'error',
+      failure,
+      onEditStops: () => {},
+    }));
+  });
+
+  const buttons = renderer.root.findAllByType('button');
+  assert.deepEqual(buttons.map(textContent), ['장소별 시간 수정']);
+  assert.equal(buttons[0].props.className, 'ui-button primary');
+  assert.equal(renderer.root.findAllByType('li').length, 3, 'missing actions must not hide diagnostics');
+});
+
+test('uses the generic safe error UI for malformed failures and for validation status', async () => {
+  const malformedFailure = {
+    groups: [{ id: 'route', label: '서버 그룹', action: 'route', messages: [] }],
+  };
+  let renderer;
+  await act(async () => {
+    renderer = create(createElement(CoursePreviewResults, {
+      preview: null,
+      status: 'error',
+      message: '안전한 일반 오류',
+      failure: malformedFailure,
+      onEditConditions: () => {},
+    }));
+  });
+  assert.equal(textContent(renderer.toJSON()).includes('코스를 계산하지 못했어요'), true);
+  assert.equal(textContent(renderer.toJSON()).includes('안전한 일반 오류'), true);
+  assert.equal(renderer.root.findAllByProps({ className: 'course-preview-diagnostic-group' }).length, 0);
+
+  await act(async () => {
+    renderer.update(createElement(CoursePreviewResults, {
+      preview: null,
+      status: 'validation',
+      message: '장소를 먼저 담아주세요.',
+      failure: {
+        groups: [{ id: 'route', label: '이동 경로', action: 'route', messages: ['경로 이유'] }],
+      },
+      onEditConditions: () => {},
+    }));
+  });
+  assert.equal(textContent(renderer.toJSON()).includes('코스 조건을 먼저 확인해주세요'), true);
+  assert.equal(renderer.root.findAllByProps({ className: 'course-preview-diagnostic-group' }).length, 0);
 });
 
 test('renders an actionable preview error without discarding the draft', async () => {

@@ -212,7 +212,7 @@ class CourseGenerationSchemaContractTest(unittest.TestCase):
     def test_enum_checks_are_exact_and_enum_columns_are_not_null(self) -> None:
         expected = {
             "chk_course_revision_route_strategy": (
-                "check (route_strategy in ('easy', 'fast', 'pleasant'))"
+                "check (route_strategy in ('easy', 'fast', 'quiet', 'pleasant'))"
             ),
             "chk_course_revision_start_type": (
                 "check (start_type in ('current_location', 'searched_place'))"

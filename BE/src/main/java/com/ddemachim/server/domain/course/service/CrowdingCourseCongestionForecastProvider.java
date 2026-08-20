@@ -57,7 +57,9 @@ public class CrowdingCourseCongestionForecastProvider implements CourseCongestio
     }
 
     private static String referenceId(ResolvedPlace place) {
-        return "course-basket-item:" + place.basketItemId();
+        return place.placeId() == null
+                ? "course-basket-item:" + place.basketItemId()
+                : "place:" + place.placeId();
     }
 
     private static CourseCongestionLevel toCourseLevel(CrowdingLevel level) {

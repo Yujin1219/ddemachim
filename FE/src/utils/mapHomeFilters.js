@@ -2,7 +2,6 @@ export const MAP_HOME_FILTERS = Object.freeze([
   { key: 'ALL', label: '전체', type: 'all', tone: 'all' },
   { key: 'FILMING', label: '촬영지', type: 'tag', code: 'FILMING_LOCATION', tone: 'filming' },
   { key: 'HOT', label: 'HOT', type: 'hot', tone: 'hot' },
-  { key: 'POPUP', label: '팝업', type: 'mixed', code: 'POPUP', tone: 'popup' },
   { key: 'EVENT', label: '전시·행사', type: 'mixed', code: 'EXHIBITION', tone: 'event' },
   { key: 'RESTAURANT', label: '음식점', type: 'category', code: 'RESTAURANT', tone: 'restaurant' },
   { key: 'CAFE_DESSERT', label: '카페·디저트', type: 'category', codes: ['CAFE', 'DESSERT'], tone: 'cafe-dessert' },
