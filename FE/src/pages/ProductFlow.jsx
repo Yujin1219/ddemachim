@@ -1719,23 +1719,27 @@ function PlaceDescriptionSection({ description }) {
 
 function PlaceDetail({ go, placeId, basketState, onBasketAdded, onBasketRefresh, onAuthRequired }) {
   const [place, setPlace] = useState(null);
+  const [placeTrend, setPlaceTrend] = useState(null);
   const [filmingLocations, setFilmingLocations] = useState([]);
   const [status, setStatus] = useState(placeId ? 'loading' : 'mock');
 
   useEffect(() => {
     if (!placeId) {
       setStatus('mock');
+      setPlaceTrend(null);
       setFilmingLocations([]);
       return undefined;
     }
     let cancelled = false;
     setStatus('loading');
+    setPlaceTrend(null);
     setFilmingLocations([]);
     Promise.allSettled([
       fetchPlace(placeId),
       fetchPlaceFilmingLocations(placeId),
+      fetchPlaceTrends({ limit: PLACE_TREND_COLLECTION_LIMIT }),
     ])
-      .then(([placeResult, filmingResult]) => {
+      .then(([placeResult, filmingResult, trendsResult]) => {
         if (cancelled) return;
         if (placeResult.status === 'fulfilled') {
           setPlace(placeResult.value);
@@ -1747,6 +1751,13 @@ function PlaceDetail({ go, placeId, basketState, onBasketAdded, onBasketRefresh,
           setFilmingLocations(filmingResult.value ?? []);
         } else {
           console.error('촬영지 장면 정보를 불러오지 못했어요', filmingResult.reason);
+        }
+        if (trendsResult.status === 'fulfilled') {
+          const matchingTrend = (Array.isArray(trendsResult.value) ? trendsResult.value : [])
+            .find((trendPlace) => String(trendPlace?.placeId ?? trendPlace?.id) === String(placeId));
+          setPlaceTrend(matchingTrend?.trend ?? null);
+        } else {
+          console.error('장소 트렌드 정보를 불러오지 못했어요', trendsResult.reason);
         }
       })
       .catch((error) => {
@@ -1788,7 +1799,7 @@ function PlaceDetail({ go, placeId, basketState, onBasketAdded, onBasketRefresh,
   const heroImage = place.imageUrl || images.detail;
   const hoursLabel = formatOperatingHours(place.operatingHours) || place.operatingHoursRaw || '운영시간 정보 없음';
 
-  return <section className="phone standard-screen place-detail-screen"><main className="page-scroll"><div className="detail-hero"><img src={heroImage} alt={`${place.name} 외관`} /><DetailHeroControls onBack={() => go('explore')} /></div><DetailContentSheet className="detail-content detail-content-v3"><p className="eyebrow place-detail-eyebrow"><span className="place-detail-eyebrow-text">{[place.district, place.categoryLabel].filter(Boolean).join(' · ')}</span><CongestionPointBadge longitude={place.longitude} latitude={place.latitude} /></p><h1>{place.name}</h1><p className="detail-meta">{hoursLabel}</p><div className="chip-row">{place.phone && <Chip active>{place.phone}</Chip>}<Chip>{place.roadAddress || place.lotAddress || '주소 정보 없음'}</Chip></div><FilmingSceneSection filmingLocations={filmingLocations} go={go} /><PlaceDescriptionSection description={place.description} /><ScreenSection title="방문자 후기"><PlaceReviewPreview onViewAll={() => go('reviews')} summary={PLACE_REVIEW_SUMMARY} reviews={PLACE_REVIEW_ITEMS} /></ScreenSection></DetailContentSheet></main><div className="sticky-actions split place-actions"><PlaceBasketAction placeId={placeId} basketItems={basketState?.items} onAdded={onBasketAdded} onAuthRequired={onAuthRequired} onRefresh={onBasketRefresh} /><ActionButton tone="secondary" onClick={() => go('write-review')}>후기 남기기</ActionButton></div></section>;
+  return <section className="phone standard-screen place-detail-screen"><main className="page-scroll"><div className="detail-hero"><img src={heroImage} alt={`${place.name} 외관`} /><DetailHeroControls onBack={() => go('explore')} /></div><DetailContentSheet className="detail-content detail-content-v3"><p className="eyebrow place-detail-eyebrow"><span className="place-detail-eyebrow-text">{[place.district, place.categoryLabel].filter(Boolean).join(' · ')}</span><CongestionPointBadge longitude={place.longitude} latitude={place.latitude} /></p><h1>{place.name}</h1><p className="detail-meta">{hoursLabel}</p><div className="chip-row">{place.phone && <Chip active>{place.phone}</Chip>}<Chip>{place.roadAddress || place.lotAddress || '주소 정보 없음'}</Chip></div><PlaceTrendReason trend={placeTrend} /><FilmingSceneSection filmingLocations={filmingLocations} go={go} /><PlaceDescriptionSection description={place.description} /><ScreenSection title="방문자 후기"><PlaceReviewPreview onViewAll={() => go('reviews')} summary={PLACE_REVIEW_SUMMARY} reviews={PLACE_REVIEW_ITEMS} /></ScreenSection></DetailContentSheet></main><div className="sticky-actions split place-actions"><PlaceBasketAction placeId={placeId} basketItems={basketState?.items} onAdded={onBasketAdded} onAuthRequired={onAuthRequired} onRefresh={onBasketRefresh} /><ActionButton tone="secondary" onClick={() => go('write-review')}>후기 남기기</ActionButton></div></section>;
 }
 
 function EventDetail({ go, eventId }) {
