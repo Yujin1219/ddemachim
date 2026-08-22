@@ -142,7 +142,7 @@ const AI_GUIDE_ERROR_PRESENTATIONS = {
   },
   AIGUIDE5031: {
     title: 'AI 가이드 설정이 필요해요',
-    message: '백엔드 실행 환경의 OPENAI_API_KEY와 OPENAI_MODEL을 확인한 뒤 서버를 재시작해주세요.',
+    message: '백엔드 실행 환경의 OPENAI_API_KEY, OPENAI_MODEL(예: gpt-4.1-mini), OPENAI_BASE_URL을 확인한 뒤 서버를 재시작해주세요.',
   },
   AIGUIDE5021: {
     title: 'OpenAI 서버에 연결하지 못했어요',
@@ -333,6 +333,14 @@ export function fetchCourse(courseId, { signal } = {}) {
 
 export function startCourse(courseId, { replaceActive = false, signal } = {}) {
   return post(`/courses/${courseId}/start`, { replaceActive }, { signal, auth: true });
+}
+
+export function completeCourse(courseId, { signal } = {}) {
+  return post(`/courses/${courseId}/complete`, {}, { signal, auth: true });
+}
+
+export function replanCourse(courseId, payload, { signal } = {}) {
+  return post(`/courses/${courseId}/replan`, payload, { signal, auth: true });
 }
 
 export function fetchPlaceFilmingLocations(placeId) {

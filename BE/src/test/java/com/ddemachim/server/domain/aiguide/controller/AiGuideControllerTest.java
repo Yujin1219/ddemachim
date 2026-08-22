@@ -38,7 +38,7 @@ class AiGuideControllerTest {
     @Test
     void chats_returnsCommonEnvelopeWithoutForwardingBearerHeader() throws Exception {
         when(aiGuideService.chat(any()))
-                .thenReturn(new AiGuideResponse("안국 카페를 찾아볼게요.", "resp_1"));
+                .thenReturn(new AiGuideResponse("안국 카페를 찾아볼게요.", "resp_1", java.util.List.of()));
 
         mockMvc.perform(post("/api/v1/ai-guide/chats")
                         .header("Authorization", "Bearer user-jwt")

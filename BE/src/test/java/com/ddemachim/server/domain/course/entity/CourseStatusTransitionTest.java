@@ -32,4 +32,16 @@ class CourseStatusTransitionTest {
 
         assertThatThrownBy(course::start).isInstanceOf(IllegalStateException.class);
     }
+
+    @Test
+    void inProgressCourseCanComplete() {
+        Course course = Course.create(
+                Member.create("course@example.com", "encoded", "course-user", Role.USER),
+                "경복궁");
+        course.start();
+
+        course.complete();
+
+        assertThat(course.getStatus()).isEqualTo(CourseStatus.COMPLETED);
+    }
 }

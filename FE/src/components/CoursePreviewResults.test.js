@@ -427,6 +427,37 @@ test('hides EASY terrain metrics for transit and reveals them only for a short s
   assert.equal(textContent(renderer.toJSON()).includes('도보 경사 비교'), true);
 });
 
+test('shows EASY feedback from elevation comparisons when FAST has no aggregate ascent', async () => {
+  const fastOption = { ...preview, strategy: 'FAST', totalAscentMeters: null };
+  const easyOption = {
+    ...preview,
+    strategy: 'EASY',
+    totalAscentMeters: 18,
+    elevationComparisons: [{
+      originalAscentMeters: 40,
+      easyAscentMeters: 18,
+      originalSteepUphillDistanceMeters: 90,
+      easySteepUphillDistanceMeters: 30,
+    }],
+  };
+  let renderer;
+  await act(async () => {
+    renderer = create(createElement(CoursePreviewResults, {
+      preview: { ...fastOption, options: [fastOption, easyOption] },
+      status: 'success',
+      MapComponent: FakeMap,
+    }));
+  });
+
+  const easyTab = renderer.root.findAllByType('button').find((button) => button.children.join('') === '편한 길');
+  await act(async () => easyTab.props.onClick());
+
+  const copy = textContent(renderer.toJSON());
+  assert.equal(copy.includes('더 편한 길을 찾았어요'), true);
+  assert.equal(copy.includes('40m → 18m'), true);
+  assert.equal(copy.includes('오르막 55% ↓'), true);
+});
+
 test('renders the animated course builder as a busy status while the preview is loading', async () => {
   let renderer;
   await act(async () => {

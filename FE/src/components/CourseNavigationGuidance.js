@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 
 const APPROACH_DISTANCE_METERS = 80;
 const CLOSE_DISTANCE_METERS = 30;
@@ -13,6 +13,14 @@ function coordinateOf(step) {
   return Number.isFinite(latitude) && Number.isFinite(longitude) ? { latitude, longitude } : null;
 }
 
+function coordinateFromLocation(location) {
+  if (Array.isArray(location)) {
+    const [longitude, latitude] = location.map(Number);
+    return Number.isFinite(latitude) && Number.isFinite(longitude) ? { latitude, longitude } : null;
+  }
+  return coordinateOf(location);
+}
+
 function distanceMeters(from, to) {
   const radians = (value) => value * Math.PI / 180;
   const earthRadius = 6_371_000;
@@ -23,11 +31,13 @@ function distanceMeters(from, to) {
   return earthRadius * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
 }
 
-export function collectCourseNavigationSteps(preview) {
+export function collectCourseNavigationSteps(preview, route = null) {
   const seen = new Set();
-  return (preview?.stops || []).flatMap((stop) => {
-    const route = stop?.selectedRoute || stop?.incomingRoute;
-    return (route?.legs || []).flatMap((leg) => leg?.mode === 'WALK' ? leg.steps || [] : []);
+  const routes = route ? [route] : (preview?.stops || []).map((stop) => (
+    stop?.selectedRoute || stop?.incomingRoute
+  ));
+  return routes.flatMap((currentRoute) => {
+    return (currentRoute?.legs || []).flatMap((leg) => leg?.steps || []);
   }).filter((step) => {
     const coordinate = coordinateOf(step);
     const key = coordinate ? `${coordinate.latitude}:${coordinate.longitude}:${step?.description || ''}` : null;
@@ -46,8 +56,8 @@ function guidanceCopy(step, distance) {
   return description;
 }
 
-export default function CourseNavigationGuidance({ preview, destination, onArrival }) {
-  const steps = collectCourseNavigationSteps(preview);
+export default function CourseNavigationGuidance({ preview, destination, onArrival, onGuidanceChange, route = null, currentLocation = null }) {
+  const steps = collectCourseNavigationSteps(preview, route);
   const stepKey = steps.map((step) => `${step.latitude}:${step.longitude}:${step.description}`).join('|');
   const destinationCoordinate = coordinateOf(destination);
   const destinationKey = destinationCoordinate ? `${destinationCoordinate.latitude}:${destinationCoordinate.longitude}` : '';
@@ -55,11 +65,55 @@ export default function CourseNavigationGuidance({ preview, destination, onArriv
   const reachedCurrentRef = useRef(false);
   const destinationReachedRef = useRef(false);
   const onArrivalRef = useRef(onArrival);
+  const onGuidanceChangeRef = useRef(onGuidanceChange);
+  const stepsRef = useRef(steps);
+  const destinationRef = useRef(destinationCoordinate);
   const [guidance, setGuidance] = useState({ status: 'idle', distance: null, index: 0 });
 
   useEffect(() => {
     onArrivalRef.current = onArrival;
   }, [onArrival]);
+
+  useEffect(() => {
+    onGuidanceChangeRef.current = onGuidanceChange;
+  }, [onGuidanceChange]);
+
+  useEffect(() => {
+    stepsRef.current = steps;
+    destinationRef.current = destinationCoordinate;
+  }, [stepKey, destinationKey]);
+
+  const updateGuidance = useCallback((current) => {
+    const currentSteps = stepsRef.current;
+    const currentDestination = destinationRef.current;
+    if (!currentSteps.length) return;
+    if (currentDestination && !destinationReachedRef.current
+      && distanceMeters(current, currentDestination) <= ARRIVAL_DISTANCE_METERS) {
+      destinationReachedRef.current = true;
+      onArrivalRef.current?.(destination);
+    }
+    let index = currentIndexRef.current;
+    const step = currentSteps[index];
+    if (!step) {
+      setGuidance({ status: 'complete', distance: 0, index });
+      return;
+    }
+    const distance = distanceMeters(current, coordinateOf(step));
+    if (distance <= REACHED_DISTANCE_METERS) reachedCurrentRef.current = true;
+    if (reachedCurrentRef.current && distance >= PASSED_DISTANCE_METERS) {
+      index += 1;
+      currentIndexRef.current = index;
+      reachedCurrentRef.current = false;
+      const nextStep = currentSteps[index];
+      if (!nextStep) {
+        setGuidance({ status: 'complete', distance: 0, index });
+        return;
+      }
+      setGuidance({ status: 'active', distance: distanceMeters(current, coordinateOf(nextStep)), index });
+      return;
+    }
+    setGuidance({ status: 'active', distance, index });
+  }, [destination]);
 
   useEffect(() => {
     currentIndexRef.current = 0;
@@ -69,6 +123,7 @@ export default function CourseNavigationGuidance({ preview, destination, onArriv
       setGuidance({ status: 'unavailable', distance: null, index: 0 });
       return undefined;
     }
+    if (currentLocation) return undefined;
     if (typeof navigator === 'undefined' || !navigator.geolocation) {
       setGuidance({ status: 'unsupported', distance: null, index: 0 });
       return undefined;
@@ -78,32 +133,7 @@ export default function CourseNavigationGuidance({ preview, destination, onArriv
     const watchId = navigator.geolocation.watchPosition(
       (position) => {
         const current = { latitude: position.coords.latitude, longitude: position.coords.longitude };
-        if (destinationCoordinate && !destinationReachedRef.current
-          && distanceMeters(current, destinationCoordinate) <= ARRIVAL_DISTANCE_METERS) {
-          destinationReachedRef.current = true;
-          onArrivalRef.current?.(destination);
-        }
-        let index = currentIndexRef.current;
-        const step = steps[index];
-        if (!step) {
-          setGuidance({ status: 'complete', distance: 0, index });
-          return;
-        }
-        const distance = distanceMeters(current, coordinateOf(step));
-        if (distance <= REACHED_DISTANCE_METERS) reachedCurrentRef.current = true;
-        if (reachedCurrentRef.current && distance >= PASSED_DISTANCE_METERS) {
-          index += 1;
-          currentIndexRef.current = index;
-          reachedCurrentRef.current = false;
-          const nextStep = steps[index];
-          if (!nextStep) {
-            setGuidance({ status: 'complete', distance: 0, index });
-            return;
-          }
-          setGuidance({ status: 'active', distance: distanceMeters(current, coordinateOf(nextStep)), index });
-          return;
-        }
-        setGuidance({ status: 'active', distance, index });
+        updateGuidance(current);
       },
       (error) => {
         setGuidance({ status: error?.code === 1 ? 'denied' : 'unavailable', distance: null, index: currentIndexRef.current });
@@ -111,7 +141,30 @@ export default function CourseNavigationGuidance({ preview, destination, onArriv
       { enableHighAccuracy: true, maximumAge: 5_000, timeout: 12_000 },
     );
     return () => navigator.geolocation.clearWatch(watchId);
-  }, [stepKey, destinationKey]);
+  }, [stepKey, destinationKey, Boolean(currentLocation), updateGuidance]);
+
+  useEffect(() => {
+    const simulatedLocation = coordinateFromLocation(currentLocation);
+    if (!simulatedLocation || steps.length === 0) return;
+    updateGuidance(simulatedLocation);
+  }, [currentLocation?.[0], currentLocation?.[1], stepKey, updateGuidance]);
+
+  useEffect(() => {
+    const step = steps[guidance.index];
+    if (guidance.status === 'active' && step) {
+      onGuidanceChangeRef.current?.(guidanceCopy(step, guidance.distance));
+      return;
+    }
+    if (guidance.status === 'requesting') {
+      onGuidanceChangeRef.current?.('현재 위치를 확인하고 있어요');
+      return;
+    }
+    if (guidance.status === 'complete') {
+      onGuidanceChangeRef.current?.('이동 구간에 도착했어요');
+      return;
+    }
+    onGuidanceChangeRef.current?.('');
+  }, [guidance, stepKey]);
 
   if (guidance.status === 'unavailable' || guidance.status === 'unsupported') return null;
   if (guidance.status === 'denied') {

@@ -20,6 +20,7 @@ import java.time.ZoneId;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.HashMap;
+import java.util.LinkedHashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
@@ -38,6 +39,22 @@ public class AiPlaceSearchService {
     private static final ZoneId SEOUL = ZoneId.of("Asia/Seoul");
     private static final int MAX_LIMIT = 20;
     private static final int MAX_RADIUS_METERS = 10_000;
+    private static final Map<String, String> CATEGORY_ALIASES = Map.ofEntries(
+            Map.entry("촬영지", "FILMING_LOCATION"),
+            Map.entry("FILMING", "FILMING_LOCATION"),
+            Map.entry("FILMING_LOCATION", "FILMING_LOCATION"),
+            Map.entry("요즘 유행하는 곳", "BLOG_TREND"),
+            Map.entry("요즘 핫한 곳", "BLOG_TREND"),
+            Map.entry("요즘 뜨는 곳", "BLOG_TREND"),
+            Map.entry("요즘 갈만한 곳", "BLOG_TREND"),
+            Map.entry("핫플", "BLOG_TREND"),
+            Map.entry("HOT", "BLOG_TREND"),
+            Map.entry("BLOG_TREND", "BLOG_TREND"),
+            Map.entry("전시", "EXHIBITION"),
+            Map.entry("행사", "POPUP"),
+            Map.entry("음식점", "RESTAURANT"),
+            Map.entry("맛집", "RESTAURANT"),
+            Map.entry("카페", "CAFE"));
     private final PlaceRepository placeRepository;
     private final PlaceOperatingHoursRepository hoursRepository;
     private final CrowdingService crowdingService;
@@ -70,8 +87,9 @@ public class AiPlaceSearchService {
         Objects.requireNonNull(condition, "condition");
         int limit = safeLimit(condition.limit());
         LocalDate visitDate = condition.visitDate() == null ? LocalDate.now(clock) : condition.visitDate();
+        String categoryFilter = categories(condition.query(), condition.categories());
         List<Place> places = placeRepository.searchForAi(
-                repositoryQuery(condition.query()), blankToNull(condition.area()), categories(condition.categories()), limit);
+                repositoryQuery(condition.query()), catalogArea(condition.area()), categoryFilter, limit);
         Map<Long, PlaceOperatingHours> hours = hours(places, visitDate);
         return new SearchResult(places.stream().map(place -> toSearchPlace(place, hours.get(place.getId()))).toList());
     }
@@ -82,8 +100,10 @@ public class AiPlaceSearchService {
                 : Math.max(50, Math.min(MAX_RADIUS_METERS, condition.radiusMeters()));
         int limit = safeLimit(condition.limit());
         OffsetDateTime at = condition.at() == null ? OffsetDateTime.now(clock) : condition.at();
+        String categoryFilter = category(condition.category());
+        if (categoryFilter == null) categoryFilter = categoryFromQuery(condition.query());
         List<NearbyPlaceDistanceProjection> rows = placeRepository.findNearbyForAi(
-                condition.latitude(), condition.longitude(), normalize(condition.category()),
+                condition.latitude(), condition.longitude(), categoryFilter,
                 blankToNull(condition.query()), radius, Math.min(MAX_LIMIT, limit * 2));
         Map<Long, Place> places = new HashMap<>();
         placeRepository.findAllById(rows.stream().map(NearbyPlaceDistanceProjection::getPlaceId).toList())
@@ -193,23 +213,53 @@ public class AiPlaceSearchService {
         return place.getTags() == null ? List.of() : List.of(place.getTags());
     }
 
-    private static String categories(List<String> categories) {
-        if (categories == null || categories.isEmpty()) return null;
-        return categories.stream().filter(StringUtils::hasText).map(AiPlaceSearchService::normalize)
-                .distinct().reduce((left, right) -> left + "," + right).orElse(null);
+    private static String categories(String query, List<String> requestedCategories) {
+        LinkedHashSet<String> values = new LinkedHashSet<>();
+        if (requestedCategories != null) {
+            requestedCategories.stream().filter(StringUtils::hasText)
+                    .map(AiPlaceSearchService::category).filter(StringUtils::hasText).forEach(values::add);
+        }
+        if (values.isEmpty()) {
+            String inferred = categoryFromQuery(query);
+            if (inferred != null) values.add(inferred);
+        }
+        return values.isEmpty() ? null : String.join(",", values);
     }
 
     private static String normalize(String value) {
         return StringUtils.hasText(value) ? value.trim().toUpperCase(Locale.ROOT) : null;
     }
 
+    private static String category(String value) {
+        String normalized = normalize(value);
+        return normalized == null ? null : CATEGORY_ALIASES.getOrDefault(normalized, normalized);
+    }
+
     private static String blankToNull(String value) {
         return StringUtils.hasText(value) ? value.trim() : null;
+    }
+
+    private static String catalogArea(String value) {
+        String area = blankToNull(value);
+        if (area == null || !area.endsWith("역") || area.length() < 2) {
+            return area;
+        }
+        return area.substring(0, area.length() - 1);
     }
 
     private static String repositoryQuery(String value) {
         String query = blankToNull(value);
         return query != null && query.contains("촬영지") ? "FILMING_LOCATION" : query;
+    }
+
+    private static String categoryFromQuery(String value) {
+        String normalized = normalize(value);
+        if (normalized == null) return null;
+        return CATEGORY_ALIASES.entrySet().stream()
+                .filter(entry -> normalized.contains(entry.getKey()))
+                .map(Map.Entry::getValue)
+                .findFirst()
+                .orElse(null);
     }
 
     private static int safeLimit(Integer limit) {

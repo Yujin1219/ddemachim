@@ -1,6 +1,6 @@
 import React, { createContext, useCallback, useContext, useEffect, useMemo, useReducer, useRef, useState } from 'react';
 
-import { captureVideoFrame, exportScenePng } from './canvas.js';
+import { captureVideoFrame } from './canvas.js';
 import { resultGuardDestination, startCameraGesture } from './flow.js';
 import { createCameraController } from './mediaController.js';
 import { createObjectUrlOwner } from './objectUrlOwner.js';
@@ -26,15 +26,6 @@ function normalizeCameraError(error) {
     NotSupportedError: '이 브라우저에서는 카메라를 사용할 수 없어요.',
   };
   return { code: error?.name || 'camera-error', message: messages[error?.name] || error?.message || '카메라를 시작하지 못했어요.' };
-}
-
-function decodeObjectUrl(url) {
-  return new Promise((resolve, reject) => {
-    const image = new Image();
-    image.onload = () => resolve(image);
-    image.onerror = () => reject(new Error('촬영 결과를 내보내기 위해 해석하지 못했어요.'));
-    image.src = url;
-  });
 }
 
 export function SceneCameraProvider({
@@ -184,16 +175,10 @@ export function SceneCameraProvider({
     return pending;
   }, []);
 
-  const exportCapture = useCallback(async (mode = state.exportMode) => {
-    if (!state.captured || !referenceImageRef.current) throw new Error('내보낼 촬영 결과가 없어요.');
-    const captureImage = await decodeObjectUrl(state.captured.objectUrl);
-    return exportScenePng({ mode, reference: referenceImageRef.current, capture: captureImage, overlay: state.overlay, comparison: state.comparison });
-  }, [state.captured, state.comparison, state.exportMode, state.overlay]);
-
   const shareCapture = useCallback(async () => {
-    const exported = await exportCapture();
-    return attemptFileShare(exported.blob, { filename: `scene-camera-${state.filmingLocationId}.png` });
-  }, [exportCapture, state.filmingLocationId]);
+    if (!state.captured?.blob) throw new Error('저장할 촬영 사진이 없어요.');
+    return attemptFileShare(state.captured.blob, { filename: `scene-camera-${state.filmingLocationId}.png` });
+  }, [state.captured, state.filmingLocationId]);
 
   const consumeCameraEntryFocus = useCallback(() => {
     const shouldRestore = restoreEntryFocusRef.current;
@@ -256,13 +241,12 @@ export function SceneCameraProvider({
     capture,
     close,
     retake,
-    exportCapture,
     shareCapture,
     consumeCameraEntryFocus,
     setRedirectNotice,
     consumeRedirectNotice,
     downloadFile: startFileDownload,
-  }), [bindVideo, cancelVideoBinding, capture, close, consumeCameraEntryFocus, consumeRedirectNotice, exportCapture, prepareReference, referenceStatus, retake, setRedirectNotice, shareCapture, startCamera, state]);
+  }), [bindVideo, cancelVideoBinding, capture, close, consumeCameraEntryFocus, consumeRedirectNotice, prepareReference, referenceStatus, retake, setRedirectNotice, shareCapture, startCamera, state]);
 
   return h(SceneCameraContext.Provider, { value }, children);
 }

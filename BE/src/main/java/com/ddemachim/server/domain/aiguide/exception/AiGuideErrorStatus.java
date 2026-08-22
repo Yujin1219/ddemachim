@@ -10,7 +10,7 @@ import org.springframework.http.HttpStatus;
 @AllArgsConstructor
 public enum AiGuideErrorStatus implements BaseErrorCode {
 
-    CONFIGURATION(HttpStatus.SERVICE_UNAVAILABLE, "AIGUIDE5031", "OpenAI API 설정을 확인한 뒤 백엔드를 재시작해주세요."),
+    CONFIGURATION(HttpStatus.SERVICE_UNAVAILABLE, "AIGUIDE5031", "OpenAI API 키, 공개 API 모델명, 요청 주소 설정을 확인한 뒤 백엔드를 재시작해주세요."),
     QUOTA_EXCEEDED(HttpStatus.TOO_MANY_REQUESTS, "AIGUIDE4291", "OpenAI API 사용량 또는 결제 한도를 초과했습니다."),
     UPSTREAM_UNAVAILABLE(HttpStatus.BAD_GATEWAY, "AIGUIDE5021", "OpenAI API에 연결하지 못했습니다. 네트워크와 API 프로젝트 상태를 확인해주세요."),
     UPSTREAM_TIMEOUT(HttpStatus.GATEWAY_TIMEOUT, "AIGUIDE5041", "OpenAI API 응답 시간이 초과되었습니다. 잠시 후 다시 시도해주세요."),

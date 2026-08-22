@@ -1,5 +1,5 @@
 import React, { useEffect, useRef } from 'react';
-import { Eye, EyeOff, RotateCcw } from 'lucide-react';
+import { Eye, EyeOff, MoveHorizontal, RotateCcw } from 'lucide-react';
 
 const h = React.createElement;
 
@@ -37,9 +37,9 @@ export function OverlayControls({ overlay, onPatch, onReset }) {
     ? '장면 숨기기'
     : '장면 보기';
   return h('section', { className: 'scene-overlay-controls', 'aria-label': '참고 장면 조절' },
-    h('div', { className: 'scene-overlay-mode', role: 'group', 'aria-label': '참고 장면 표시 방식' },
-      h('button', { type: 'button', 'aria-pressed': overlay.mode === 'image', onClick: () => onPatch({ mode: 'image' }) }, '전체 장면'),
-      h('button', { type: 'button', 'aria-pressed': overlay.mode !== 'image', onClick: () => onPatch({ mode: 'outline' }) }, '실루엣')),
+    h('div', { className: 'detail-tabs scene-overlay-mode', role: 'tablist', 'aria-label': '참고 장면 표시 방식' },
+      h('button', { type: 'button', role: 'tab', className: overlay.mode === 'image' ? 'is-active' : '', 'aria-pressed': overlay.mode === 'image', 'aria-selected': overlay.mode === 'image', onClick: () => onPatch({ mode: 'image' }) }, '전체 장면'),
+      h('button', { type: 'button', role: 'tab', className: overlay.mode !== 'image' ? 'is-active' : '', 'aria-pressed': overlay.mode !== 'image', 'aria-selected': overlay.mode !== 'image', onClick: () => onPatch({ mode: 'outline' }) }, '실루엣')),
     h('label', { className: 'scene-overlay-opacity', style: { '--scene-opacity-progress': `${((overlay.opacity - 0.1) / 0.9) * 100}%` } },
       h('span', null, h('b', null, '현재'), h('output', null, `${opacityPercent}%`), h('b', null, '장면')),
       h('input', { type: 'range', min: 0.1, max: 1, step: 0.05, value: overlay.opacity, 'aria-label': '참고 장면 불투명도', 'aria-valuetext': `${opacityPercent}%`, onChange: (event) => onPatch({ opacity: Number(event.target.value) }) })),
@@ -51,12 +51,28 @@ export function OverlayControls({ overlay, onPatch, onReset }) {
 
 export function BeforeAfterComparison({ referenceUrl, referenceAlt = '참고 장면', captureUrl, value, onChange }) {
   const numeric = Number(value);
+  const updateComparison = (event, stage) => {
+    const bounds = stage?.getBoundingClientRect();
+    if (!bounds.width) return;
+    const next = Math.round(Math.min(100, Math.max(0, ((event.clientX - bounds.left) / bounds.width) * 100)));
+    onChange(next);
+  };
+
+  const startDrag = (event) => {
+    event.currentTarget.setPointerCapture?.(event.pointerId);
+    updateComparison(event, event.currentTarget.closest?.('.scene-comparison-stage'));
+  };
+
+  const drag = (event) => {
+    if (event.currentTarget.hasPointerCapture?.(event.pointerId)) updateComparison(event, event.currentTarget.closest?.('.scene-comparison-stage'));
+  };
+
   return h('section', { className: 'scene-comparison', style: { '--scene-comparison': `${numeric}%` }, 'aria-label': '참고 장면과 촬영 결과 비교' },
     h('div', { className: 'scene-comparison-stage' },
       h('img', { className: 'scene-comparison-capture', src: captureUrl, alt: '촬영 결과' }),
       h('div', { className: 'scene-comparison-reference' }, h('img', { src: referenceUrl, alt: referenceAlt })),
-      h('span', { className: 'scene-comparison-divider', 'aria-hidden': 'true' })),
-    h('label', { className: 'scene-comparison-range' },
-      h('span', null, '비교 위치'),
-      h('input', { type: 'range', min: 0, max: 100, step: 1, value: numeric, 'aria-label': '참고 장면과 촬영 결과 비교 위치', 'aria-valuetext': `참고 장면 ${numeric}%, 촬영 결과 ${100 - numeric}%`, onChange: (event) => onChange(Number(event.target.value)) })));
+      h('span', { className: 'scene-comparison-label is-reference', 'aria-hidden': 'true' }, '참고 장면'),
+      h('span', { className: 'scene-comparison-label is-capture', 'aria-hidden': 'true' }, '내 사진'),
+      h('span', { className: 'scene-comparison-divider', 'aria-hidden': 'true' }, h('span', { className: 'scene-comparison-handle', onPointerDown: startDrag, onPointerMove: drag, onPointerUp: (event) => event.currentTarget.releasePointerCapture?.(event.pointerId), onPointerCancel: (event) => event.currentTarget.releasePointerCapture?.(event.pointerId) }, h(MoveHorizontal, { size: 18, strokeWidth: 2, 'aria-hidden': true })))),
+    h('input', { className: 'scene-comparison-accessible-range', type: 'range', min: 0, max: 100, step: 1, value: numeric, 'aria-label': '참고 장면과 촬영 결과 비교 위치', 'aria-valuetext': `참고 장면 ${numeric}%, 촬영 결과 ${100 - numeric}%`, onChange: (event) => onChange(Number(event.target.value)) }));
 }

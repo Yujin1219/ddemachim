@@ -32,6 +32,22 @@ test('comparison exposes a native 0..100 range with an exact accessible before/a
   assert.equal(range.props['aria-valuetext'], '참고 장면 50%, 촬영 결과 50%');
 });
 
+test('comparison divider changes the existing comparison state from direct pointer dragging', () => {
+  const changes = [];
+  const tree = BeforeAfterComparison({ referenceUrl: '/ref.png', captureUrl: 'blob:capture', value: 50, onChange: (value) => changes.push(value) });
+  const handle = findAll(tree, 'span').find((node) => node.props.className === 'scene-comparison-handle');
+  const stage = { getBoundingClientRect: () => ({ left: 100, width: 200 }) };
+  const target = {
+    setPointerCapture() {},
+    hasPointerCapture: () => true,
+    releasePointerCapture() {},
+    closest: () => stage,
+  };
+  handle.props.onPointerDown({ currentTarget: target, pointerId: 1, clientX: 150 });
+  handle.props.onPointerMove({ currentTarget: target, pointerId: 1, clientX: 250 });
+  assert.deepEqual(changes, [25, 75]);
+});
+
 test('overlay controls provide labeled non-gesture position, scale, opacity, visibility, and reset actions', () => {
   const tree = OverlayControls({ overlay: { x: 0, y: 0, scale: 1, opacity: 0.5, visible: true }, onPatch() {}, onReset() {} });
   const labels = findAll(tree, 'button').map((button) => button.props['aria-label']).filter(Boolean);

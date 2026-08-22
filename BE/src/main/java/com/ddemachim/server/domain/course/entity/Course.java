@@ -113,6 +113,13 @@ public class Course {
         status = CourseStatus.ARCHIVED;
     }
 
+    public void complete() {
+        if (status != CourseStatus.IN_PROGRESS) {
+            throw new IllegalStateException("only an in-progress course can complete");
+        }
+        status = CourseStatus.COMPLETED;
+    }
+
     private boolean belongsToThisCourse(Course revisionCourse) {
         if (revisionCourse == this) {
             return true;

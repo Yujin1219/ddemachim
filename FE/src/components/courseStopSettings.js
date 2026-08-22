@@ -15,8 +15,6 @@ export function createCourseStopSettings(items) {
       basketItemId: item?.id,
       defaultDwellMinutes,
       dwellMinutes: defaultDwellMinutes,
-      hasArrivalDeadline: false,
-      arrivalDeadline: '',
     };
   });
 }
@@ -39,7 +37,6 @@ export function updateCourseStopSetting(settings, basketItemId, patch) {
     if (Object.hasOwn(patch, 'dwellMinutes')) {
       next.dwellMinutes = normalizeDwellMinutes(patch.dwellMinutes, MIN_DWELL_MINUTES);
     }
-    if (patch.hasArrivalDeadline === false) next.arrivalDeadline = '';
     return next;
   });
 }
@@ -48,8 +45,6 @@ export function buildCoursePreviewPlaces(settings) {
   return (Array.isArray(settings) ? settings : []).map((setting) => ({
     basketItemId: setting.basketItemId,
     dwellMinutes: normalizeDwellMinutes(setting.dwellMinutes),
-    arrivalDeadline: setting.hasArrivalDeadline && setting.arrivalDeadline
-      ? setting.arrivalDeadline
-      : null,
+    arrivalDeadline: null,
   }));
 }

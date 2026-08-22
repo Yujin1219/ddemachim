@@ -46,13 +46,8 @@ public class CourseQuietPlanner {
         while (!remaining.isEmpty()) {
             Candidate selected = null;
             for (ResolvedPlace place : remaining) {
-                RouteOption route;
-                try {
-                    route = routeProviderClient.findTransit(
-                            currentCoordinate, new Coordinate(place.latitude(), place.longitude()));
-                } catch (RouteProviderException exception) {
-                    continue;
-                }
+                RouteOption route = findQuietRoute(
+                        currentCoordinate, new Coordinate(place.latitude(), place.longitude()));
                 Candidate candidate = feasibleCandidate(request, currentTime, place, route);
                 if (candidate != null && (selected == null || candidate.costSeconds() < selected.costSeconds())) {
                     selected = candidate;
@@ -80,6 +75,22 @@ public class CourseQuietPlanner {
                 Duration.between(start, currentTime).toSeconds(),
                 totalTravelSeconds,
                 stops);
+    }
+
+    private RouteOption findQuietRoute(Coordinate origin, Coordinate destination) {
+        try {
+            RouteOption transit = routeProviderClient.findTransit(origin, destination);
+            if (transit != null && transit.status() == RouteStatus.AVAILABLE) {
+                return transit;
+            }
+        } catch (RouteProviderException exception) {
+            // Keep the quiet alternative available when a transit lookup is unavailable.
+        }
+        try {
+            return routeProviderClient.findWalking(origin, destination);
+        } catch (RouteProviderException exception) {
+            return null;
+        }
     }
 
     CourseCongestionLevel forecast(ResolvedPlace place, LocalDateTime expectedArrival) {

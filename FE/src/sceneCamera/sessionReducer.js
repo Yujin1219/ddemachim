@@ -1,3 +1,5 @@
+// The reference and camera layers share the same cover frame, so their default
+// scale must match exactly. Users can still pinch to adjust it when needed.
 export const DEFAULT_OVERLAY = Object.freeze({ x: 0, y: 0, scale: 1, opacity: 0.45, visible: true, mode: 'image' });
 
 const clamp = (value, min, max) => Math.min(max, Math.max(min, Number(value)));
@@ -55,7 +57,7 @@ export function sceneCameraReducer(state, action) {
     case 'REFERENCE_READY': return { ...state, flowState: 'idle', error: null };
     case 'CAMERA_READY': return { ...state, flowState: 'camera-ready', error: null };
     case 'CAPTURING': return { ...state, flowState: 'capturing', error: null };
-    case 'CAPTURED': return { ...state, captured: action.captured, flowState: 'result-ready', error: null };
+    case 'CAPTURED': return { ...state, captured: action.captured, comparison: 50, flowState: 'result-ready', error: null };
     case 'ERROR': return { ...state, flowState: 'error', error: action.error };
     case 'NOTICE': return { ...state, notice: action.notice };
     case 'CLEAR_NOTICE': return { ...state, notice: null };

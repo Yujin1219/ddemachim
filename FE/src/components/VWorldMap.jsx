@@ -5,6 +5,7 @@ import Overlay from 'ol/Overlay.js'
 import View from 'ol/View.js'
 import GeoJSON from 'ol/format/GeoJSON.js'
 import LineString from 'ol/geom/LineString.js'
+import Polygon from 'ol/geom/Polygon.js'
 import TileLayer from 'ol/layer/Tile.js'
 import VectorLayer from 'ol/layer/Vector.js'
 import VectorSource from 'ol/source/Vector.js'
@@ -52,7 +53,7 @@ import { resolveRouteFitDuration } from '../utils/routeComparison.js'
 
 const DEFAULT_CENTER = [126.978, 37.5665]
 const DEFAULT_ROUTE_FIT_PADDING = [120, 36, 380, 36]
-const CLUSTER_ZOOM_MAX = 14.5
+const CLUSTER_ZOOM_MAX = 17.5
 const CLUSTER_PIXEL_RADIUS = 44
 const MARKER_STAGGER_STEP = 22
 const MARKER_STAGGER_MAX = 340
@@ -95,8 +96,12 @@ export const ROUTE_STYLES = {
   TAXI: new Style({ stroke: new Stroke({ color: '#7dd3fc', width: 2.2, lineCap: 'round' }) }),
 }
 
-const ROUTE_RIBBON_HALO = new Style({ stroke: new Stroke({ color: 'rgba(255,255,255,0.92)', width: 11, lineCap: 'round', lineJoin: 'round' }) })
-const ROUTE_RIBBON_BODY = new Style({ stroke: new Stroke({ color: '#1d4ed8', width: 6.5, lineCap: 'round', lineJoin: 'round' }) })
+const ROUTE_RIBBON_HALO = new Style({ stroke: new Stroke({ color: 'rgba(255,255,255,0.64)', width: 5, lineCap: 'round', lineJoin: 'round' }) })
+const ROUTE_RIBBON_BODY = new Style({ stroke: new Stroke({ color: 'rgba(51,65,85,0.62)', width: 3.2, lineCap: 'round', lineJoin: 'round' }) })
+const SOLID_ROUTE_RIBBON_STYLE = [ROUTE_RIBBON_HALO, ROUTE_RIBBON_BODY]
+const ROUTE_FOCUS_STYLE = [
+  new Style({ stroke: new Stroke({ color: '#55c7ff', width: 3.25, lineCap: 'round', lineJoin: 'round' }) }),
+]
 const ROUTE_GLOW_STYLE = new Style({ stroke: new Stroke({ color: 'rgba(96,165,250,0.85)', width: 16, lineCap: 'round', lineJoin: 'round' }) })
 const GHOST_ROUTE_STYLE = new Style({ stroke: new Stroke({ color: 'rgba(71,85,105,0.9)', width: 2.5, lineDash: [2, 8], lineCap: 'round' }) })
 const GHOST_HIGHLIGHT_STYLE = [
@@ -108,6 +113,13 @@ const prefersReducedMotion = () => typeof window !== 'undefined'
   && (window.matchMedia?.('(prefers-reduced-motion: reduce)').matches ?? false)
 const motionDuration = (duration) => (prefersReducedMotion() ? 0 : duration)
 const markerStaggerDelay = (order) => (prefersReducedMotion() ? 0 : Math.min(order * MARKER_STAGGER_STEP, MARKER_STAGGER_MAX))
+
+function visiblePlaceLimit(map, maximum) {
+  const zoomLevel = map.getView().getZoom() ?? CLUSTER_ZOOM_MAX
+  if (zoomLevel <= 14) return Math.min(maximum, 60)
+  if (zoomLevel <= CLUSTER_ZOOM_MAX) return Math.min(maximum, 120)
+  return maximum
+}
 
 function createMarkerIcon(tone) {
   const iconNode = MAP_MARKER_ICONS[tone] || MAP_MARKER_ICONS.default
@@ -150,6 +162,25 @@ function ribbonStyle(feature, resolution = 1) {
   return styles
 }
 
+function focusRouteStyle(feature, resolution = 1) {
+  const styles = [...ROUTE_FOCUS_STYLE]
+  if (feature.get('drawing')) return styles
+  const coordinates = feature.getGeometry()?.getCoordinates()
+  chevronAnchors(coordinates, ROUTE_CHEVRON_SPACING_PX * resolution, ROUTE_CHEVRON_MAX_PER_LEG)
+    .forEach((anchor) => styles.push(new Style({
+      geometry: new Point(anchor.coordinate),
+      text: new Text({
+        text: '›',
+        font: '700 15px system-ui, -apple-system, "Segoe UI", sans-serif',
+        fill: new Fill({ color: '#ffffff' }),
+        stroke: new Stroke({ color: '#249fe5', width: 2.5 }),
+        rotation: anchor.rotation,
+        rotateWithView: true,
+      }),
+    })))
+  return styles
+}
+
 function normalizeCenter(center) {
   if (!Array.isArray(center) || center.length < 2) return DEFAULT_CENTER
 
@@ -187,6 +218,7 @@ export default function VWorldMap({
   style,
   ariaLabel = 'Map',
   userLocation = null,
+  followUserLocation = true,
   loadPlacesInBounds = null,
   placeMarkerFilter = null,
   placeMarkerFilterKey = '',
@@ -194,6 +226,7 @@ export default function VWorldMap({
   placeMarkerEntrance = 'pop',
   selectedPlaceKey = '',
   focusedPlaceKey = '',
+  focusedPlacePadding = null,
   clusterPlaces = true,
   fitPlaceMarkers = false,
   fitUserLocation = false,
@@ -201,6 +234,7 @@ export default function VWorldMap({
   placeLimit = 300,
   loadCongestionInBounds = null,
   showCongestionAreas = true,
+  mapDimmed = false,
   selectedCongestionGridCode = null,
   onMapClick = null,
   onPlaceClick = null,
@@ -213,18 +247,23 @@ export default function VWorldMap({
   routeFitPadding = DEFAULT_ROUTE_FIT_PADDING,
   routeDrawKey = '',
   routeDrawDelay = 0,
+  routeAppearance = 'detailed',
+  placeMarkerOffset = true,
   ghostRouteLegs = [],
   ghostHighlightLegs = [],
+  routeHighlightLegs = [],
   onRouteDrawEnd = null,
 }) {
   const targetRef = useRef(null)
   const mapRef = useRef(null)
   const locationOverlayRef = useRef(null)
   const congestionAreaLayerRef = useRef(null)
+  const mapDimLayerRef = useRef(null)
   const routeLayerRef = useRef(null)
   const routeGlowLayerRef = useRef(null)
   const ghostLayerRef = useRef(null)
   const ghostHighlightLayerRef = useRef(null)
+  const routeHighlightLayerRef = useRef(null)
   const sparkOverlayRef = useRef(null)
   const placeOverlaysRef = useRef([])
   const rawPlacesRef = useRef([])
@@ -240,12 +279,14 @@ export default function VWorldMap({
   const onRouteDrawEndRef = useRef(onRouteDrawEnd)
   const selectedPlaceKeyRef = useRef(selectedPlaceKey)
   const focusedPlaceKeyRef = useRef(focusedPlaceKey)
+  const focusedPlacePaddingRef = useRef(focusedPlacePadding)
   const loadVisiblePlacesRef = useRef(null)
   const lastPlaceRequestKeyRef = useRef(placeRequestKey)
   const loadPlacesRef = useRef(loadPlacesInBounds)
   const loadCongestionRef = useRef(loadCongestionInBounds)
   const placeMarkerFilterRef = useRef(placeMarkerFilter)
   const placeMarkerLabelRef = useRef(placeMarkerLabel)
+  const placeMarkerOffsetRef = useRef(placeMarkerOffset)
   const onMapClickRef = useRef(onMapClick)
   const onPlaceClickRef = useRef(onPlaceClick)
   const onCongestionAreaClickRef = useRef(onCongestionAreaClick)
@@ -265,6 +306,7 @@ export default function VWorldMap({
     loadCongestionRef.current = loadCongestionInBounds
     placeMarkerFilterRef.current = placeMarkerFilter
     placeMarkerLabelRef.current = placeMarkerLabel
+    placeMarkerOffsetRef.current = placeMarkerOffset
     onMapClickRef.current = onMapClick
     onPlaceClickRef.current = onPlaceClick
     onCongestionAreaClickRef.current = onCongestionAreaClick
@@ -274,7 +316,8 @@ export default function VWorldMap({
     onRouteDrawEndRef.current = onRouteDrawEnd
     selectedPlaceKeyRef.current = selectedPlaceKey
     focusedPlaceKeyRef.current = focusedPlaceKey
-  }, [loadPlacesInBounds, loadCongestionInBounds, placeMarkerFilter, placeMarkerLabel, onMapClick, onPlaceClick, onCongestionAreaClick, onPlacesChange, selectedCongestionGridCode, showCongestionAreas, onRouteDrawEnd, selectedPlaceKey, focusedPlaceKey])
+    focusedPlacePaddingRef.current = focusedPlacePadding
+  }, [loadPlacesInBounds, loadCongestionInBounds, placeMarkerFilter, placeMarkerLabel, placeMarkerOffset, onMapClick, onPlaceClick, onCongestionAreaClick, onPlacesChange, selectedCongestionGridCode, showCongestionAreas, onRouteDrawEnd, selectedPlaceKey, focusedPlaceKey, focusedPlacePadding])
 
   function clearPlaceOverlays(map) {
     placeOverlaysRef.current.forEach((overlay) => map.removeOverlay(overlay))
@@ -321,9 +364,19 @@ export default function VWorldMap({
     if (!coordinate) return
     const view = map.getView()
     view.cancelAnimations()
+    const padding = focusedPlacePaddingRef.current
+    if (Array.isArray(padding) && padding.length === 4 && map.getSize()) {
+      view.fit(new Point(fromLonLat(coordinate)), {
+        padding,
+        maxZoom: view.getZoom(),
+        duration: motionDuration(380),
+        easing: easeOut,
+      })
+      return
+    }
     view.animate({
       center: fromLonLat(coordinate),
-      duration: motionDuration(240),
+      duration: motionDuration(380),
       easing: easeOut,
     })
   }
@@ -346,6 +399,7 @@ export default function VWorldMap({
       `is-${markerTone}`,
       markerSizeClass(map),
       crowdingPresentation.className,
+      crowdingPresentation.ringTone ? `has-crowding-ring is-ring-${crowdingPresentation.ringTone}` : '',
       isSelectedPlace(place) ? 'is-selected' : '',
       order >= 0 ? 'is-entering' : '',
       order >= 0 && placeMarkerEntrance === 'renumber' ? 'is-renumber' : '',
@@ -355,7 +409,7 @@ export default function VWorldMap({
     if (hasMarkerLabel) {
       marker.classList.add('is-numbered')
       const markerNumber = Number(markerLabel)
-      if (Number.isFinite(markerNumber) && markerNumber > 0) {
+      if (placeMarkerOffsetRef.current && Number.isFinite(markerNumber) && markerNumber > 0) {
         const markerIndex = markerNumber - 1
         const radius = 18 + Math.floor(markerIndex / 4) * 10
         const angle = (markerIndex % 4) * (Math.PI / 2) - (Math.PI / 2)
@@ -372,6 +426,12 @@ export default function VWorldMap({
     if (hasMarkerLabel) markerContent.textContent = String(markerLabel)
     else markerContent.appendChild(createMarkerIcon(markerTone))
     marker.appendChild(markerContent)
+    if (isSelectedPlace(place) && crowdingPresentation.statusLabel) {
+      const crowdingStatus = document.createElement('span')
+      crowdingStatus.className = 'vworld-place-marker__crowding-status'
+      crowdingStatus.textContent = crowdingPresentation.statusLabel
+      marker.appendChild(crowdingStatus)
+    }
     marker.addEventListener('click', () => onPlaceClickRef.current?.(place))
 
     const overlay = new Overlay({
@@ -496,7 +556,7 @@ export default function VWorldMap({
     const handleLocation = (event) => {
       const location = event.detail || null
       setLiveUserLocation(location)
-      if (location && mapRef.current) {
+      if (location && followUserLocation && mapRef.current) {
         const view = mapRef.current.getView()
         view.setCenter(fromLonLat(normalizeCenter(location)))
         view.setZoom(17)
@@ -504,17 +564,17 @@ export default function VWorldMap({
     }
     window.addEventListener('vworld:user-location', handleLocation)
     return () => window.removeEventListener('vworld:user-location', handleLocation)
-  }, [])
+  }, [followUserLocation])
 
   useEffect(() => {
     setLiveUserLocation(userLocation || null)
     if (!userLocation) return
-    if (mapRef.current) {
+    if (followUserLocation && mapRef.current) {
       const view = mapRef.current.getView()
       view.setCenter(fromLonLat(normalizeCenter(userLocation)))
       view.setZoom(17)
     }
-  }, [userLocation?.[0], userLocation?.[1]])
+  }, [userLocation?.[0], userLocation?.[1], followUserLocation])
 
   useEffect(() => {
     if (!apiKey || !targetRef.current) return undefined
@@ -549,14 +609,35 @@ export default function VWorldMap({
     })
     map.addLayer(congestionAreaLayer)
     congestionAreaLayerRef.current = congestionAreaLayer
+    const mapDimLayer = new VectorLayer({
+      source: new VectorSource({
+        features: [new Feature({ geometry: new Polygon([[
+          [-20037508, -20037508], [20037508, -20037508], [20037508, 20037508], [-20037508, 20037508], [-20037508, -20037508],
+        ]]) })],
+      }),
+      style: new Style({ fill: new Fill({ color: 'rgba(15,23,42,0.46)' }) }),
+      visible: mapDimmed,
+      zIndex: 1.25,
+      properties: { name: 'map-dim-layer' },
+    })
+    map.addLayer(mapDimLayer)
+    mapDimLayerRef.current = mapDimLayer
     const routeLayer = new VectorLayer({
       source: new VectorSource(),
-      style: ribbonStyle,
+      style: routeAppearance === 'focus' ? focusRouteStyle : routeAppearance === 'solid' ? SOLID_ROUTE_RIBBON_STYLE : ribbonStyle,
       zIndex: 2,
       properties: { name: 'selected-route-legs' },
     })
     map.addLayer(routeLayer)
     routeLayerRef.current = routeLayer
+    const routeHighlightLayer = new VectorLayer({
+      source: new VectorSource(),
+      style: focusRouteStyle,
+      zIndex: 2.25,
+      properties: { name: 'route-highlight-legs' },
+    })
+    map.addLayer(routeHighlightLayer)
+    routeHighlightLayerRef.current = routeHighlightLayer
     const ghostLayer = new VectorLayer({
       source: new VectorSource(),
       style: GHOST_ROUTE_STYLE,
@@ -629,7 +710,7 @@ export default function VWorldMap({
       const controller = new AbortController()
       placeAbortRef.current = controller
 
-      loader({ ...bounds, limit: placeLimit, signal: controller.signal })
+      loader({ ...bounds, limit: visiblePlaceLimit(map, placeLimit), signal: controller.signal })
         .then((places = []) => {
           if (controller.signal.aborted) return
           rawPlacesRef.current = Array.isArray(places) ? places : []
@@ -729,12 +810,14 @@ export default function VWorldMap({
       resizeObserver?.disconnect()
       cancelAnimationFrame(firstFrame)
       if (congestionAreaLayerRef.current === congestionAreaLayer) congestionAreaLayerRef.current = null
+      if (mapDimLayerRef.current === mapDimLayer) mapDimLayerRef.current = null
       if (routeLayerRef.current === routeLayer) routeLayerRef.current = null
       if (routeGlowLayerRef.current === routeGlowLayer) routeGlowLayerRef.current = null
       if (ghostLayerRef.current === ghostLayer) ghostLayerRef.current = null
       if (ghostHighlightLayerRef.current === ghostHighlightLayer) ghostHighlightLayerRef.current = null
       if (sparkOverlayRef.current === sparkOverlay) sparkOverlayRef.current = null
       map.removeLayer(congestionAreaLayer)
+      map.removeLayer(mapDimLayer)
       map.removeLayer(routeLayer)
       map.removeLayer(ghostLayer)
       map.removeLayer(ghostHighlightLayer)
@@ -898,6 +981,17 @@ export default function VWorldMap({
   }, [routeLegs, routeMode, routeDrawKey, routeFitKey, routeDrawDelay])
 
   useEffect(() => {
+    const layer = routeHighlightLayerRef.current
+    if (!layer) return
+    const source = layer.getSource()
+    source.clear()
+    source.addFeatures(routeLegFeatureSpecs(routeHighlightLegs, fromLonLat).map((spec) => new Feature({
+      geometry: new LineString(spec.coordinates),
+    })))
+    layer.changed()
+  }, [routeHighlightLegs])
+
+  useEffect(() => {
     const layer = ghostLayerRef.current
     const highlightLayer = ghostHighlightLayerRef.current
     if (!layer || !highlightLayer) return
@@ -965,6 +1059,10 @@ export default function VWorldMap({
     congestionAreaLayerRef.current?.setVisible(showCongestionAreas)
     showCongestionAreasRef.current = showCongestionAreas
   }, [showCongestionAreas])
+
+  useEffect(() => {
+    mapDimLayerRef.current?.setVisible(mapDimmed)
+  }, [mapDimmed])
 
   useEffect(() => {
     if (lastPlaceRequestKeyRef.current === placeRequestKey) return

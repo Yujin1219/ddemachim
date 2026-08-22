@@ -12,7 +12,7 @@ test('starts a new ID with immutable reference defaults and resets result state'
   assert.equal(next.filmingLocationId, '42');
   assert.deepEqual(next.reference, reference);
   assert.notEqual(next.reference, reference);
-  assert.deepEqual(next.overlay, { x: 0, y: 0, scale: 1, opacity: 0.5, visible: true });
+  assert.deepEqual(next.overlay, { x: 0, y: 0, scale: 1, opacity: 0.45, visible: true, mode: 'image' });
   assert.equal(next.captured, null);
   assert.equal(next.comparison, 50);
   assert.equal(next.exportMode, 'split');
@@ -21,9 +21,15 @@ test('starts a new ID with immutable reference defaults and resets result state'
 test('clamps overlay and comparison controls to their canonical limits', () => {
   let state = createSceneSession();
   state = sceneCameraReducer(state, { type: 'SET_OVERLAY', patch: { x: 9, y: -9, scale: 5, opacity: 0, visible: false } });
-  assert.deepEqual(state.overlay, { x: 0.5, y: -0.5, scale: 2, opacity: 0.1, visible: false });
+  assert.deepEqual(state.overlay, { x: 0.5, y: -0.5, scale: 2, opacity: 0.1, visible: false, mode: 'image' });
   state = sceneCameraReducer(state, { type: 'SET_COMPARISON', value: 120.2 });
   assert.equal(state.comparison, 100);
+});
+
+test('starts every newly captured result at an even comparison position', () => {
+  const previous = { ...createSceneSession(), comparison: 82 };
+  const next = sceneCameraReducer(previous, { type: 'CAPTURED', captured: { blob: {}, objectUrl: 'blob:capture', width: 1080, height: 1440 } });
+  assert.equal(next.comparison, 50);
 });
 
 test('same-ID retake preserves reference and framing while clearing capture', () => {

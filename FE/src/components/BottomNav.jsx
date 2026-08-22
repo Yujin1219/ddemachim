@@ -1,11 +1,14 @@
 import { Compass, MapPinned, Route, Sparkles, UserRound } from 'lucide-react';
 import { motion } from 'motion/react';
+import { bottomNavItems } from './bottomNavModel';
 
-const items = [{id:'map', label:'지도', Icon:MapPinned}, {id:'explore', label:'탐색', Icon:Compass}, {id:'assistant', label:'AI 가이드', Icon:Sparkles}, {id:'course', label:'코스', Icon:Route}, {id:'my', label:'MY', Icon:UserRound}];
+const icons = { map: MapPinned, explore: Compass, assistant: Sparkles, course: Route, my: UserRound };
 
 export default function BottomNav({ active, onNavigate }) {
-  return <nav className="bottom-nav" aria-label="주요 메뉴">{items.map(({ id, label, Icon }) => {
+  return <nav className="bottom-nav" aria-label="주요 메뉴">
+    {bottomNavItems.map(({ id, label }) => {
+    const Icon = icons[id];
     const isActive = active === id;
-    return <motion.button key={id} className={`nav-item ${isActive ? 'active' : ''}`} onClick={() => onNavigate(id)} aria-current={isActive ? 'page' : undefined} whileTap={{ transform: 'perspective(700px) translateY(1px) rotateX(-2deg) scale(.95)' }} transition={{ duration: 0.14, ease: [0.23, 1, 0.32, 1] }}>{isActive && <span className="nav-indicator" aria-hidden="true" />}<motion.span className="nav-icon" initial={false} animate={{ transform: isActive ? 'perspective(700px) translateY(-2px) rotateX(8deg) translateZ(6px)' : 'perspective(700px) translateY(0px) rotateX(0deg) translateZ(0px)' }} transition={{ duration: 0.2, ease: [0.23, 1, 0.32, 1] }}><Icon aria-hidden="true" size={21} strokeWidth={1.9} /></motion.span><span>{label}</span></motion.button>;
+    return <motion.button key={id} className={`nav-item ${isActive ? 'active' : ''}`} onClick={() => onNavigate(id)} aria-current={isActive ? 'page' : undefined} whileTap={{ scale: .96 }} transition={{ duration: 0.14, ease: [0.23, 1, 0.32, 1] }}>{isActive && <motion.span layoutId="bottom-nav-active-bubble" className="nav-bubble" transition={{ type: 'tween', duration: .14, ease: [0.77, 0, 0.175, 1] }} />}<span className="nav-icon"><Icon aria-hidden="true" size={21} strokeWidth={1.9} /></span><span className="nav-label">{label}</span></motion.button>;
   })}</nav>;
 }
