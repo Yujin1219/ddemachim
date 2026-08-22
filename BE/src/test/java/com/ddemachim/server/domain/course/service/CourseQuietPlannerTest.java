@@ -80,6 +80,25 @@ class CourseQuietPlannerTest {
         assertThat(plan.scheduledEnd()).hasToString("2026-08-18T18:01");
     }
 
+    @Test
+    void keepsTheQuietOptionByFallingBackToWalkingWhenTransitIsUnavailable() {
+        ResolvedPlace place = place(1L, 37.1, 126.1);
+        CourseRouteProviderClient routes = mock(CourseRouteProviderClient.class);
+        when(routes.findTransit(any(), any())).thenReturn(new RouteOption(
+                RouteMode.TRANSIT, RouteStatus.UNAVAILABLE, null, null,
+                null, null, null, null, List.of()));
+        when(routes.findWalking(any(), any())).thenReturn(walkingRoute(420));
+
+        CourseQuietPlanner.QuietPlan plan = new CourseQuietPlanner(
+                routes, (resolvedPlace, arrival) -> CourseCongestionLevel.NORMAL)
+                .plan(request(place), List.of(place));
+
+        assertThat(plan.stops()).singleElement().satisfies(stop -> {
+            assertThat(stop.incomingRoute().mode()).isEqualTo(RouteMode.WALK);
+            assertThat(stop.incomingRoute().durationSeconds()).isEqualTo(420);
+        });
+    }
+
     private static CoursePreviewRequest request(ResolvedPlace... places) {
         return new CoursePreviewRequest(
                 LocalDate.of(2026, 8, 18),
@@ -101,5 +120,11 @@ class CourseQuietPlannerTest {
         return new RouteOption(
                 RouteMode.TRANSIT, RouteStatus.AVAILABLE, seconds, 1_000,
                 1_500, 0, 100, null, List.of());
+    }
+
+    private static RouteOption walkingRoute(int seconds) {
+        return new RouteOption(
+                RouteMode.WALK, RouteStatus.AVAILABLE, seconds, 600,
+                null, 0, 600, null, List.of());
     }
 }

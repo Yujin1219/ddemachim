@@ -188,10 +188,17 @@ export function getMockCrowdingMarkerPresentation({ placeName, markerLabel, grid
 
   try {
     const metadata = normalizeMetadata(grid);
+    const ringTone = metadata.level === 'RELAXED'
+      ? 'relaxed'
+      : metadata.level === 'VERY_CROWDED'
+        ? 'crowded'
+        : 'moderate';
     return {
       ariaLabel: `${baseLabel} · 혼잡도 ${metadata.levelLabel}`,
       className: `is-crowding-${metadata.level.toLowerCase().replaceAll('_', '-')}`,
       levelLabel: metadata.levelLabel,
+      ringTone,
+      statusLabel: metadata.levelLabel,
     };
   } catch {
     return { ariaLabel: baseLabel, className: '', levelLabel: null };

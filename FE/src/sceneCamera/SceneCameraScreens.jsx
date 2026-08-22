@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { ArrowLeft, Camera } from 'lucide-react';
+import { ArrowLeft } from 'lucide-react';
 
 import { createOverlayGesture } from './gesture.js';
 import { createSceneGeometry, geometryToCssVars } from './geometry.js';
@@ -11,7 +11,7 @@ import { useSceneMatchScore } from './useSceneMatchScore.js';
 
 export function SceneDetailCameraPanel({ id, go }) {
   const normalizedId = normalizeFilmingLocationId(id);
-  const { state, referenceStatus, prepareReference, consumeCameraEntryFocus } = useSceneCamera();
+  const { state, referenceStatus, prepareReference, consumeCameraEntryFocus, startCamera } = useSceneCamera();
   const entryButtonRef = useRef(null);
 
   useEffect(() => {
@@ -33,7 +33,7 @@ export function SceneDetailCameraPanel({ id, go }) {
       error={state.error?.message}
       buttonRef={entryButtonRef}
       onRetry={() => prepareReference(normalizedId, { force: true })}
-      onStart={() => go('camera', normalizedId)}
+      onStart={() => startCamera(normalizedId, go)}
     />
   </>;
 }
@@ -41,7 +41,6 @@ export function SceneDetailCameraPanel({ id, go }) {
 export function SceneCameraScreen({ id, go }) {
   const normalizedId = normalizeFilmingLocationId(id);
   const { state, referenceReady, capture, close, startCamera, dispatch } = useSceneCamera();
-  const [permissionRequested, setPermissionRequested] = useState(() => state.flowState !== 'idle');
   const [showEntryGuide, setShowEntryGuide] = useState(false);
   const stageRef = useRef(null);
   const videoRef = useRef(null);
@@ -112,30 +111,11 @@ export function SceneCameraScreen({ id, go }) {
   }, [canCapture]);
 
   const requestCamera = () => {
-    setPermissionRequested(true);
     startCamera(normalizedId, () => {});
   };
 
-  const permissionDenied = permissionRequested && state.error?.code === 'NotAllowedError';
-
-  if (!permissionRequested || permissionDenied) {
-    return <section className="phone scene-camera-screen scene-camera-permission" aria-labelledby="scene-camera-permission-title">
-      <header className="scene-camera-header camera-safe-top">
-        <button type="button" aria-label="장면 상세로 돌아가기" onClick={handleClose}><ArrowLeft aria-hidden="true" size={22} strokeWidth={2} /></button>
-        <span>장면 비교</span>
-        <i aria-hidden="true" />
-      </header>
-      <main className="scene-camera-permission-content">
-        <div className="scene-camera-permission-icon"><Camera aria-hidden="true" size={32} strokeWidth={1.8} /></div>
-        <h1 id="scene-camera-permission-title">{permissionDenied ? '카메라 권한이 필요해요' : <>장면과 지금 모습을<br />겹쳐서 비교해볼까요?</>}</h1>
-        <p>{permissionDenied ? <>장면과 실제 장소를 비교하려면<br />카메라 사용 권한을 허용해주세요.</> : <>카메라를 켜면 이곳에서 촬영된 장면과<br />현재 모습을 함께 볼 수 있어요.</>}</p>
-        <button type="button" className="ui-button primary" onClick={requestCamera}>{permissionDenied ? '다시 시도' : '카메라 켜기'}</button>
-      </main>
-    </section>;
-  }
-
   return <section className="phone scene-camera-screen" aria-labelledby="scene-camera-title">
-    <header className="scene-camera-header camera-safe-top">
+    <header className="screen-header scene-camera-header camera-safe-top">
       <button type="button" aria-label="장면 상세로 돌아가기" onClick={handleClose}><ArrowLeft aria-hidden="true" size={22} strokeWidth={2} /></button>
       <AutoFocusHeading id="scene-camera-title">장면 비교</AutoFocusHeading>
       <i aria-hidden="true" />
@@ -202,17 +182,24 @@ export function SceneShotResultScreen({ id, go }) {
     setHandoff((current) => ({ ...current, status: result.status, message: result.status === 'download-started' ? '다운로드를 시작했어요.' : '다운로드를 시작하지 못했어요. 브라우저 다운로드 설정을 확인해주세요.' }));
   };
 
-  return <section className="phone scene-result-screen" aria-labelledby="scene-result-title">
-    <header className="scene-camera-header camera-safe-top"><button type="button" aria-label="결과 닫기" onClick={handleClose}>×</button><AutoFocusHeading id="scene-result-title">촬영 결과 비교</AutoFocusHeading><span aria-hidden="true" /></header>
+  const sourceName = state.reference.attribution
+    ?.replace(/^.*출처:\s*/, '')
+    .replace(/\s*\([^)]*\)\s*$/, '')
+    .trim() || '출처 정보';
+
+  return <section className="phone scene-camera-screen scene-result-screen" aria-labelledby="scene-result-title">
+    <header className="scene-camera-header camera-safe-top"><button type="button" aria-label="장면 상세로 돌아가기" onClick={handleClose}><ArrowLeft aria-hidden="true" size={22} strokeWidth={2} /></button><AutoFocusHeading id="scene-result-title">촬영 결과</AutoFocusHeading><i aria-hidden="true" /></header>
     <main className="scene-result-scroll">
-      <p className="scene-result-instruction">슬라이더를 움직여 참고 장면과 촬영 결과를 비교해보세요.</p>
       <BeforeAfterComparison referenceUrl={state.reference.url} referenceAlt={state.reference.altText} captureUrl={state.captured.objectUrl} value={state.comparison} onChange={(value) => dispatch({ type: 'SET_COMPARISON', value })} />
-      <p className="scene-reference-attribution">참고 장면: {state.reference.attribution}</p>
-      <fieldset className="scene-export-mode"><legend>내보내기 방식</legend><label><input type="radio" name="scene-export" value="split" checked={state.exportMode === 'split'} onChange={() => dispatch({ type: 'SET_EXPORT_MODE', value: 'split' })} /> 50:50 나란히</label><label><input type="radio" name="scene-export" value="overlay" checked={state.exportMode === 'overlay'} onChange={() => dispatch({ type: 'SET_EXPORT_MODE', value: 'overlay' })} /> 겹쳐서</label></fieldset>
-      <div className="scene-result-actions camera-safe-bottom"><button type="button" className="ui-button primary" onClick={handleShare} disabled={handoff.status === 'working'}>공유</button><button type="button" className="ui-button secondary" onClick={() => retake(normalizedId, go)}>다시 촬영</button></div>
+      <p className="scene-result-compare-hint">경계를 좌우로 움직여 장면을 비교해보세요</p>
+      <p className="scene-reference-attribution">참고 장면 · {sourceName}</p>
+    </main>
+    <section className="scene-result-controls camera-safe-bottom" aria-label="촬영 결과 동작">
+      <p className="scene-result-instruction">촬영한 사진은 서버에 저장되지 않아요</p>
+      <div className="scene-result-actions"><button type="button" className="ui-button primary" onClick={handleShare} disabled={handoff.status === 'working'}>{handoff.status === 'working' ? '사진 준비 중' : '내 사진 저장'}</button><button type="button" className="ui-button secondary" onClick={() => retake(normalizedId, go)}>다시 촬영</button></div>
       {handoff.status === 'error'
         ? <BlockingAlert className="scene-result-status" title="결과를 내보내지 못했어요" message={handoff.message} />
         : <div className="scene-result-status" role="status" aria-live="polite">{handoff.message}{handoff.status === 'download-available' && <button type="button" className="ui-button secondary" onClick={handleDownload}>PNG 다운로드</button>}</div>}
-    </main>
+    </section>
   </section>;
 }

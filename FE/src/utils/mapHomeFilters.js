@@ -113,6 +113,7 @@ export function eventToMapMarker(event) {
   return {
     id: `event:${event.id}`,
     eventId: event.id,
+    placeId: event.placeId ?? null,
     externalSource: 'EVENT',
     name: cleanEventTitle(event.title),
     categoryCode: popup ? 'POPUP' : 'EXHIBITION',

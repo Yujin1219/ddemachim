@@ -1,10 +1,11 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useReducer, useRef, useState } from 'react';
-import { motion, useReducedMotion } from 'motion/react';
-import { CalendarDays, ChevronLeft, ChevronRight, CircleDollarSign, CircleHelp, Clapperboard, Clock3, Coffee, ExternalLink, Flame, Heart, Image as ImageIcon, LocateFixed, MapPin, Minus, MoreHorizontal, Phone, Plus, RefreshCw, Search, SearchX, SendHorizontal, ShoppingBasket, Trash2, UserRound, Utensils, X } from 'lucide-react';
+import { AnimatePresence, motion, useReducedMotion } from 'motion/react';
+import { CalendarDays, Camera, Check, ChevronLeft, ChevronRight, CircleDollarSign, CircleHelp, Clapperboard, Clock3, Coffee, ExternalLink, Flame, Heart, Image as ImageIcon, Landmark, LocateFixed, MapPin, Minus, MoreHorizontal, Phone, Plus, RefreshCw, Search, SearchX, SendHorizontal, ShoppingBasket, Trash2, Trees, UserRound, Utensils, X } from 'lucide-react';
 import AppHeader from '../components/AppHeader';
 import BottomNav from '../components/BottomNav';
+import CourseActionButton from '../components/CourseActionButton';
 import PlaceReviewPreview from '../components/PlaceReviewPreview';
-import PlaceTrendSection, { getPlaceTrendCardProps, getPlaceTrendSearchText, getVisiblePlaceTrends, PlaceTrendReason } from '../components/PlaceTrendSection.js';
+import PlaceTrendSection, { getPlaceTrendCardProps, getPlaceTrendSearchText, getVisiblePlaceTrends } from '../components/PlaceTrendSection.js';
 import SelectedPlaceRoutePanel, { selectedPlaceDetailTarget } from '../components/SelectedPlaceRoutePanel.jsx';
 import VWorldMap from '../components/VWorldMap';
 import { PLACE_REVIEW_ITEMS, PLACE_REVIEW_SUMMARY } from '../components/placeReviewPreviewModel.js';
@@ -12,6 +13,7 @@ import {
   addKakaoPlaceToCourseBasket,
   addPlaceToCourseBasket,
   clearAuth,
+  completeCourse,
   createCourse,
   deleteCourseBasketPlace,
   fetchCourse,
@@ -21,6 +23,7 @@ import {
   fetchFilmingWorks,
   fetchKakaoPlaces,
   fetchMapPlaces,
+  fetchMockCrowdingGrids,
   fetchMyProfile,
   fetchMediaContent,
   fetchMediaContents,
@@ -33,6 +36,7 @@ import {
   getAiGuideErrorPresentation,
   getUser,
   login,
+  replanCourse,
   saveAuth,
   saveUser,
   sendAiGuideMessage,
@@ -76,7 +80,7 @@ import { CongestionBadge, CongestionPointBadge, getMockCongestionAccessibleLabel
 import ScrollOnboarding from '../components/ScrollOnboarding';
 import { useMockCrowdingAtPoint } from '../utils/mockCrowdingStore.js';
 import { getSearchCoordinates, mapKakaoPlaceToMapCard, mapKakaoPlaceToSearchRow } from '../utils/placeSearch';
-import { findNearbyFilmingPlace, uniqueFilmingWorks } from '../utils/filmingProximity.js';
+import { findNearbyFilmingPlace } from '../utils/filmingProximity.js';
 import {
   buildKakaoTaxiHref,
   normalizeRouteCoordinate,
@@ -87,6 +91,7 @@ import {
 import { useRouteComparison } from '../hooks/useRouteComparison.js';
 import { useCoursePreview } from '../hooks/useCoursePreview.js';
 import { useCurrentLocation } from '../hooks/useCurrentLocation.js';
+import { renderAiGuideMarkdown, scrollAiGuideToLatest } from '../utils/aiGuidePresentation.js';
 import {
   createInitialMapHomeInteraction,
   mapHomeInteractionReducer,
@@ -134,6 +139,12 @@ const AI_GUIDE_HISTORY_LIMIT = 12;
 const AI_GUIDE_GREETING = '안녕하세요! 장소, 분위기, 일정에 맞는 여행을 함께 찾아볼게요.';
 const KAKAO_MAP_TARGET_KEY = 'ddemachim:kakao-map-target';
 const ANGUK_STATION_CENTER = Object.freeze([126.9854, 37.5766]);
+const MAP_HOME_DISCOVERY_BOUNDS = Object.freeze({
+  minLat: 37.50,
+  maxLat: 37.62,
+  minLng: 126.90,
+  maxLng: 127.12,
+});
 
 function writeKakaoMapTarget(place) {
   try {
@@ -163,8 +174,23 @@ function SearchIcon() {
 
 const PLACE_TREND_MOCK_FIXTURE = {
   status: 'TRENDING',
+  interestChangePercent: 240,
   updatedAt: '2026-08-13',
 };
+
+function PlaceTrendSummary({ trend }) {
+  const changePercent = trend?.interestChangePercent;
+  if (typeof changePercent === 'number' && Number.isFinite(changePercent) && changePercent > 0) {
+    const multiplier = 1 + (changePercent / 100);
+    const formattedMultiplier = new Intl.NumberFormat('ko-KR', {
+      maximumFractionDigits: multiplier >= 10 ? 0 : 1,
+    }).format(multiplier);
+    return <>이 장소가 요즘 약 <strong className="place-trend-multiplier">{formattedMultiplier}배</strong> 더 주목받고 있어요.</>;
+  }
+  if (trend?.status === 'TRENDING') return <>이 장소가 요즘 더 많은 관심을 받고 있어요.</>;
+  if (trend?.status === 'WATCH') return <>이 장소가 요즘 꾸준히 주목받고 있어요.</>;
+  return <>이 장소의 기본 정보를 확인해보세요.</>;
+}
 
 function readHash() {
   const guardedScene = guardSceneRouteHash(window.location.hash);
@@ -461,8 +487,12 @@ function formatCompactDateRange(startDate, endDate) {
   };
   const start = formatCompact(startDate);
   const end = formatCompact(endDate);
-  if (start && end && start !== end) return `${start}–${end}`;
+  if (start && end && start !== end) return `${start}-${end}`;
   return start || end || null;
+}
+
+function formatEventListTime(value) {
+  return String(value ?? '').trim().replace(/\s*[~–—-]\s*/g, '-');
 }
 
 function eventStatusLabel(event) {
@@ -787,9 +817,9 @@ function PlaceBasketAction({ placeId, basketItems, onAdded, onAuthRequired, onRe
 
   return (
     <div className="place-basket-action">
-      <ActionButton aria-busy={status === 'loading' || undefined} disabled={status === 'loading' || isAdded} onClick={handleAdd}>
+      <CourseActionButton aria-busy={status === 'loading' || undefined} disabled={status === 'loading' || isAdded} onClick={handleAdd}>
         {buttonLabel}
-      </ActionButton>
+      </CourseActionButton>
       {status === 'error' && <span className="place-basket-feedback error" role="alert">코스에 담지 못했어요. 다시 시도해주세요.</span>}
     </div>
   );
@@ -844,7 +874,7 @@ function KakaoPlaceActions({ place, basketItems, onAdded, onAuthRequired, onRefr
   };
 
   const buttonLabel = isAdded
-    ? '코스에 담김'
+    ? '코스에 담았어요'
     : status === 'loading'
       ? '담는 중…'
       : status === 'error'
@@ -854,14 +884,14 @@ function KakaoPlaceActions({ place, basketItems, onAdded, onAuthRequired, onRefr
   return (
     <div className="kakao-place-actions">
       <div className={`kakao-place-action-row${hideMapLink ? ' is-single' : ''}`}>
-        <ActionButton
+        <CourseActionButton
           aria-busy={status === 'loading' || undefined}
           aria-describedby={status === 'error' ? 'kakao-basket-error' : undefined}
           disabled={status === 'loading' || isAdded}
           onClick={handleAdd}
         >
           {buttonLabel}
-        </ActionButton>
+        </CourseActionButton>
         {!hideMapLink && <a className="ui-button secondary kakao-map-link" href={placeUrl} target="_blank" rel="noopener noreferrer">
           <span>카카오맵에서 보기</span>
           <ExternalLink aria-hidden="true" size={17} strokeWidth={2} />
@@ -911,21 +941,23 @@ function StatusBanner({ tone = 'blue', title, copy, action, onAction }) {
   </section>;
 }
 
-function PlaceRow({ place, onClick, action, onAction }) {
+function PlaceRow({ place, onClick, action, onAction, compactSearch = false, hideMeta = false }) {
+  const isKakaoResult = place.externalSource === 'KAKAO';
   const media = place.image === images.myMap
     ? <VWorldMap ariaLabel={`${place.name} 코스 지도`} interactive={false} style={{ width: 64, height: 64, flex: '0 0 auto', borderRadius: 12, overflow: 'hidden' }} />
-    : place.externalSource === 'KAKAO'
-      ? <span className="place-row-map-placeholder" aria-hidden="true"><MapPin size={22} /></span>
+    : isKakaoResult
+      ? null
     : <img src={place.image} alt="" loading="lazy" decoding="async" />;
   const topLabel = place.labels
     ? <div className="place-row-labels"><span>{place.labels.content}</span>{place.labels.category && <span>{place.labels.category}</span>}</div>
     : place.badge && <span className="small-badge">{place.badge}</span>;
-  const topLine = place.showCongestion
-    ? <div className="place-row-congestion-line">{topLabel}<CongestionPointBadge longitude={place.longitude} latitude={place.latitude} className="place-row-congestion-badge" /></div>
+  const topLine = place.showCongestion && !isKakaoResult
+    ? <div className="place-row-congestion-line">{topLabel}<CongestionPointBadge compact={compactSearch} longitude={place.longitude} latitude={place.latitude} className="place-row-congestion-badge" /></div>
     : topLabel;
-  const content = <>{media}<div className="place-row-copy">{topLine}<h3>{place.name}</h3><p>{place.meta}</p></div></>;
-  if (onClick && !action) return <button className="place-row" onClick={onClick} type="button">{content}<ChevronRight className="row-next" aria-hidden="true" size={20} /></button>;
-  return <article className="place-row">{content}{action && <button className="row-action" onClick={onAction} type="button">{action}</button>}</article>;
+  const content = <>{media}<div className="place-row-copy">{topLine}<h3>{place.name}</h3>{!hideMeta && <p>{place.meta}</p>}</div></>;
+  const className = `place-row${isKakaoResult ? ' is-kakao-result' : ''}${compactSearch ? ' is-compact-search-result' : ''}`;
+  if (onClick && !action) return <button className={className} onClick={onClick} type="button">{content}<ChevronRight className="row-next" aria-hidden="true" size={20} /></button>;
+  return <article className={className}>{content}{action && <button className="row-action" onClick={onAction} type="button">{action}</button>}</article>;
 }
 
 function EventImage({ event, className = '' }) {
@@ -943,7 +975,7 @@ function EventImage({ event, className = '' }) {
 
 function EventListItem({ event, onClick }) {
   const dateLabel = formatCompactDateRange(event.startDate, event.endDate) || '일정 정보 없음';
-  const timeLabel = String(event.eventTime ?? '').trim();
+  const timeLabel = formatEventListTime(event.eventTime);
   const venueLabel = eventVenueLabel(event);
   const decisionLabels = eventDecisionLabels(event);
   const congestion = useMockCrowdingAtPoint(event.longitude, event.latitude);
@@ -952,10 +984,11 @@ function EventListItem({ event, onClick }) {
 
   return (
     <button className="event-list-item" type="button" onClick={onClick} aria-label={`${accessibleLabel} 상세 보기`}>
+      <span className="event-list-media"><EventImage event={event} /></span>
       <span className="event-list-copy">
         <span className="event-list-topline">
           <span className={`event-status-label event-status-${currentEventState(event) === '진행 중' ? 'active' : currentEventState(event) === '종료' ? 'ended' : 'upcoming'}`}>{eventStatusLabel(event)}</span>
-          <CongestionBadge congestion={congestion} />
+          <CongestionBadge congestion={congestion} compact />
         </span>
         <strong className="event-list-title">{event.name}</strong>
         <span className="event-list-schedule">
@@ -965,7 +998,7 @@ function EventListItem({ event, onClick }) {
         <span className="event-list-venue"><MapPin aria-hidden="true" size={15} strokeWidth={1.9} /><span>{venueLabel}</span></span>
         {decisionLabels.length > 0 && <span className="event-decision-labels">{decisionLabels.map((label) => <span key={label}>{label}</span>)}</span>}
       </span>
-      <span className="event-list-media"><EventImage event={event} /></span>
+      <ChevronRight className="event-list-next" aria-hidden="true" size={18} strokeWidth={2} />
     </button>
   );
 }
@@ -1240,7 +1273,15 @@ function normalizeMapTags(tags) {
 }
 
 function MapHome({ go, basketState, onBasketAdded, onBasketRefresh, onAuthRequired }) {
-  const [selectedPlace, setSelectedPlace] = useState(consumeKakaoMapTarget);
+  const initialSelectionRef = useRef(null);
+  if (!initialSelectionRef.current) {
+    const kakaoPlace = consumeKakaoMapTarget();
+    initialSelectionRef.current = kakaoPlace
+      ? { place: kakaoPlace, isSheetOpen: true }
+      : { place: null, isSheetOpen: false };
+  }
+  const [selectedPlace, setSelectedPlace] = useState(initialSelectionRef.current.place);
+  const [isPlaceSheetOpen, setIsPlaceSheetOpen] = useState(initialSelectionRef.current.isSheetOpen);
   const [isInlineSearchOpen, setIsInlineSearchOpen] = useState(false);
   const inlineSearchInputRef = useRef(null);
   const inlineSearch = usePlaceSearch({ includeMedia: false });
@@ -1251,6 +1292,7 @@ function MapHome({ go, basketState, onBasketAdded, onBasketRefresh, onAuthRequir
   });
   const activeRouteMode = routeModeSelection.activeMode;
   const [activeMapFilterKeys, setActiveMapFilterKeys] = useState([]);
+  const reduceMotion = useReducedMotion();
   const [activeEvents, setActiveEvents] = useState([]);
   const [eventStatus, setEventStatus] = useState('loading');
   const [loadedMapFilterKey, setLoadedMapFilterKey] = useState(null);
@@ -1338,21 +1380,40 @@ function MapHome({ go, basketState, onBasketAdded, onBasketRefresh, onAuthRequir
         image: images.mapPlace,
       }
     : selectedPlace
-      ? placeToCardProps({ ...selectedPlace, imageUrl: selectedPlace.imageUrl || images.mapPlace })
+      ? {
+          ...placeToCardProps({ ...selectedPlace, imageUrl: selectedPlace.imageUrl || images.mapPlace }),
+          showCongestion: true,
+        }
       : null;
+  const selectedPlaceBasketId = selectedPlace?.externalSource === 'EVENT'
+    ? selectedPlace.placeId
+    : selectedPlace?.id;
+  const eventVenueBasketPlace = selectedPlace?.externalSource === 'EVENT' && !selectedPlaceBasketId
+    ? {
+        providerPlaceId: String(selectedPlace.eventId ?? selectedPlace.id).replace(/^event:/, ''),
+        name: selectedPlace.name,
+        categoryName: '전시·행사',
+        categoryGroupCode: 'EVENT',
+        roadAddress: selectedPlace.roadAddress,
+        longitude: selectedPlace.longitude,
+        latitude: selectedPlace.latitude,
+      }
+    : null;
   const selectedPlaceDetail = selectedPlace?.externalSource === 'EVENT'
     ? { screen: 'event-detail', id: selectedPlace.eventId ?? selectedPlace.id }
-    : selectedPlace?.externalSource === 'KAKAO' || !selectedPlace
+    : selectedPlace?.externalSource === 'KAKAO' || !selectedPlace || !selectedPlaceBasketId
       ? null
-      : { screen: 'place', id: selectedPlace.id };
+      : { screen: 'place', id: selectedPlaceBasketId };
   const selectMapFilter = (option) => {
     setActiveMapFilterKeys((current) => toggleMapFilterSelection(current, option.key));
     setSelectedPlace(null);
+    setIsPlaceSheetOpen(false);
     setIsRouteRequested(false);
     setLoadedMapFilterKey(null);
   };
   const selectPlace = (place) => {
     setSelectedPlace(place);
+    setIsPlaceSheetOpen(true);
     setIsRouteRequested(false);
     dispatchRouteModeSelection({ type: 'PLACE_CHANGED' });
     dispatchMapHomeInteraction({ type: 'PLACE_SELECTED' });
@@ -1373,9 +1434,12 @@ function MapHome({ go, basketState, onBasketAdded, onBasketRefresh, onAuthRequir
     closeInlineSearch();
   };
   const openInlineKakaoPlaceOnMap = (place) => {
-    writeKakaoMapTarget(place);
+    selectPlace(place);
     closeInlineSearch();
-    go('map');
+  };
+  const openInlinePlaceOnMap = (place) => {
+    selectPlace(place);
+    closeInlineSearch();
   };
   const handleLocate = useCallback(() => locate().then((nextLocation) => {
     if (!nextLocation) return null;
@@ -1417,23 +1481,31 @@ function MapHome({ go, basketState, onBasketAdded, onBasketRefresh, onAuthRequir
           center: selectedPlace ? [selectedPlace.longitude, selectedPlace.latitude] : ANGUK_STATION_CENTER,
           zoom: selectedPlace ? 17 : 15,
           loadPlacesInBounds: async (bounds) => {
-            const groups = await Promise.all(activeMapFilters.map(async (filter) => {
+            const loadItemsForBounds = async (targetBounds) => {
+              const groups = await Promise.all(activeMapFilters.map(async (filter) => {
               const placesInBounds = filter.key === 'HOT'
-                ? (await fetchPlaceTrends({ limit: 50 }))
-                    .filter((place) => isInsideMapBounds(place, bounds))
+                ? (await fetchPlaceTrends({ limit: Math.min(targetBounds.limit ?? 50, 50) }))
+                    .filter((place) => isInsideMapBounds(place, targetBounds))
                     .map((place) => ({ ...place, id: place.placeId ?? place.id }))
                 : await fetchMapPlaces({
-                    ...bounds,
+                    ...targetBounds,
+                    limit: targetBounds.limit,
                     ...mapFilterApiParams(filter),
                   });
               const eventMarkers = mapEventsForFilter(activeEvents, filter.key)
-                .filter((event) => isInsideMapBounds(event, bounds))
+                .filter((event) => isInsideMapBounds(event, targetBounds))
                 .map(eventToMapMarker);
               return tagMapItemsForFilter([...placesInBounds, ...eventMarkers], filter.key);
-            }));
+              }));
+              return groups.flat();
+            };
+            const itemsInViewport = await loadItemsForBounds(bounds);
+            const items = itemsInViewport.length || !activeMapFilters.length
+              ? itemsInViewport
+              : await loadItemsForBounds({ ...MAP_HOME_DISCOVERY_BOUNDS, limit: bounds.limit });
             const visibleItems = [];
             const visibleItemKeys = new Set();
-            groups.flat().forEach((item) => {
+            items.forEach((item) => {
               const itemKey = `${item.externalSource || 'INTERNAL'}:${item.id}`;
               if (visibleItemKeys.has(itemKey)) return;
               visibleItemKeys.add(itemKey);
@@ -1445,7 +1517,15 @@ function MapHome({ go, basketState, onBasketAdded, onBasketRefresh, onAuthRequir
             }
             return visibleItems;
           },
+          // The marker ring uses the same scored grid as the map layer so its
+          // category icon and current congestion remain visually distinct.
+          loadCongestionInBounds: fetchMockCrowdingGrids,
+          showCongestionAreas: false,
+          fitPlaceMarkers: true,
+          placeLimit: 180,
           placeMarkerFilterKey: activeMapFilterKey,
+          selectedPlaceKey: selectedPlace ? `${selectedPlace.externalSource || 'INTERNAL'}:${selectedPlace.id}` : '',
+          focusedPlaceKey: selectedPlace ? `${selectedPlace.externalSource || 'INTERNAL'}:${selectedPlace.id}` : '',
           placeRequestKey: `${activeMapFilterKey}:${activeEvents.length}:${routeSelectionKey}`,
           routeLegs: selectedRoute?.status === 'AVAILABLE' ? selectedRoute.legs : [],
           routeMode: activeRouteMode,
@@ -1454,7 +1534,12 @@ function MapHome({ go, basketState, onBasketAdded, onBasketRefresh, onAuthRequir
             ? [[location.longitude, location.latitude], [routeDestination.longitude, routeDestination.latitude]]
             : [],
           userLocation: location ? [location.longitude, location.latitude] : null,
-          onMapClick: () => dispatchMapHomeInteraction({ type: 'MAP_FOCUSED' }),
+          onMapClick: () => {
+            if (isInlineSearchOpen) closeInlineSearch();
+            setIsPlaceSheetOpen(false);
+            setIsRouteRequested(false);
+            dispatchMapHomeInteraction({ type: 'MAP_FOCUSED' });
+          },
           onPlacesChange: (places) => {
             setVisibleMapItemCount(places.length);
             setLoadedMapFilterKey(activeMapFilterKey);
@@ -1494,9 +1579,6 @@ function MapHome({ go, basketState, onBasketAdded, onBasketRefresh, onAuthRequir
                       inputRef={inlineSearchInputRef}
                       placeholder="장소·지역·테마 검색"
                     />
-                    <button className="map-inline-search-close" type="button" aria-label="지도 검색 닫기" onClick={closeInlineSearch}>
-                      <X aria-hidden="true" size={18} strokeWidth={2.2} />
-                    </button>
                   </div>
                   <MapInlineSearchPanel
                     query={inlineSearch.query}
@@ -1506,7 +1588,7 @@ function MapHome({ go, basketState, onBasketAdded, onBasketRefresh, onAuthRequir
                     placeResults={inlineSearch.placeResults}
                     kakaoResults={inlineSearch.kakaoResults}
                     kakaoSearchUnavailable={inlineSearch.kakaoSearchUnavailable}
-                    onInternalPlaceSelect={(place) => go('place', place.id)}
+                    onInternalPlaceSelect={openInlinePlaceOnMap}
                     onKakaoPlaceSelect={openInlineKakaoPlaceOnMap}
                     onRetry={submitInlineSearch}
                   />
@@ -1571,6 +1653,17 @@ function MapHome({ go, basketState, onBasketAdded, onBasketRefresh, onAuthRequir
                 </div>
               )}
             </motion.div>}
+        {!selectedPlace && !isInlineSearchOpen && (
+          <aside
+            className="map-congestion-legend"
+            aria-label="혼잡도 색상 안내: 초록은 여유, 주황은 보통, 빨강은 붐빔"
+          >
+            <strong>혼잡도</strong>
+            <span><i className="is-relaxed" aria-hidden="true" />여유</span>
+            <span><i className="is-moderate" aria-hidden="true" />보통</span>
+            <span><i className="is-crowded" aria-hidden="true" />붐빔</span>
+          </aside>
+        )}
         {(activeFilterHasError || activeFilterEmpty) && (
           <p className="map-filter-status" role="status">
             {activeFilterHasError
@@ -1589,17 +1682,17 @@ function MapHome({ go, basketState, onBasketAdded, onBasketRefresh, onAuthRequir
         >
           <LocateFixed aria-hidden="true" size={20} strokeWidth={2.2} />
         </button>
-        {selectedPlace && !isInlineSearchOpen && <motion.section className={`bottom-sheet map-nearby-sheet motion-depth-sheet${isRouteRequested ? ' has-selected-route' : ''}`} initial={{ opacity: 0, y: 42 }} animate={{ opacity: 1, y: 0 }} transition={{ opacity: { duration: 0.28 }, y: { type: 'spring', stiffness: 420, damping: 38 } }}>
+        <AnimatePresence initial={false}>
+          {selectedPlace && isPlaceSheetOpen && !isInlineSearchOpen && <motion.section key={`${selectedPlace.externalSource || 'INTERNAL'}:${selectedPlace.id}`} className={`bottom-sheet map-nearby-sheet motion-depth-sheet${isRouteRequested ? ' has-selected-route' : ''}`} initial={{ opacity: 0, transform: 'translateY(42px)' }} animate={{ opacity: 1, transform: 'translateY(0)' }} exit={reduceMotion ? { opacity: 0 } : { opacity: 0, transform: 'translateY(100%)' }} transition={{ duration: 0.22, ease: [0.23, 1, 0.32, 1] }}>
           <div className="map-sheet-content">
             <PlaceRow place={selectedPlaceCard} onClick={selectedPlaceDetail ? () => go(selectedPlaceDetail.screen, selectedPlaceDetail.id) : undefined} />
             {!isRouteRequested && <section className="map-place-choice" aria-label="선택한 장소 작업">
-              <h2>이 장소에서 무엇을 할까요?</h2>
               <div className="map-place-choice-actions">
                 {selectedPlace.externalSource === 'KAKAO'
                   ? <KakaoPlaceActions place={selectedPlace} basketItems={basketState?.items} onAdded={onBasketAdded} onAuthRequired={onAuthRequired} onRefresh={onBasketRefresh} hideMapLink />
-                  : selectedPlace.externalSource === 'EVENT'
-                    ? <ActionButton onClick={() => go('event-detail', selectedPlace.eventId ?? selectedPlace.id)}>행사 상세 보기</ActionButton>
-                    : <PlaceBasketAction placeId={selectedPlace.id} basketItems={basketState?.items} onAdded={onBasketAdded} onAuthRequired={onAuthRequired} onRefresh={onBasketRefresh} />}
+                  : selectedPlaceBasketId
+                    ? <PlaceBasketAction placeId={selectedPlaceBasketId} basketItems={basketState?.items} onAdded={onBasketAdded} onAuthRequired={onAuthRequired} onRefresh={onBasketRefresh} />
+                    : <KakaoPlaceActions place={eventVenueBasketPlace} basketItems={basketState?.items} onAdded={onBasketAdded} onAuthRequired={onAuthRequired} onRefresh={onBasketRefresh} hideMapLink />}
                 <ActionButton tone="secondary" onClick={() => setIsRouteRequested(true)}>현재 위치에서 길찾기</ActionButton>
               </div>
             </section>}
@@ -1621,7 +1714,8 @@ function MapHome({ go, basketState, onBasketAdded, onBasketRefresh, onAuthRequir
                   taxiHref={activeRouteMode === 'TAXI' ? buildKakaoTaxiHref(routeDestination) : null}
                 /></>}
           </div>
-        </motion.section>}
+          </motion.section>}
+        </AnimatePresence>
       </MapStage>
       <BottomNav active="map" onNavigate={(tab) => go(rootRoutes[tab])} />
     </section>
@@ -1800,19 +1894,51 @@ function EmptySearch({ query, onClear }) {
 
 const WEEKDAY_LABEL = ['월', '화', '수', '목', '금', '토', '일'];
 
+function formatOperatingTime(value) {
+  if (typeof value !== 'string') return '?';
+  const matched = value.match(/^(\d{1,2}:\d{2})/);
+  return matched ? matched[1] : value;
+}
+
 function formatOperatingHours(hours) {
   if (!hours || hours.length === 0) return null;
-  return hours
+  const entries = hours
     .slice()
     .sort((a, b) => a.dayOfWeek - b.dayOfWeek)
-    .map((h) => `${WEEKDAY_LABEL[h.dayOfWeek]} ${h.closed ? '휴무' : `${h.openTime ?? '?'}-${h.closeTime ?? '?'}`}`)
+    .map((h) => ({
+      day: Number(h.dayOfWeek),
+      schedule: h.closed ? '휴무' : `${formatOperatingTime(h.openTime)}-${formatOperatingTime(h.closeTime)}`,
+    }))
+    .filter((entry) => Number.isInteger(entry.day) && WEEKDAY_LABEL[entry.day]);
+  if (!entries.length) return null;
+
+  const groups = [];
+  for (const entry of entries) {
+    const previous = groups.at(-1);
+    if (previous && previous.schedule === entry.schedule && previous.endDay + 1 === entry.day) {
+      previous.endDay = entry.day;
+    } else {
+      groups.push({ startDay: entry.day, endDay: entry.day, schedule: entry.schedule });
+    }
+  }
+  return groups
+    .map(({ startDay, endDay, schedule }) => `${WEEKDAY_LABEL[startDay]}${startDay === endDay ? '' : `-${WEEKDAY_LABEL[endDay]}`} ${schedule}`)
     .join(' · ');
 }
 
 function filmingMediaLabel(mediaContent) {
   if (!mediaContent) return '작품 정보 확인 중';
-  const mediaType = mediaContent.mediaType === 'movie' ? '영화' : '드라마';
-  return [mediaType, mediaContent.releaseDate].filter(Boolean).join(' · ');
+  const mediaType = mediaContent.mediaType === 'movie'
+    ? '영화'
+    : mediaContent.mediaType === 'variety'
+      ? '예능'
+      : '드라마';
+  return [mediaType, formatReleaseYear(mediaContent.releaseDate)].filter(Boolean).join(' · ');
+}
+
+function supportsSceneReenactment(filmingLocation) {
+  const contentType = String(filmingLocation?.contentType ?? filmingLocation?.mediaContent?.mediaType ?? '').trim().toUpperCase();
+  return contentType === 'DRAMA' || contentType === 'MOVIE';
 }
 
 function FilmingSceneSection({ filmingLocations, go, withHeading = true }) {
@@ -1823,12 +1949,19 @@ function FilmingSceneSection({ filmingLocations, go, withHeading = true }) {
         {filmingLocations.map((item) => {
           const title = item.mediaContent?.title || '작품 정보 확인 중';
           const description = item.sceneDescription || '장면 설명을 준비 중이에요.';
+          const sceneImage = tmdbPosterUrl(item.sceneImageUrl || item.imageUrl || item.mediaContent?.posterPath);
           return (
             <article className="place-filming-scene-card" key={item.id}>
-              <span>{filmingMediaLabel(item.mediaContent)}</span>
-              <strong>{title}</strong>
-              <p>{description}</p>
-              <button type="button" onClick={() => go('scene-detail', item.id)}>이 장면으로 촬영하기 <span aria-hidden="true">›</span></button>
+              <div className="place-filming-scene-media">
+                {sceneImage && <img src={sceneImage} alt={`${title} 장면 참고`} loading="lazy" decoding="async" onError={(event) => { event.currentTarget.hidden = true; event.currentTarget.nextElementSibling.hidden = false; }} />}
+                <span className="place-filming-scene-media-fallback" hidden={Boolean(sceneImage)} aria-hidden="true"><Clapperboard size={25} strokeWidth={1.7} /><small>장면 이미지 준비 중</small></span>
+              </div>
+              <div className="place-filming-scene-copy">
+                <strong>{title}</strong>
+                <span>{filmingMediaLabel(item.mediaContent)}</span>
+                <p>{description}</p>
+                {supportsSceneReenactment(item) && <button type="button" onClick={() => go('scene-detail', item.id)}><Camera aria-hidden="true" size={17} strokeWidth={1.9} />이 장면 따라 찍기 <ChevronRight aria-hidden="true" size={17} strokeWidth={2} /></button>}
+              </div>
             </article>
           );
         })}
@@ -1877,19 +2010,29 @@ function formatMenuPrice(price) {
   return Number.isFinite(price) ? `${price.toLocaleString('ko-KR')}원` : '가격 정보 없음';
 }
 
-function PlaceInfoTab({ place, hoursLabel, trend }) {
+function PlaceInfoTab({ place, hoursLabel, userLocation }) {
   const address = place.roadAddress || place.lotAddress || '주소 정보 없음';
+  const placeMap = [{
+    id: place.id,
+    name: place.name,
+    latitude: place.latitude,
+    longitude: place.longitude,
+  }];
+  const hasMap = Number.isFinite(Number(place.latitude)) && Number.isFinite(Number(place.longitude));
 
   return (
     <div className="place-info-tab">
       <div className="place-info-list">
-        <div><Clock3 aria-hidden="true" size={18} /><span><small>운영시간</small><strong>{hoursLabel}</strong></span></div>
+        {hoursLabel && <div><Clock3 aria-hidden="true" size={18} /><span><small>운영시간</small><strong>{hoursLabel}</strong></span></div>}
         <div><MapPin aria-hidden="true" size={18} /><span><small>주소</small><strong>{address}</strong></span></div>
         {place.phone && <div><Phone aria-hidden="true" size={18} /><span><small>문의</small><strong>{place.phone}</strong></span></div>}
         {place.website && <a href={place.website} target="_blank" rel="noreferrer"><ExternalLink aria-hidden="true" size={18} /><span><small>웹사이트</small><strong>공식 정보 확인하기</strong></span></a>}
       </div>
-      <PlaceTrendReason trend={trend} />
       <PlaceDescriptionSection description={place.description} />
+      {hasMap && <section className="event-location-section place-location-section">
+        <div className="event-location-heading"><div><h2>장소 위치</h2><p>{address}</p></div></div>
+        <DetailMapSection title="" ariaLabel={`${place.name} 장소 지도`} places={placeMap} userLocation={userLocation} />
+      </section>}
     </div>
   );
 }
@@ -1913,7 +2056,7 @@ function PlaceMenuTab({ menus }) {
 function PlaceFilmingTab({ filmingLocations, go }) {
   return (
     <section className="place-filming-tab" aria-label="촬영지 정보">
-      <header><div><h2>이곳이 나온 작품</h2><p>어떤 작품의 어느 장면에 등장했는지 확인해보세요.</p></div><Clapperboard aria-hidden="true" size={22} /></header>
+      <header><div><h2>이곳에서 촬영된 장면</h2><p>작품 속 장면을 보고 같은 구도로 촬영해보세요.</p></div></header>
       <FilmingSceneSection filmingLocations={filmingLocations} go={go} withHeading={false} />
     </section>
   );
@@ -1926,6 +2069,7 @@ function PlaceDetail({ go, placeId, basketState, onBasketAdded, onBasketRefresh,
   const [activeTab, setActiveTab] = useState('info');
   const [status, setStatus] = useState(placeId ? 'loading' : 'mock');
   const reduceMotion = useReducedMotion();
+  const userLocation = useUserLocation();
 
   useEffect(() => {
     if (!placeId) {
@@ -1984,7 +2128,7 @@ function PlaceDetail({ go, placeId, basketState, onBasketAdded, onBasketRefresh,
             <h1>도토리가든</h1>
             <p className="detail-meta">매일 10:00-21:00</p>
             <div className="chip-row"><Chip active>지금 여유</Chip><Chip>도보 8분</Chip></div>
-            <PlaceTrendReason trend={PLACE_TREND_MOCK_FIXTURE} />
+            <p className="place-detail-summary"><PlaceTrendSummary trend={PLACE_TREND_MOCK_FIXTURE} /></p>
             <ScreenSection title="방문자 후기"><PlaceReviewPreview onViewAll={() => go('reviews')} summary={PLACE_REVIEW_SUMMARY} reviews={PLACE_REVIEW_ITEMS} /></ScreenSection>
           </DetailContentSheet>
         </main>
@@ -2002,17 +2146,17 @@ function PlaceDetail({ go, placeId, basketState, onBasketAdded, onBasketRefresh,
   }
 
   const heroImage = place.imageUrl || images.detail;
-  const hoursLabel = formatOperatingHours(place.operatingHours) || place.operatingHoursRaw || '운영시간 정보 없음';
+  const hoursLabel = formatOperatingHours(place.operatingHours) || place.operatingHoursRaw || null;
   const menus = Array.isArray(place.menus) ? place.menus : [];
   const tabs = [
     { id: 'info', label: '정보' },
     ...(menus.length ? [{ id: 'menu', label: '메뉴', count: menus.length }] : []),
-    { id: 'review', label: '후기', count: PLACE_REVIEW_SUMMARY.reviewCount },
     ...(filmingLocations.length ? [{ id: 'filming', label: '촬영지', count: filmingLocations.length }] : []),
+    { id: 'review', label: '후기', count: PLACE_REVIEW_SUMMARY.reviewCount },
   ];
 
   const tabContent = {
-    info: <PlaceInfoTab place={place} hoursLabel={hoursLabel} trend={placeTrend ?? place.trend} />,
+    info: <PlaceInfoTab place={place} hoursLabel={hoursLabel} userLocation={userLocation} />,
     menu: <PlaceMenuTab menus={menus} />,
     review: <PlaceReviewPreview onViewAll={() => go('reviews')} summary={PLACE_REVIEW_SUMMARY} reviews={PLACE_REVIEW_ITEMS} />,
     filming: <PlaceFilmingTab filmingLocations={filmingLocations} go={go} />,
@@ -2025,7 +2169,7 @@ function PlaceDetail({ go, placeId, basketState, onBasketAdded, onBasketRefresh,
         <DetailContentSheet className="detail-content detail-content-v3 place-detail-content">
           <p className="eyebrow place-detail-eyebrow"><span className="place-detail-eyebrow-text">{[place.district, place.categoryLabel].filter(Boolean).join(' · ')}</span><CongestionPointBadge longitude={place.longitude} latitude={place.latitude} /></p>
           <h1>{place.name}</h1>
-          <p className="place-detail-summary">{place.description || `${place.categoryLabel || '장소'}의 상세 정보를 확인해보세요.`}</p>
+          <p className="place-detail-summary"><PlaceTrendSummary trend={placeTrend ?? place.trend} /></p>
           <DetailTabs tabs={tabs} activeTab={activeTab} onChange={setActiveTab} ariaLabel="장소 상세 정보" idPrefix="place-tab" />
           <motion.div
             animate={{ opacity: 1, y: 0 }}
@@ -2050,6 +2194,7 @@ function EventDetail({ go, eventId, basketState, onBasketAdded, onBasketRefresh,
   const [event, setEvent] = useState(null);
   const [status, setStatus] = useState(eventId ? 'loading' : 'error');
   const [retryAttempt, setRetryAttempt] = useState(0);
+  const [activeTab, setActiveTab] = useState('info');
   const userLocation = useUserLocation();
 
   useEffect(() => {
@@ -2060,6 +2205,7 @@ function EventDetail({ go, eventId, basketState, onBasketAdded, onBasketRefresh,
     let cancelled = false;
     const requestController = new AbortController();
     setStatus('loading');
+    setActiveTab('info');
     setEvent(null);
     fetchEvent(eventId, { signal: requestController.signal })
       .then((result) => {
@@ -2098,88 +2244,64 @@ function EventDetail({ go, eventId, basketState, onBasketAdded, onBasketRefresh,
     longitude: displayEvent.longitude,
   }];
   const officialUrl = displayEvent.detailUrl || displayEvent.homepageUrl || null;
-  const primaryAction = officialUrl
-    ? { label: '공식 정보 보기', icon: ExternalLink, onClick: () => openExternal(officialUrl) }
-    : displayEvent.placeId
-      ? { label: '장소 정보 보기', icon: MapPin, onClick: () => go('place', displayEvent.placeId) }
-      : null;
+  const contactNumber = String(displayEvent.inquiry ?? '').match(/[+\d][\d\s()-]{6,}\d/)?.[0]?.replace(/[^\d+]/g, '') ?? null;
+  const viewingAudience = displayEvent.useTarget || '누구나 관람 가능';
   const openExternal = (url) => {
     if (!url) return;
     window.open(url, '_blank', 'noopener,noreferrer');
   };
+  const tabs = [
+    { id: 'info', label: '기본 정보' },
+    { id: 'review', label: '후기', count: PLACE_REVIEW_SUMMARY.reviewCount },
+  ];
 
   return (
-    <section className={`phone standard-screen event-detail-screen ${displayEvent.placeId || primaryAction ? 'has-sticky-action' : ''}`}>
+    <section className="phone standard-screen event-detail-screen has-sticky-action">
       <main className="page-scroll">
         <div className={`detail-hero event-detail-hero ${displayEvent.mainImage ? '' : 'is-placeholder'}`}>
           <EventImage event={displayEvent} className="event-detail-media" />
           <DetailHeroControls onBack={() => go('popups')} />
+          {officialUrl && <button className="event-official-link" type="button" onClick={() => openExternal(officialUrl)}><ExternalLink aria-hidden="true" size={13} strokeWidth={2} />공식 정보</button>}
         </div>
         <div className="detail-content detail-content-v3 event-detail-content">
           <div className="event-status-row">
-            <Chip active>{stateLabel}</Chip>
+            <span className="event-state-badge">{stateLabel}</span>
             {displayEvent.eventType && <span className="event-type-label">{displayEvent.eventType}</span>}
             <CongestionPointBadge longitude={displayEvent.longitude} latitude={displayEvent.latitude} />
           </div>
           <h1>{displayEvent.name}</h1>
-          <div className="event-visit-summary" aria-label="방문 정보">
-            <div><CalendarDays aria-hidden="true" size={19} strokeWidth={1.8} /><span><small>일정</small><strong>{dateLabel}</strong></span></div>
-            <div><Clock3 aria-hidden="true" size={19} strokeWidth={1.8} /><span><small>시간</small><strong>{displayEvent.eventTime || '시간 정보 없음'}</strong></span></div>
-            <div><MapPin aria-hidden="true" size={19} strokeWidth={1.8} /><span><small>장소</small><strong>{venueLabel}</strong></span></div>
-            <div><CircleDollarSign aria-hidden="true" size={19} strokeWidth={1.8} /><span><small>요금</small><strong>{displayEvent.useFee || '요금 정보 확인 중'}</strong></span></div>
+          <p className="event-detail-venue">{venueLabel}</p>
+          <DetailTabs tabs={tabs} activeTab={activeTab} onChange={setActiveTab} ariaLabel="행사 상세 정보" idPrefix="event-tab" />
+          <div className="event-detail-tab-panel" id={`event-tab-panel-${activeTab}`} role="tabpanel" aria-labelledby={`event-tab-${activeTab}`}>
+            {activeTab === 'info' ? <>
+              <div className="event-visit-summary" aria-label="방문 정보">
+                <div><CalendarDays aria-hidden="true" size={19} strokeWidth={1.8} /><span><small>일정</small><strong>{dateLabel}</strong></span></div>
+                <div><Clock3 aria-hidden="true" size={19} strokeWidth={1.8} /><span><small>시간</small><strong>{displayEvent.eventTime || '시간 정보 없음'}</strong></span></div>
+                <div><MapPin aria-hidden="true" size={19} strokeWidth={1.8} /><span><small>장소</small><strong>{venueLabel}</strong></span></div>
+                <div><CircleDollarSign aria-hidden="true" size={19} strokeWidth={1.8} /><span><small>요금</small><strong>{displayEvent.useFee || '요금 정보 확인 중'}</strong></span></div>
+              </div>
+              <section className="event-detail-section event-viewing-guide">
+                <h2>관람 안내</h2>
+                <div className="event-guide-row">
+                  <span className="event-guide-icon"><UserRound aria-hidden="true" size={18} strokeWidth={1.8} /></span>
+                  <span><strong>{viewingAudience}</strong><small>별도 예약 없이 방문할 수 있어요.</small></span>
+                </div>
+              </section>
+              {(displayEvent.orgName || displayEvent.inquiry) && <section className="event-detail-section event-contact-section"><h2>주최·문의</h2><div className="event-detail-list">{displayEvent.orgName && <p><span>주최</span><b>{displayEvent.orgName}</b></p>}{displayEvent.inquiry && <p><span>문의</span>{contactNumber ? <a href={`tel:${contactNumber}`}><b>{displayEvent.inquiry}</b><em><Phone aria-hidden="true" size={14} strokeWidth={2} />전화하기</em></a> : <b>{displayEvent.inquiry}</b>}</p>}</div></section>}
+              <section className="event-location-section">
+                <div className="event-location-heading"><div><h2>행사 장소</h2><p>{venueLabel}</p></div>{displayEvent.placeId && <button type="button" onClick={() => go('place', displayEvent.placeId)}>장소 보기<ChevronRight aria-hidden="true" size={16} strokeWidth={2} /></button>}</div>
+                <DetailMapSection title="" ariaLabel={`${displayEvent.name} 행사 장소 지도`} places={eventMapPlaces} userLocation={userLocation} />
+              </section>
+            </> : <ScreenSection title="방문자 후기"><PlaceReviewPreview onViewAll={() => go('reviews')} summary={PLACE_REVIEW_SUMMARY} reviews={PLACE_REVIEW_ITEMS} /></ScreenSection>}
           </div>
-          {(displayEvent.useTarget || displayEvent.applyDate) && (
-            <ScreenSection title="참여 정보">
-              <div className="event-detail-list">
-                {displayEvent.useTarget && <p><span>이용 대상</span><b>{displayEvent.useTarget}</b></p>}
-                {displayEvent.applyDate && <p><span>신청일</span><b>{formatKoreanDate(displayEvent.applyDate)}</b></p>}
-              </div>
-            </ScreenSection>
-          )}
-          {displayEvent.placeId && officialUrl && (
-            <ScreenSection title="연결된 장소">
-              <button type="button" className="event-linked-place" onClick={() => go('place', displayEvent.placeId)}>
-                <span><strong>{displayEvent.placeName || venueLabel}</strong><small>장소 상세에서 운영정보와 촬영 장면을 함께 볼 수 있어요.</small></span>
-                <ChevronRight aria-hidden="true" size={18} strokeWidth={2} />
-              </button>
-            </ScreenSection>
-          )}
-          {(displayEvent.orgName || displayEvent.inquiry) && (
-            <ScreenSection title="주최·문의">
-              <div className="event-detail-list">
-                {displayEvent.orgName && <p><span>주최</span><b>{displayEvent.orgName}</b></p>}
-                {displayEvent.inquiry && <p><span>문의</span><b>{displayEvent.inquiry}</b></p>}
-              </div>
-            </ScreenSection>
-          )}
-          <DetailMapSection
-            title="행사 장소 한눈에 보기"
-            meta={venueLabel}
-            ariaLabel={`${displayEvent.name} 행사 장소 지도`}
-            places={eventMapPlaces}
-            userLocation={userLocation}
-          />
         </div>
       </main>
-      {(displayEvent.placeId || primaryAction) && (
-        <div className={`sticky-actions event-actions ${displayEvent.placeId && primaryAction ? 'split' : ''}`}>
-          {displayEvent.placeId && (
-            <PlaceBasketAction
-              placeId={displayEvent.placeId}
-              basketItems={basketState?.items}
-              onAdded={onBasketAdded}
-              onAuthRequired={onAuthRequired}
-              onRefresh={onBasketRefresh}
-            />
-          )}
-          {primaryAction && (
-            <ActionButton tone={displayEvent.placeId ? 'secondary' : 'primary'} onClick={primaryAction.onClick}>
-              {(() => { const Icon = primaryAction.icon; return <Icon aria-hidden="true" size={17} strokeWidth={2} />; })()}
-              {primaryAction.label}
-            </ActionButton>
-          )}
-        </div>
-      )}
+      <div className="sticky-actions event-actions split">
+        {displayEvent.placeId
+          ? <PlaceBasketAction placeId={displayEvent.placeId} basketItems={basketState?.items} onAdded={onBasketAdded} onAuthRequired={onAuthRequired} onRefresh={onBasketRefresh} />
+          : <CourseActionButton onClick={() => go('map')}>코스에 담기</CourseActionButton>}
+        <ActionButton tone="secondary" onClick={() => go('write-review')}>후기 남기기</ActionButton>
+      </div>
     </section>
   );
 }
@@ -2310,11 +2432,11 @@ function MapInlineSearchPanel({ query, searched, isSearching, searchError, place
       <div className="map-inline-search-results">
         {placeResults.length > 0 && <>
           <p className="search-source-label">때마침 장소</p>
-          {placeResults.map((place) => <PlaceRow key={place.id} place={place} onClick={() => onInternalPlaceSelect(place)} />)}
+          {placeResults.map((place) => <PlaceRow compactSearch hideMeta key={place.id} place={place} onClick={() => onInternalPlaceSelect(place)} />)}
         </>}
         {kakaoResults.length > 0 && <>
           <p className="search-source-label">카카오 검색 결과</p>
-          {kakaoResults.map((place) => <PlaceRow key={place.id} place={place} onClick={() => onKakaoPlaceSelect(place)} />)}
+          {kakaoResults.map((place) => <PlaceRow compactSearch hideMeta key={place.id} place={place} onClick={() => onKakaoPlaceSelect(place)} />)}
         </>}
         {kakaoSearchUnavailable && <p className="search-source-status">카카오 장소 검색은 현재 사용할 수 없어요.</p>}
       </div>
@@ -2892,12 +3014,8 @@ function EventsCollection({ go }) {
 
   return (
     <section className="phone standard-screen list-screen collection-screen-v3 event-collection-screen">
-      <BackHeader title="이번 주 행사" onBack={() => go('explore')} />
+      <BackHeader title="행사와 전시" onBack={() => go('explore')} />
       <main className="page-scroll event-collection-scroll" ref={scrollRef} onScroll={handleScroll}>
-        <header className="collection-heading event-collection-heading">
-          <h2>행사와 전시</h2>
-          <small>종로구의 문화행사를 한눈에 확인해보세요.</small>
-        </header>
         <div className="collection-filters event-filter-bar" role="group" aria-label="행사 필터와 정렬">
           {EVENT_COLLECTION_FILTERS.map((item) => (
             <Chip key={item} active={activeFilter === item} current={activeFilter === item} onClick={() => handleFilterChange(item)}>{item}</Chip>
@@ -3076,7 +3194,12 @@ function AiGuide({ go }) {
   const [currentLocation, setCurrentLocation] = useState(null);
   const [previousResponseId, setPreviousResponseId] = useState(null);
   const requestControllerRef = useRef(null);
+  const chatScrollRef = useRef(null);
   const isLoading = status === 'loading';
+
+  useLayoutEffect(() => {
+    scrollAiGuideToLatest(chatScrollRef.current);
+  }, [messages.length, status]);
 
   useEffect(() => {
     if (typeof navigator !== 'undefined' && navigator.geolocation) {
@@ -3113,11 +3236,24 @@ function AiGuide({ go }) {
       if (controller.signal.aborted) return;
       const answer = String(result?.answer ?? '').trim();
       if (!answer) throw new Error('AI 가이드가 답변을 보내지 못했어요.');
+      const recommendedPlaceIds = [...new Set((Array.isArray(result?.recommendedPlaceIds) ? result.recommendedPlaceIds : [])
+        .map(Number)
+        .filter(Number.isSafeInteger)
+        .filter((id) => id > 0))].slice(0, 6);
+      const placeResponses = await Promise.allSettled(
+        recommendedPlaceIds.map((placeId) => fetchPlace(placeId, { signal: controller.signal })),
+      );
+      if (controller.signal.aborted) return;
+      const recommendedPlaces = placeResponses
+        .filter((response) => response.status === 'fulfilled')
+        .map((response) => response.value)
+        .filter((place) => Number.isSafeInteger(Number(place?.id)));
       setPreviousResponseId(result?.responseId || null);
       setMessages((current) => [...current, {
         id: result?.responseId || `ai-guide-assistant-${Date.now()}`,
         role: 'assistant',
         content: answer,
+        recommendedPlaces,
       }]);
       setStatus('idle');
     } catch (requestError) {
@@ -3151,30 +3287,55 @@ function AiGuide({ go }) {
           <h1>어디로 갈지 같이 정해봐요</h1>
           <p className="section-subtitle">취향과 일정에 맞는 장소와 코스를 대화로 추천해드릴게요.</p>
         </header>
-        <div className="ai-guide-chat" role="log" aria-live="polite" aria-label="AI 가이드 대화">
-          {messages.map((message) => (
-            <p className={`ai-guide-message ${message.role === 'user' ? 'user' : 'assistant'}`} key={message.id}>
-              {message.content}
-            </p>
-          ))}
+        <div ref={chatScrollRef} className="ai-guide-chat" role="log" aria-live="polite" aria-label="AI 가이드 대화">
+          {messages.map((message) => {
+            const linkedPlaceIds = new Set();
+            const placeLinkForListItem = (itemText, itemKey) => {
+              if (message.role !== 'assistant') return null;
+              const normalizedItem = String(itemText).replace(/\*\*/g, '').toLocaleLowerCase('ko-KR');
+              const place = message.recommendedPlaces?.find((candidate) => (
+                !linkedPlaceIds.has(candidate.id)
+                && normalizedItem.includes(String(candidate.name ?? '').toLocaleLowerCase('ko-KR'))
+              ));
+              if (!place) return null;
+              linkedPlaceIds.add(place.id);
+              return <div className="ai-guide-place-link" key={`${itemKey}-place-link`}>
+                <PlaceRow place={placeToCardProps(place)} hideMeta onClick={() => go('place', place.id)} />
+              </div>;
+            };
+            const markdown = renderAiGuideMarkdown(message.content, message.id, {
+              renderListItemFooter: placeLinkForListItem,
+            });
+            const unlinkedPlaces = message.recommendedPlaces?.filter((place) => !linkedPlaceIds.has(place.id)) ?? [];
+            return <div className="ai-guide-message-group" key={message.id}>
+              <div className={`ai-guide-message ${message.role === 'user' ? 'user' : 'assistant'}`}>
+                {markdown}
+                {unlinkedPlaces.length > 0 && (
+                  <section className="ai-guide-place-list" aria-label="AI 추천 장소">
+                    {unlinkedPlaces.map((place) => <PlaceRow key={place.id} place={placeToCardProps(place)} hideMeta onClick={() => go('place', place.id)} />)}
+                  </section>
+                )}
+              </div>
+            </div>;
+          })}
           {isLoading && <p className="ai-guide-message assistant ai-guide-loading" aria-label="AI 가이드가 답변을 작성하는 중">답변을 작성하고 있어요…</p>}
+          {error && (
+            <section id="ai-guide-error" className="ai-guide-error" role="alert">
+              <strong>{error.title}</strong>
+              <span>{error.message}</span>
+              {error.technical && <small>{error.technical}</small>}
+              <button
+                type="button"
+                onClick={() => {
+                  setDraft(error.requestMessage || '');
+                  setError('');
+                }}
+              >
+                요청 다시 입력하기
+              </button>
+            </section>
+          )}
         </div>
-        {error && (
-          <section id="ai-guide-error" className="ai-guide-error" role="alert">
-            <strong>{error.title}</strong>
-            <span>{error.message}</span>
-            {error.technical && <small>{error.technical}</small>}
-            <button
-              type="button"
-              onClick={() => {
-                setDraft(error.requestMessage || '');
-                setError('');
-              }}
-            >
-              요청 다시 입력하기
-            </button>
-          </section>
-        )}
       </main>
       <form className="ai-guide-input" onSubmit={handleSubmit}>
         <label className="sr-only" htmlFor="ai-guide-message">AI 가이드에게 보낼 메시지</label>
@@ -3197,11 +3358,11 @@ function AiGuide({ go }) {
   );
 }
 
-function LiveTalk({ go }) {
+function LiveTalk() {
   const [draft, setDraft] = useState('');
   const [messages, setMessages] = useState([{ text: '창덕궁 쪽은 입장 줄이 거의 없어요.', mine: false }, { text: '도토리가든은 지금 바로 들어갔어요!', mine: true }, { text: '북촌 골목은 오후보다 한산해요.', mine: false }]);
   const submit = (event) => { event.preventDefault(); const text = draft.trim(); if (!text) return; setMessages((current) => [...current, { text, mine: true }]); setDraft(''); };
-  return <section className="phone standard-screen live-talk-screen"><BackHeader title="내 주변 지금톡" onBack={() => go('map')} /><main className="page-scroll"><div className="talk-hero"><CrowdMotion /><div><span>안국동 · 실시간</span><h2>지금 근처가 어떤가요?</h2><p>현장에 있는 사람들이 남긴 짧은 소식이에요.</p></div></div><div className="talk-presence"><i />지금 안국동에 6명이 있어요</div><div className="chat-list">{messages.map((message, index) => <p className={`chat-bubble ${message.mine ? 'mine' : 'other'}`} key={`${message.text}-${index}`}>{message.text}</p>)}</div></main><form className="talk-input" onSubmit={submit}><input value={draft} onChange={(event) => setDraft(event.target.value)} placeholder="지금 상황을 남겨보세요" /><button type="submit" aria-label="보내기" disabled={!draft.trim()}><SendHorizontal aria-hidden="true" size={19} strokeWidth={2} /></button></form></section>;
+  return <section className="phone standard-screen live-talk-screen"><main className="page-scroll"><header className="live-talk-heading"><CrowdMotion /><span>안국동 · 실시간</span><h1>내 주변 지금톡</h1><p>현장에 있는 사람들이 남긴 짧은 소식이에요.</p></header><div className="talk-presence"><i />지금 안국동에 6명이 있어요</div><div className="chat-list">{messages.map((message, index) => <p className={`chat-bubble ${message.mine ? 'mine' : 'other'}`} key={`${message.text}-${index}`}>{message.text}</p>)}</div></main><form className="talk-input" onSubmit={submit}><input value={draft} onChange={(event) => setDraft(event.target.value)} placeholder="지금 상황을 남겨보세요" /><button type="submit" aria-label="보내기" disabled={!draft.trim()}><SendHorizontal aria-hidden="true" size={19} strokeWidth={2} /></button></form></section>;
 }
 
 function CoursePlaceOverview({ items = [], className = '' }) {
@@ -3214,6 +3375,12 @@ function CoursePlaceOverview({ items = [], className = '' }) {
     <header><strong>선택한 장소</strong><span>{places.length}곳</span></header>
     <ol>{places.map((place, index) => <li key={place.id ?? `${place.name}-${index}`}><b>{index + 1}</b><span>{place.name}</span></li>)}</ol>
   </section>;
+}
+
+function CourseStopPhoto({ item }) {
+  const imageUrl = typeof item?.imageUrl === 'string' ? item.imageUrl.trim() : '';
+  if (imageUrl) return <img className="course-stop-photo" src={imageUrl} alt="" loading="lazy" />;
+  return <span className="course-stop-photo is-placeholder" aria-hidden="true"><MapPin size={18} strokeWidth={2} /></span>;
 }
 
 function CourseConditions({ go, draft, basketState, onContinue }) {
@@ -3257,6 +3424,12 @@ function CourseConditions({ go, draft, basketState, onContinue }) {
       latitude: current.latitude,
       longitude: current.longitude,
     });
+    setActiveSheet(null);
+  };
+
+  const selectStartPlace = (place) => {
+    setSelectedStart(place);
+    setActiveSheet(null);
   };
 
   const searchStartPlaces = async () => {
@@ -3292,26 +3465,24 @@ function CourseConditions({ go, draft, basketState, onContinue }) {
   return (
     <section className="phone standard-screen course-condition-screen course-condition-sheet-v2">
       <main className="page-scroll">
-        <BackHeader title="코스 만들기" onBack={() => go('map')} />
-        <span className="progress-pill">1 / 3</span>
-        <div className="course-hero">
-          <p>출발 정보</p>
-          <h1>여행의 시작을 정해주세요</h1>
-          <span>출발 위치와 시간을 기준으로 하루 코스를 계산해요.</span>
-        </div>
+        <header className="course-condition-heading">
+          <IconButton className="page-back-button" label="이전" onClick={() => go('map')}>‹</IconButton>
+          <div><h1>코스 만들기 <span>코스 설정 1/3</span></h1>
+          <p>출발 위치와 시간을 정한 뒤 장소별 시간을 설정해요.</p></div>
+        </header>
 
         <CoursePlaceOverview items={basketState?.items} />
 
         <ScreenSection title="어디에서 출발할까요?">
           <button className={`course-summary-row course-summary-location ${selectedStart ? 'is-complete' : ''}`} onClick={() => setActiveSheet('location')} type="button">
             <span className="course-summary-icon"><MapPin aria-hidden="true" size={20} strokeWidth={2} /></span>
-            <span><small>출발 위치</small><strong>{selectedStartLabel}</strong><em>{selectedStartMeta}</em></span>
+            <span>{selectedStart && <small>출발 위치</small>}<strong>{selectedStartLabel}</strong><em>{selectedStart ? selectedStartMeta : '현재 위치 또는 장소 검색'}</em></span>
             <ChevronRight aria-hidden="true" size={19} strokeWidth={2} />
           </button>
         </ScreenSection>
 
         <ScreenSection title="언제 여행할까요?">
-          <div className="course-start-timing" role="group" aria-label="코스 시작 방식">
+          <div className="course-start-timing course-condition-timing-tabs" role="group" aria-label="코스 시작 방식">
             <button aria-pressed={startTiming === 'NOW'} className={startTiming === 'NOW' ? 'selected' : ''} onClick={() => setStartTiming('NOW')} type="button">지금 바로</button>
             <button aria-pressed={startTiming === 'SCHEDULED'} className={startTiming === 'SCHEDULED' ? 'selected' : ''} onClick={() => setStartTiming('SCHEDULED')} type="button">일정 예약</button>
           </div>
@@ -3332,12 +3503,15 @@ function CourseConditions({ go, draft, basketState, onContinue }) {
           </div>}
         </ScreenSection>
 
-        <StatusBanner tone="blue" title="다음에는 장소별 시간을 설정해요" copy="기본 체류시간과 예약 또는 도착 제한 시각을 확인할 수 있어요." />
+        <section className="course-next-step-preview" aria-label="다음 단계 안내">
+          <span>다음 단계</span>
+          <strong>장소별 체류 시간과 예약 시간을 조정해요</strong>
+        </section>
       </main>
 
       <div className="sticky-actions">
-        <ActionButton disabled={!canContinue} onClick={continueToStopSettings}>다음</ActionButton>
-        {!selectedStart && <p className="course-action-hint">출발 위치를 설정하면 다음으로 갈 수 있어요.</p>}
+        <CourseActionButton disabled={!canContinue} onClick={continueToStopSettings}>다음</CourseActionButton>
+        {!selectedStart && <p className="course-action-hint">출발 위치를 먼저 설정해주세요.</p>}
       </div>
 
       {activeSheet && (
@@ -3351,7 +3525,7 @@ function CourseConditions({ go, draft, basketState, onContinue }) {
 
             {activeSheet === 'location' && (
               <div className="course-sheet-body">
-                <div className="course-start-mode" role="group" aria-label="출발 위치 설정 방식">
+                <div className="course-start-mode course-location-mode-tabs" role="group" aria-label="출발 위치 설정 방식">
                   <button aria-pressed={startMode === 'current'} className={startMode === 'current' ? 'selected' : ''} onClick={() => changeStartMode('current')} type="button">
                     <LocateFixed aria-hidden="true" size={17} strokeWidth={2} />현재 위치
                   </button>
@@ -3371,22 +3545,22 @@ function CourseConditions({ go, draft, basketState, onContinue }) {
                   </div>
                 ) : (
                   <div className="course-location-search">
-                    <div className="course-search-input">
-                      <Search aria-hidden="true" size={18} strokeWidth={2} />
-                      <input aria-label="출발 장소 검색" onChange={(event) => setLocationQuery(event.target.value)} onKeyDown={(event) => { if (event.key === 'Enter') { event.preventDefault(); searchStartPlaces(); } }} placeholder="역, 건물, 주소를 검색하세요" type="search" value={locationQuery} />
-                      <button disabled={!locationQuery.trim() || searchStatus === 'loading'} onClick={searchStartPlaces} type="button">{searchStatus === 'loading' ? '검색 중' : '검색'}</button>
-                    </div>
+                    <SearchField
+                      onChange={setLocationQuery}
+                      onSubmit={searchStartPlaces}
+                      placeholder="역, 건물, 주소를 검색하세요"
+                      value={locationQuery}
+                    />
                     {searchStatus === 'error' && <p className="course-field-error" role="alert">장소를 불러오지 못했어요. 다시 검색해주세요.</p>}
                     {searchStatus === 'success' && locationResults.length === 0 && <p className="course-search-empty">검색 결과가 없어요. 다른 검색어를 입력해주세요.</p>}
                     {selectedStart?.type === 'SEARCHED_PLACE' && <div className="course-selected-place"><MapPin aria-hidden="true" size={19} strokeWidth={2} /><span><strong>{selectedStart.name}</strong><small>{selectedStart.address}</small></span><button onClick={() => setSelectedStart(null)} type="button">변경</button></div>}
                     {locationResults.length > 0 && selectedStart?.type !== 'SEARCHED_PLACE' && (
-                      <div className="course-location-results" aria-label="출발 장소 검색 결과">
-                        {locationResults.map((place) => <button key={`${place.name}-${place.latitude}-${place.longitude}`} onClick={() => setSelectedStart(place)} type="button"><MapPin aria-hidden="true" size={18} strokeWidth={2} /><span><strong>{place.name}</strong><small>{place.address}</small></span><i>선택</i></button>)}
+                      <div className="course-start-search-results" aria-label="출발 장소 검색 결과">
+                        {locationResults.map((place) => <PlaceRow key={`${place.name}-${place.latitude}-${place.longitude}`} place={{ ...place, id: `${place.latitude}-${place.longitude}`, externalSource: 'KAKAO', meta: place.address }} onClick={() => selectStartPlace(place)} />)}
                       </div>
                     )}
                   </div>
                 )}
-                <ActionButton disabled={!selectedStart} onClick={() => setActiveSheet(null)}>출발 위치 선택</ActionButton>
               </div>
             )}
 
@@ -3394,7 +3568,7 @@ function CourseConditions({ go, draft, basketState, onContinue }) {
               <div className="course-sheet-body course-picker-sheet">
                 <label htmlFor="course-service-date"><span>여행할 날짜</span><input id="course-service-date" min={initialSchedule.serviceDate} onChange={(event) => setServiceDate(event.target.value)} type="date" value={serviceDate} /></label>
                 <p>선택한 날짜와 출발 시각을 기준으로 일정을 계산해요.</p>
-                <ActionButton disabled={!serviceDate} onClick={() => setActiveSheet(null)}>날짜 선택</ActionButton>
+                <CourseActionButton disabled={!serviceDate} onClick={() => setActiveSheet(null)}>날짜 선택</CourseActionButton>
               </div>
             )}
 
@@ -3409,7 +3583,7 @@ function CourseConditions({ go, draft, basketState, onContinue }) {
                     return <button aria-pressed={desiredStartTime === time} className={desiredStartTime === time ? 'selected' : ''} key={time} onClick={() => setDesiredStartTime(time)} type="button">{formatCourseTimeLabel(time)}</button>;
                   })}
                 </div>
-                <ActionButton disabled={!desiredStartTime} onClick={() => setActiveSheet(null)}>시간 선택</ActionButton>
+                <CourseActionButton disabled={!desiredStartTime} onClick={() => setActiveSheet(null)}>시간 선택</CourseActionButton>
               </div>
             )}
           </section>
@@ -3457,9 +3631,7 @@ function CoursePlaceTimes({ go, basketState, settings = [], onSettingsChange, on
 
   const canContinue = isReady
     && count > 0
-    && count <= 5
     && settings.length === count
-    && settings.every((setting) => !setting.hasArrivalDeadline || Boolean(setting.arrivalDeadline))
     && previewStatus !== 'loading';
 
   const stateContent = status === 'logged-out'
@@ -3475,62 +3647,41 @@ function CoursePlaceTimes({ go, basketState, settings = [], onSettingsChange, on
   return (
     <section className="phone standard-screen course-stop-settings-screen">
       <main className="page-scroll course-stop-settings-scroll">
-        <BackHeader title="코스 만들기" onBack={() => go('course-conditions')} />
-        <span className="progress-pill">2 / 3</span>
-        <div className="course-hero">
-          <p>장소별 시간</p>
-          <h1>각 장소에서 얼마나 머물까요?</h1>
-          <span>기본 체류시간을 바꾸거나 꼭 맞춰야 할 시각을 설정하세요.</span>
-        </div>
+        <header className="course-condition-heading course-stop-settings-heading">
+          <IconButton className="page-back-button" label="이전" onClick={() => go('course-conditions')}>‹</IconButton>
+          <div><h1>코스 만들기 <span>코스 설정 2/3</span></h1><p>장소별 체류시간을 설정해요.</p></div>
+        </header>
 
         <CoursePlaceOverview items={items} />
 
         {stateContent}
 
-        {isReady && count > 5 && <p className="course-field-error course-stop-limit-error" role="alert">코스에는 장소를 최대 5개까지 담을 수 있어요. 장바구니에서 장소 수를 줄여주세요.</p>}
-
         {isReady && count > 0 && (
           <div className="course-stop-settings-list">
-            {items.map((item, index) => {
+            {items.map((item) => {
               const setting = settings.find((candidate) => candidate.basketItemId === item.id);
               if (!setting) return null;
-              const hasActualHours = Boolean(item.operatingHoursRaw?.trim());
               return (
                 <article className="course-stop-setting-card" key={item.id}>
                   <header>
-                    <span className="course-stop-order">{index + 1}</span>
+                    <CourseStopPhoto item={item} />
                     <div>
                       <h2>{item.placeName}</h2>
                       <p>{item.roadAddress || item.lotAddress || '주소 정보 없음'}</p>
                     </div>
                   </header>
 
-                  <div className="course-hours-row">
-                    <span className={hasActualHours ? 'is-real' : ''}>{hasActualHours ? '실제 운영시간' : 'DEMO_DEFAULT'}</span>
-                    <strong>{hasActualHours ? item.operatingHoursRaw : '코스 생성 시 기본시간 적용'}</strong>
-                  </div>
-
                   <div className="course-dwell-setting">
                     <div><span>체류시간</span><small>기본 {setting.defaultDwellMinutes}분</small></div>
                     <div className="course-dwell-stepper" role="group" aria-label={`${item.placeName} 체류시간`}>
                       <button aria-label="체류시간 10분 줄이기" disabled={setting.dwellMinutes <= 10} onClick={() => updateSetting(item.id, { dwellMinutes: setting.dwellMinutes - 10 })} type="button"><Minus aria-hidden="true" size={17} strokeWidth={2} /></button>
-                      <strong>{setting.dwellMinutes}<small>분</small></strong>
+                      <label className="course-dwell-input"><input aria-label={`${item.placeName} 체류시간(분)`} inputMode="numeric" max="1440" min="1" onChange={(event) => {
+                        const value = Number(event.target.value);
+                        if (Number.isInteger(value) && value >= 1 && value <= 1440) updateSetting(item.id, { dwellMinutes: value });
+                      }} type="number" value={setting.dwellMinutes} /><small>분</small></label>
                       <button aria-label="체류시간 10분 늘리기" disabled={setting.dwellMinutes >= 1440} onClick={() => updateSetting(item.id, { dwellMinutes: setting.dwellMinutes + 10 })} type="button"><Plus aria-hidden="true" size={17} strokeWidth={2} /></button>
                     </div>
                   </div>
-
-                  <div className="course-fixed-time-setting">
-                    <div><span>예약·고정 방문시간</span><small>꼭 맞춰야 하는 도착 시각이 있나요?</small></div>
-                    <button aria-checked={setting.hasArrivalDeadline} aria-label={`${item.placeName} 예약 또는 고정 방문시간`} className={setting.hasArrivalDeadline ? 'selected' : ''} onClick={() => updateSetting(item.id, { hasArrivalDeadline: !setting.hasArrivalDeadline })} role="switch" type="button"><i /></button>
-                  </div>
-
-                  {setting.hasArrivalDeadline && (
-                    <div className="course-arrival-deadline">
-                      <label htmlFor={`arrival-deadline-${item.id}`}><Clock3 aria-hidden="true" size={18} strokeWidth={2} /><span>도착해야 하는 시각</span></label>
-                      <input aria-invalid={!setting.arrivalDeadline} id={`arrival-deadline-${item.id}`} onChange={(event) => updateSetting(item.id, { arrivalDeadline: event.target.value })} step="600" type="time" value={setting.arrivalDeadline} />
-                      <p>입력한 시각보다 10분 전에 도착하도록 코스를 계산해요.</p>
-                    </div>
-                  )}
                 </article>
               );
             })}
@@ -3538,8 +3689,7 @@ function CoursePlaceTimes({ go, basketState, settings = [], onSettingsChange, on
         )}
       </main>
       <div className="sticky-actions course-stop-settings-actions">
-        <ActionButton aria-busy={previewStatus === 'loading' || undefined} disabled={!canContinue} onClick={onSubmit}>{previewStatus === 'loading' ? '코스 계산 중' : '빠른 코스 계산하기'}</ActionButton>
-        {isReady && count > 0 && count <= 5 && !canContinue && previewStatus !== 'loading' && <p className="course-action-hint">켜둔 고정 방문시간을 모두 입력해주세요.</p>}
+        <CourseActionButton aria-busy={previewStatus === 'loading' || undefined} disabled={!canContinue} onClick={onSubmit}>{previewStatus === 'loading' ? '코스 계산 중' : '빠른 코스 계산하기'}</CourseActionButton>
       </div>
     </section>
   );
@@ -3549,6 +3699,8 @@ function CourseBasket({ screen, go, basketState, onItemRemoved, onRetry, onAuthR
   const { items = [], status = 'loading' } = basketState || {};
   const [deletingIds, setDeletingIds] = useState(() => new Set());
   const [deleteErrors, setDeleteErrors] = useState({});
+  const [selectedIds, setSelectedIds] = useState(() => new Set());
+  const [isBulkDeleting, setIsBulkDeleting] = useState(false);
   const deleteControllersRef = useRef(new Map());
   const basketItemIdsKey = items.map((item) => String(item.id)).join('|');
   const isNatural = screen === 'basket-natural';
@@ -3582,14 +3734,36 @@ function CourseBasket({ screen, go, basketState, onItemRemoved, onRetry, onAuthR
       const next = Object.fromEntries(Object.entries(current).filter(([itemId]) => activeIds.has(itemId)));
       return Object.keys(next).length === Object.keys(current).length ? current : next;
     });
+    setSelectedIds((current) => {
+      const next = new Set([...current].filter((itemId) => activeIds.has(itemId)));
+      return next.size === current.size ? current : next;
+    });
   }, [basketItemIdsKey]);
 
   if (isCurated) {
-    return <section className={`phone standard-screen basket-screen basket-screen-v3 ${screen} basket-curated`}><main className="page-scroll basket-scroll"><BackHeader title="코스 장바구니" onBack={() => go('course-home')} /><header className="basket-heading"><h1>{variant.title}</h1><p>{variant.copy}</p></header><section className="basket-summary"><span>{variant.label}</span><h2>{variant.summary}</h2><p>{variant.note}</p></section><section className="basket-reservation-note"><span>예약 일정</span><strong>런던 베이글 뮤지엄 · 오늘 15:00</strong><small>예약 10분 전 도착을 기준으로 계산했어요.</small></section><section className="basket-place-section"><h2>꼭 갈 곳</h2><div className="basket-place-list">{places.slice(0, 2).map((place) => <PlaceRow key={place.name} place={place} onClick={() => go('place')} />)}</div></section><section className="basket-place-section want"><h2>가고 싶은 곳</h2><div className="basket-place-list">{places.slice(2).map((place) => <PlaceRow key={place.name} place={place} onClick={() => go('place')} />)}</div></section><button type="button" className="basket-add-place" onClick={() => go('explore')}><span>＋</span>장소 더 담기</button></main><div className="sticky-actions basket-actions"><ActionButton onClick={() => go('compare')}>4개 장소로 코스 만들기</ActionButton></div><BottomNav active="course" onNavigate={(tab) => go(rootRoutes[tab])} /></section>;
+    return <section className={`phone standard-screen basket-screen basket-screen-v3 ${screen} basket-curated`}><main className="page-scroll basket-scroll"><BackHeader title="코스 장바구니" onBack={() => go('course-home')} /><header className="basket-heading"><h1>{variant.title}</h1><p>{variant.copy}</p></header><section className="basket-summary"><span>{variant.label}</span><h2>{variant.summary}</h2><p>{variant.note}</p></section><section className="basket-reservation-note"><span>예약 일정</span><strong>런던 베이글 뮤지엄 · 오늘 15:00</strong><small>예약 10분 전 도착을 기준으로 계산했어요.</small></section><section className="basket-place-section"><h2>꼭 갈 곳</h2><div className="basket-place-list">{places.slice(0, 2).map((place) => <PlaceRow key={place.name} place={place} onClick={() => go('place')} />)}</div></section><section className="basket-place-section want"><h2>가고 싶은 곳</h2><div className="basket-place-list">{places.slice(2).map((place) => <PlaceRow key={place.name} place={place} onClick={() => go('place')} />)}</div></section><button type="button" className="basket-add-place" onClick={() => go('explore')}><span>＋</span>장소 더 담기</button></main><div className="sticky-actions basket-actions"><CourseActionButton onClick={() => go('compare')}>4개 장소로 코스 만들기</CourseActionButton></div><BottomNav active="course" onNavigate={(tab) => go(rootRoutes[tab])} /></section>;
   }
 
   const isReady = status === 'success';
   const count = items.length;
+  const basketPlacePresentation = (item) => {
+    const category = String(item.categoryName || '').toLowerCase();
+    if (/촬영|드라마|영화/.test(category)) return { label: '촬영지', Icon: Clapperboard, tone: 'filming' };
+    if (/음식|식당|맛집|restaurant/.test(category)) return { label: '음식점', Icon: Utensils, tone: 'restaurant' };
+    if (/카페|커피|디저트|cafe/.test(category)) return { label: '카페', Icon: Coffee, tone: 'cafe' };
+    if (/공원|숲|산책|park/.test(category)) return { label: '공원', Icon: Trees, tone: 'park' };
+    if (/전시|행사|공연|축제|팝업|event/.test(category)) return { label: '전시·행사', Icon: CalendarDays, tone: 'event' };
+    return { label: '관광지', Icon: Landmark, tone: 'landmark' };
+  };
+
+  const basketImageUrl = (item, presentation) => {
+    if (typeof item.imageUrl === 'string' && item.imageUrl.trim()) return item.imageUrl;
+    if (item.placeName === '운현궁') return '/assets/figma/intro-visual.png';
+    if (presentation.tone === 'park' || presentation.tone === 'landmark') return '/assets/palace-garden.png';
+    if (presentation.tone === 'filming') return '/assets/figma/explore-scene.jpeg';
+    if (presentation.tone === 'event') return '/assets/figma/explore-popup.png';
+    return '/assets/cafe-garden.png';
+  };
 
   const handleDelete = async (item) => {
     const itemId = item.id;
@@ -3613,6 +3787,7 @@ function CourseBasket({ screen, go, basketState, onItemRemoved, onRetry, onAuthR
     try {
       await deleteCourseBasketPlace(itemId, { signal: controller.signal });
       if (!controller.signal.aborted) onItemRemoved?.(itemId);
+      return true;
     } catch (error) {
       if (error?.name === 'AbortError' || controller.signal.aborted) return;
       if (error?.status === 401) {
@@ -3623,6 +3798,7 @@ function CourseBasket({ screen, go, basketState, onItemRemoved, onRetry, onAuthR
         console.error('코스 장바구니에서 장소를 삭제하지 못했어요', error);
         setDeleteErrors((current) => ({ ...current, [itemKey]: '삭제하지 못했어요. 다시 시도해주세요.' }));
       }
+      return false;
     } finally {
       if (deleteControllersRef.current.get(itemKey) !== controller) return;
       deleteControllersRef.current.delete(itemKey);
@@ -3636,6 +3812,38 @@ function CourseBasket({ screen, go, basketState, onItemRemoved, onRetry, onAuthR
     }
   };
 
+  const toggleItemSelection = (itemId) => {
+    const itemKey = String(itemId);
+    setSelectedIds((current) => {
+      const next = new Set(current);
+      if (next.has(itemKey)) next.delete(itemKey);
+      else next.add(itemKey);
+      return next;
+    });
+  };
+
+  const toggleAllSelection = () => {
+    setSelectedIds((current) => current.size === items.length
+      ? new Set()
+      : new Set(items.map((item) => String(item.id))));
+  };
+
+  const deleteItems = async (targetItems) => {
+    if (isBulkDeleting || targetItems.length === 0) return;
+    if (!getAccessToken()) {
+      onAuthRequired?.({ screen: 'basket' });
+      return;
+    }
+
+    setIsBulkDeleting(true);
+    try {
+      for (const item of targetItems) await handleDelete(item);
+      setSelectedIds(new Set());
+    } finally {
+      setIsBulkDeleting(false);
+    }
+  };
+
   const stateContent = status === 'logged-out'
     ? <div className="basket-state"><ShoppingBasket aria-hidden="true" size={28} /><h2>로그인이 필요해요</h2><p>로그인하면 담아둔 장소를 어디서든 이어서 볼 수 있어요.</p><ActionButton onClick={() => onAuthRequired?.({ screen: 'basket' })}>로그인하기</ActionButton></div>
     : status === 'error'
@@ -3646,19 +3854,35 @@ function CourseBasket({ screen, go, basketState, onItemRemoved, onRetry, onAuthR
           ? <div className="basket-state"><ShoppingBasket aria-hidden="true" size={28} /><h2>아직 담은 장소가 없어요</h2><p>가고 싶은 장소를 발견하면 코스에 담아보세요.</p><ActionButton tone="secondary" onClick={() => go('explore')}>장소 둘러보기</ActionButton></div>
           : null;
 
-  const summaryTitle = status === 'logged-out' ? '로그인 후 확인할 수 있어요' : isReady ? `${count}곳을 담았어요` : '장소를 확인하고 있어요';
-  return <section className="phone standard-screen basket-screen basket-screen-v3 basket"><main className="page-scroll basket-scroll"><BackHeader title="코스 장바구니" onBack={() => go('course-home')} /><header className="basket-heading"><h1>담은 장소를 확인해요</h1><p>가고 싶은 장소를 모아 나에게 맞는 하루 코스로 만들어요.</p></header><section className="basket-summary"><span>담은 장소</span><h2>{summaryTitle}</h2><p>최근에 담은 장소부터 보여드려요.</p></section>{stateContent}{isReady && count > 0 && <section className="basket-place-section"><h2>담은 장소</h2><div className="basket-real-list">{items.map((item) => {
+  const selectedCount = selectedIds.size;
+  const isAllSelected = count > 0 && selectedCount === count;
+  return <section className="phone standard-screen basket-screen basket-screen-v3 basket">
+    <main className="page-scroll basket-scroll">
+      <header className="basket-chat-heading"><p>가고 싶은 장소를 모아뒀어요</p><h1>코스 장바구니</h1></header>
+      {stateContent}
+      {isReady && count > 0 && <section className="basket-place-section basket-current-list"><div className="basket-selection-toolbar"><button aria-pressed={isAllSelected} className={`basket-select-all${isAllSelected ? ' is-selected' : ''}`} onClick={toggleAllSelection} type="button"><span aria-hidden="true">{isAllSelected && <Check size={13} strokeWidth={2.6} />}</span>전체 선택</button><div><button disabled={isBulkDeleting} onClick={() => deleteItems(items)} type="button">전체 삭제</button><button disabled={isBulkDeleting || selectedCount === 0} onClick={() => deleteItems(items.filter((item) => selectedIds.has(String(item.id))))} type="button">선택 삭제{selectedCount ? ` (${selectedCount})` : ''}</button></div></div><div className="basket-real-list">{items.map((item) => {
     const isKakao = String(item.source).toUpperCase() === 'KAKAO';
+    const internalPlaceId = Number(item.placeId ?? item.place?.id ?? item.ddemachimPlaceId);
+    const canOpenDdemachimPlace = Number.isSafeInteger(internalPlaceId) && internalPlaceId > 0;
     const itemKey = String(item.id);
     const isDeleting = deletingIds.has(itemKey);
+    const isSelected = selectedIds.has(itemKey);
     const deleteError = deleteErrors[itemKey];
     const deleteErrorId = `basket-delete-error-${itemKey}`;
-    const content = <><span className="basket-item-icon"><MapPin aria-hidden="true" size={19} /></span><span><strong>{item.placeName}</strong><small>{isKakao ? `카카오 · ${item.roadAddress || item.lotAddress || '주소 정보 없음'}` : '때마침 장소'}</small></span>{isKakao ? <ExternalLink aria-hidden="true" size={17} /> : <ChevronRight aria-hidden="true" size={18} />}</>;
+    const presentation = basketPlacePresentation(item);
+    const placeVisual = <img className="basket-item-image" src={basketImageUrl(item, presentation)} alt="" loading="lazy" />;
+    const content = <>{placeVisual}<span><strong>{item.placeName}</strong><small>{presentation.label}</small></span></>;
     const navigation = isKakao
       ? <a className="basket-item-row" href={getKakaoPlaceUrl(item)} target="_blank" rel="noopener noreferrer">{content}</a>
-      : <button className="basket-item-row" type="button" onClick={() => go('place', item.placeId)}>{content}</button>;
-    return <div aria-busy={isDeleting || undefined} className={`basket-item-entry${isDeleting ? ' is-deleting' : ''}`} key={item.id}><div className="basket-item-controls">{navigation}<button aria-busy={isDeleting || undefined} aria-describedby={deleteError ? deleteErrorId : undefined} aria-label={`${item.placeName} 장바구니에서 삭제`} className="basket-item-delete" disabled={isDeleting} onClick={() => handleDelete(item)} type="button"><Trash2 aria-hidden="true" size={18} strokeWidth={2} /></button></div>{deleteError && <div className="basket-item-delete-error" id={deleteErrorId} role="alert"><span>{deleteError}</span><button onClick={() => handleDelete(item)} type="button">다시 시도</button></div>}</div>;
-  })}</div></section>}</main><div className="sticky-actions basket-actions"><ActionButton disabled={!isReady || count === 0} onClick={() => go('course-conditions')}>{count > 0 ? `${count}개 장소로 코스 만들기` : '장소를 먼저 담아주세요'}</ActionButton></div><BottomNav active="course" onNavigate={(tab) => go(rootRoutes[tab])} /></section>;
+      : <button className="basket-item-row" type="button" disabled={!canOpenDdemachimPlace} onClick={() => go('place', internalPlaceId)}>{content}</button>;
+    return <div aria-busy={isDeleting || undefined} className={`basket-item-entry${isDeleting ? ' is-deleting' : ''}${isSelected ? ' is-selected' : ''}`} key={item.id}><div className="basket-item-controls">{navigation}<button aria-pressed={isSelected} aria-label={`${item.placeName} ${isSelected ? '선택 해제' : '선택'}`} className="basket-item-select" disabled={isDeleting || isBulkDeleting} onClick={() => toggleItemSelection(item.id)} type="button"><span aria-hidden="true">{isSelected && <Check size={14} strokeWidth={2.7} />}</span></button></div>{deleteError && <div className="basket-item-delete-error" id={deleteErrorId} role="alert"><span>{deleteError}</span><button onClick={() => handleDelete(item)} type="button">다시 시도</button></div>}</div>;
+      })}</div><button type="button" className="basket-add-more" onClick={() => go('explore')}><Plus aria-hidden="true" size={18} strokeWidth={2} />장소 더 담기</button></section>}
+    </main>
+    <div className="sticky-actions basket-actions">
+      <CourseActionButton disabled={!isReady || count === 0} onClick={() => go('course-conditions')}>{count > 0 ? `${count}개 장소로 코스 만들기` : '장소를 먼저 담아주세요'}</CourseActionButton>
+    </div>
+    <BottomNav active="course" onNavigate={(tab) => go(rootRoutes[tab])} />
+  </section>;
 }
 
 function CourseCompare({ screen, go, coursePreview, courseDraft, onConfirm, confirmState }) {
@@ -3667,45 +3891,60 @@ function CourseCompare({ screen, go, coursePreview, courseDraft, onConfirm, conf
   const message = coursePreview?.status === 'idle'
     ? '출발 위치와 날짜, 장소별 시간을 순서대로 설정해주세요.'
     : coursePreview?.message;
-  return <CoursePreviewResults preview={coursePreview?.preview} origin={courseDraft?.start} failure={coursePreview?.failure} status={status} message={message} MapComponent={VWorldMap} onBack={() => go('course-place-times')} onRetry={status === 'error' ? coursePreview?.retry : undefined} onEditConditions={() => go('course-conditions')} onEditStops={() => go('course-place-times')} onConfirm={onConfirm} confirmLabel={courseDraft?.startTiming === 'NOW' ? '이 코스로 지금 시작' : '예정 코스로 저장'} confirmBusy={confirmState?.status === 'loading'} confirmError={confirmState?.error} />;
+  const needsActiveCourseReplacement = confirmState?.status === 'replace-active';
+  return <CoursePreviewResults preview={coursePreview?.preview} origin={courseDraft?.start} failure={coursePreview?.failure} status={status} message={message} MapComponent={VWorldMap} onBack={() => go('course-place-times')} onRetry={status === 'error' ? coursePreview?.retry : undefined} onEditConditions={() => go('course-conditions')} onEditStops={() => go('course-conditions')} onConfirm={onConfirm} confirmLabel={needsActiveCourseReplacement ? '기존 코스 종료 후 시작' : courseDraft?.startTiming === 'NOW' ? '이 코스로 지금 시작' : '예정 코스로 저장'} confirmBusy={confirmState?.status === 'loading'} confirmError={confirmState?.error} />;
 }
 
-function CourseFilmingProximity({ go }) {
+function CourseFilmingProximity({ currentLocation = null, courseStops = [], onNearby }) {
   const openedFilmingLocationIdsRef = useRef(new Set());
+  const [filmingPlaces, setFilmingPlaces] = useState([]);
 
   useEffect(() => {
-    if (typeof navigator === 'undefined' || !navigator.geolocation) return undefined;
     let cancelled = false;
-    let watchId = null;
-
     fetchPlaces({ tag: 'FILMING_LOCATION', size: 100 })
       .then((result) => {
-        const places = result?.content ?? [];
-        if (cancelled || places.length === 0) return;
-        watchId = navigator.geolocation.watchPosition(
-          async (position) => {
-            const place = findNearbyFilmingPlace(position.coords, places);
-            if (!place || openedFilmingLocationIdsRef.current.has(String(place.id))) return;
-            openedFilmingLocationIdsRef.current.add(String(place.id));
-            if (!cancelled) go('nearby-filming', place.id);
-          },
-          () => {},
-          { enableHighAccuracy: true, maximumAge: 5_000, timeout: 12_000 },
-        );
+        if (cancelled) return;
+        const coursePlaceIds = new Set((Array.isArray(courseStops) ? courseStops : [])
+          .map((stop) => Number(stop?.placeId ?? stop?.id))
+          .filter((id) => Number.isSafeInteger(id) && id > 0));
+        const places = (result?.content ?? []).filter((place) => coursePlaceIds.has(Number(place?.id)));
+        setFilmingPlaces(places);
       })
       .catch(() => {});
 
     return () => {
       cancelled = true;
-      if (watchId !== null) navigator.geolocation.clearWatch(watchId);
     };
-  }, [go]);
+  }, [courseStops]);
+
+  useEffect(() => {
+    if (filmingPlaces.length === 0) return undefined;
+    const notifyIfNearby = (location) => {
+      const place = findNearbyFilmingPlace(location, filmingPlaces);
+      if (!place || openedFilmingLocationIdsRef.current.has(String(place.id))) return;
+      openedFilmingLocationIdsRef.current.add(String(place.id));
+      onNearby?.(place);
+    };
+    if (currentLocation) {
+      const [longitude, latitude] = currentLocation.map(Number);
+      if (Number.isFinite(latitude) && Number.isFinite(longitude)) notifyIfNearby({ latitude, longitude });
+      return undefined;
+    }
+    if (typeof navigator === 'undefined' || !navigator.geolocation) return undefined;
+    const watchId = navigator.geolocation.watchPosition(
+      ({ coords }) => notifyIfNearby(coords),
+      () => {},
+      { enableHighAccuracy: true, maximumAge: 5_000, timeout: 12_000 },
+    );
+    return () => navigator.geolocation.clearWatch(watchId);
+  }, [currentLocation?.[0], currentLocation?.[1], filmingPlaces, onNearby]);
 
   return null;
 }
 
 function NearbyFilmingScreen({ placeId, go }) {
   const [state, setState] = useState({ status: 'loading', locations: [] });
+  const [workQuery, setWorkQuery] = useState('');
 
   useEffect(() => {
     let cancelled = false;
@@ -3720,7 +3959,12 @@ function NearbyFilmingScreen({ placeId, go }) {
   }, [placeId]);
 
   const locations = state.locations;
-  const works = uniqueFilmingWorks(locations);
+  const reenactmentLocations = locations.filter(supportsSceneReenactment);
+  const normalizedWorkQuery = workQuery.trim().toLocaleLowerCase('ko-KR');
+  const filteredLocations = normalizedWorkQuery
+    ? reenactmentLocations.filter((location) => String(location.mediaContent?.title ?? '')
+      .toLocaleLowerCase('ko-KR').includes(normalizedWorkQuery))
+    : reenactmentLocations;
   const placeName = locations[0]?.placeName || '촬영지';
 
   return <section className="phone standard-screen nearby-filming-screen">
@@ -3731,20 +3975,16 @@ function NearbyFilmingScreen({ placeId, go }) {
       <p className="nearby-filming-lede">이 장소에서 촬영된 장면을 골라 같은 구도로 촬영해보세요.</p>
       {state.status === 'loading' && <div className="centered-state" role="status"><BrandLoading /><p>촬영 장면을 불러오고 있어요.</p></div>}
       {state.status === 'success' && <>
-        {works.length > 1 && <section className="nearby-filming-works" aria-label="이 장소에서 촬영된 다른 작품">
-          <h2>이 장소에서 찍힌 다른 작품</h2>
-          <p>{works.map((work) => work.title).join(' · ')}</p>
-        </section>}
-        <section className="nearby-filming-scenes" aria-label="촬영할 장면 선택">
-          <h2>촬영할 장면</h2>
-          {locations.length > 0
-            ? locations.map((location) => <button key={location.id} type="button" onClick={() => go('scene-detail', location.id)}>
-              <span>{location.mediaContent?.title || '작품 정보 확인 중'}</span>
-              <strong>{location.sceneDescription || '이 장면으로 촬영하기'}</strong>
-              <i aria-hidden="true">›</i>
-            </button>)
-            : <p className="nearby-filming-empty">아직 등록된 촬영 장면이 없어요.</p>}
-        </section>
+        {reenactmentLocations.length > 0 && <label className="nearby-filming-work-search">
+          <Search aria-hidden="true" size={18} strokeWidth={2} />
+          <input value={workQuery} onChange={(event) => setWorkQuery(event.target.value)} placeholder="작품명 검색" aria-label="작품명 검색" />
+          {workQuery && <button type="button" aria-label="작품명 검색어 지우기" onClick={() => setWorkQuery('')}><X aria-hidden="true" size={16} strokeWidth={2} /></button>}
+        </label>}
+        {reenactmentLocations.length === 0
+          ? <p className="nearby-filming-empty">따라 찍을 수 있는 드라마·영화 장면이 아직 없어요.</p>
+          : filteredLocations.length > 0
+          ? <FilmingSceneSection filmingLocations={filteredLocations} go={go} />
+          : <p className="nearby-filming-empty">검색한 작품의 촬영 장면이 이 장소에는 없어요.</p>}
       </>}
       {state.status === 'error' && <p className="nearby-filming-error" role="status">촬영 장면을 불러오지 못했어요. 코스는 계속 진행할 수 있어요.</p>}
     </main>
@@ -3753,6 +3993,10 @@ function NearbyFilmingScreen({ placeId, go }) {
 
 function SavedCourseScreen({ courseId, go, onAuthRequired, active = false }) {
   const [state, setState] = useState({ detail: null, status: 'loading', error: null });
+  const [filmingNotice, setFilmingNotice] = useState(null);
+  const [navigationLocation, setNavigationLocation] = useState(null);
+  const [completionState, setCompletionState] = useState({ status: 'idle', error: null });
+  const [replanState, setReplanState] = useState({ status: 'idle', error: null });
   const controllerRef = useRef(null);
 
   const load = useCallback(() => {
@@ -3802,11 +4046,56 @@ function SavedCourseScreen({ courseId, go, onAuthRequired, active = false }) {
     }
   };
 
+  const finishTodayCourse = async () => {
+    if (completionState.status === 'loading') return;
+    setCompletionState({ status: 'loading', error: null });
+    try {
+      await completeCourse(courseId);
+      go('course-home');
+    } catch (error) {
+      if (error?.status === 401) {
+        onAuthRequired?.({ screen: 'active-course', id: courseId });
+        return;
+      }
+      setCompletionState({ status: 'error', error: '코스를 종료하지 못했어요. 다시 시도해주세요.' });
+    }
+  };
+
+  const handleDwellChange = async (stop, dwellMinutes, departureAt) => {
+    const [longitude, latitude] = Array.isArray(navigationLocation) ? navigationLocation.map(Number) : [];
+    const basketItemId = Number(stop?.basketItemId);
+    if (!Number.isFinite(latitude) || !Number.isFinite(longitude)) {
+      setReplanState({ status: 'error', error: '현재 위치를 확인한 뒤 남은 코스를 다시 계산할 수 있어요.' });
+      return;
+    }
+    if (!Number.isSafeInteger(basketItemId) || basketItemId < 1) return;
+    const departure = new Date(departureAt);
+    const departureTime = `${String(departure.getHours()).padStart(2, '0')}:${String(departure.getMinutes()).padStart(2, '0')}`;
+    setReplanState({ status: 'loading', error: null });
+    try {
+      const detail = await replanCourse(courseId, {
+        currentStopBasketItemId: basketItemId,
+        departureTime,
+        latitude,
+        longitude,
+      });
+      const preview = normalizeCoursePreview(detail?.preview);
+      if (!preview) throw new Error('남은 코스 정보가 올바르지 않아요.');
+      setState((current) => ({ ...current, detail: { ...detail, preview }, error: null }));
+      setReplanState({ status: 'idle', error: null });
+    } catch (error) {
+      setReplanState({ status: 'error', error: error?.message || '남은 코스를 다시 계산하지 못했어요.' });
+    }
+  };
+
   if (state.status === 'loading') return <section className="phone standard-screen"><main className="page-scroll centered-state" role="status"><BrandLoading /><p>저장된 코스를 불러오고 있어요.</p></main></section>;
   if (!state.detail) return <section className="phone standard-screen"><main className="page-scroll centered-state" role="alert"><h1>{state.error}</h1><ActionButton onClick={load}>다시 시도</ActionButton></main></section>;
   return <>
-    {active && <CourseFilmingProximity go={go} />}
-    <CoursePreviewResults preview={state.detail.preview} origin={state.detail.start} status="success" MapComponent={VWorldMap} onBack={() => go('course-home')} readOnly navigationMode={active} onConfirm={active ? null : () => begin(false)} confirmLabel="시작하기" confirmBusy={state.status === 'starting'} confirmError={state.error} />
+    {active && <CourseFilmingProximity currentLocation={navigationLocation} courseStops={state.detail.preview?.stops} onNearby={setFilmingNotice} />}
+    <CoursePreviewResults preview={state.detail.preview} origin={state.detail.start} status="success" MapComponent={VWorldMap} onBack={() => go('course-home')} readOnly navigationMode={active} onNavigationLocationChange={setNavigationLocation} onDwellChanged={active ? handleDwellChange : null} replanBusy={replanState.status === 'loading'} replanError={replanState.error} filmingNotice={active ? filmingNotice : null} onViewFilming={(place) => go('nearby-filming', place?.id)} onArrivalPlace={(stop) => {
+      const placeId = Number(stop?.placeId);
+      go(Number.isSafeInteger(placeId) && placeId > 0 ? 'place' : 'map', Number.isSafeInteger(placeId) && placeId > 0 ? placeId : undefined);
+    }} onCompleteCourse={active ? finishTodayCourse : null} completeBusy={completionState.status === 'loading'} completeError={completionState.error} onConfirm={active ? null : () => begin(false)} confirmLabel="시작하기" confirmBusy={state.status === 'starting'} confirmError={state.error} />
   </>;
 }
 
@@ -3865,7 +4154,7 @@ function TravelScreen({ screen, go }) {
   return <GuidanceMapState go={go} data={guidanceStates[screen]} />;
 }
 
-function FilmingWorkPlaceItem({ place, index, go }) {
+function FilmingWorkPlaceItem({ place, index, total, go }) {
   const sceneRef = useRef(null);
   const [isExpanded, setIsExpanded] = useState(false);
   const [canExpand, setCanExpand] = useState(false);
@@ -3890,21 +4179,23 @@ function FilmingWorkPlaceItem({ place, index, go }) {
 
   return (
     <article className={`filming-work-place-item${isExpanded ? ' is-expanded' : ''}`}>
-      <button className="filming-work-place-main" type="button" onClick={() => go('place', place.id)}>
+      <div className="filming-work-place-main">
         <span className="filming-work-place-image">
           {place.image
             ? <img src={place.image} alt={`${place.name} 전경`} />
             : <span className="filming-work-place-image-fallback"><ImageIcon size={22} /></span>}
-          <b>{index + 1}</b>
+          {total > 1 && <b>{String(index + 1).padStart(2, '0')}</b>}
         </span>
         <span className="filming-work-place-copy">
-          <small>{place.category}</small>
-          <strong>{place.name}</strong>
-          <CongestionBadge congestion={congestion} className="filming-work-place-congestion" />
+          <span className="filming-work-place-title-row"><strong>{place.name}</strong></span>
+          <span className="filming-work-place-meta-row"><small>{place.category}</small><CongestionBadge congestion={congestion} compact className="filming-work-place-congestion" /></span>
           <span ref={sceneRef} className={`filming-work-place-scene${isExpanded ? ' is-expanded' : ''}`}>{place.scene}</span>
+          <span className="filming-work-place-actions">
+            <button type="button" onClick={() => go('place', place.id)}>장소 상세</button>
+            <button type="button" onClick={() => go('scene-detail', place.filmingLocationId)}>촬영 장면 보기</button>
+          </span>
         </span>
-        <ChevronRight aria-hidden="true" size={19} />
-      </button>
+      </div>
       {canExpand && (
         <button
           className="filming-work-scene-toggle"
@@ -4008,7 +4299,8 @@ function FilmingWorkDetail({ go, workId }) {
   const [isLoading, setIsLoading] = useState(true);
   const [loadError, setLoadError] = useState(false);
   const [overviewExpanded, setOverviewExpanded] = useState(false);
-  const userLocation = useUserLocation();
+  const [activeTab, setActiveTab] = useState('info');
+  const reduceMotion = useReducedMotion();
 
   useEffect(() => {
     const frame = window.requestAnimationFrame(() => {
@@ -4029,6 +4321,7 @@ function FilmingWorkDetail({ go, workId }) {
     setLoadError(false);
     setWork(null);
     setOverviewExpanded(false);
+    setActiveTab('info');
 
     Promise.all([
       fetchMediaContent(workId, { signal: controller.signal }),
@@ -4040,13 +4333,14 @@ function FilmingWorkDetail({ go, workId }) {
           return {
             id: place.id,
             name: place.name || filmingLocation.placeName,
-            category: [place.categoryLabel, place.district].filter(Boolean).join(' · ') || '장소 정보 확인 중',
+            category: place.categoryLabel || '장소 정보 확인 중',
             scene: filmingLocation.sceneDescription || '장면 설명을 준비하고 있어요.',
             image: place.imageUrl || null,
             latitude: place.latitude,
             longitude: place.longitude,
             categoryCode: place.categoryCode,
             tags: place.tags,
+            filmingLocationId: filmingLocation.id,
             order: index + 1,
           };
         }));
@@ -4083,6 +4377,28 @@ function FilmingWorkDetail({ go, workId }) {
     return <section className="phone standard-screen filming-work-detail-screen"><BackHeader title="작품 상세" onBack={() => go('filming-locations')} /><main className="page-scroll centered-state"><SearchX size={38} /><h1>작품 정보를 불러오지 못했어요</h1><p>잠시 후 다시 시도해주세요.</p><ActionButton onClick={() => go('filming-locations')}>작품 목록으로</ActionButton></main></section>;
   }
 
+  const tabs = [
+    { id: 'info', label: '정보' },
+    { id: 'places', label: '촬영지', count: work.places.length },
+  ];
+
+  const tabContent = {
+    info: <>
+      <p className={`filming-work-detail-overview${overviewExpanded ? ' is-expanded' : ''}`}>{work.overview || '작품 소개를 준비하고 있어요.'}</p>
+      {work.overview?.length > 120 && <button className="filming-work-overview-toggle" type="button" aria-expanded={overviewExpanded} onClick={() => setOverviewExpanded((current) => !current)}>{overviewExpanded ? '접기' : '더보기'}</button>}
+      <FilmingWorkCredits credits={work.credits} />
+    </>,
+    places: <section className="filming-work-place-section">
+      <header>
+        <h2>이 작품 속 서울</h2>
+        <span>{work.places.length}곳</span>
+      </header>
+      {work.places.length ? <div className="filming-work-place-list">
+        {work.places.map((place, index) => <FilmingWorkPlaceItem key={place.id} place={place} index={index} total={work.places.length} go={go} />)}
+      </div> : <div className="filming-work-empty"><p>등록된 촬영 장소가 아직 없어요.</p></div>}
+    </section>,
+  }[activeTab];
+
   return (
     <section className="phone standard-screen filming-work-detail-screen">
       <main className="page-scroll filming-work-detail-scroll" ref={scrollRef}>
@@ -4099,34 +4415,21 @@ function FilmingWorkDetail({ go, workId }) {
         <DetailContentSheet className="filming-work-detail-copy">
           <p className="filming-work-detail-meta">{[work.type, work.year].filter(Boolean).join(' · ')}</p>
           <h1>{work.title}</h1>
-          <p className={`filming-work-detail-overview${overviewExpanded ? ' is-expanded' : ''}`}>{work.overview || '작품 소개를 준비하고 있어요.'}</p>
-          {work.overview?.length > 120 && <button className="filming-work-overview-toggle" type="button" aria-expanded={overviewExpanded} onClick={() => setOverviewExpanded((current) => !current)}>{overviewExpanded ? '접기' : '더보기'}</button>}
-
-          <FilmingWorkCredits credits={work.credits} />
-
-          <section className="filming-work-place-section">
-            <header>
-              <h2>이 작품 속 서울</h2>
-              <span>{work.places.length}곳</span>
-            </header>
-            {work.places.length ? <div className="filming-work-place-list">
-              {work.places.map((place, index) => <FilmingWorkPlaceItem key={place.id} place={place} index={index} go={go} />)}
-            </div> : <div className="filming-work-empty"><p>등록된 촬영 장소가 아직 없어요.</p></div>}
-          </section>
-
-          <DetailMapSection
-            title="촬영지 한눈에 보기"
-            meta={[...new Set(work.places.map((place) => place.category.split(' · ').at(-1)))].join(' · ')}
-            ariaLabel={`${work.title} 촬영지 지도`}
-            places={work.places}
-            userLocation={userLocation}
-            placeMarkerLabel={(place) => place.order}
-          />
+          <DetailTabs tabs={tabs} activeTab={activeTab} onChange={setActiveTab} ariaLabel="작품 상세 정보" idPrefix="filming-work-tab" />
+          <motion.div
+            animate={{ opacity: 1, y: 0 }}
+            className="filming-work-detail-tab-panel"
+            id={`filming-work-tab-panel-${activeTab}`}
+            initial={reduceMotion ? false : { opacity: 0, y: 6 }}
+            key={activeTab}
+            role="tabpanel"
+            aria-labelledby={`filming-work-tab-${activeTab}`}
+            transition={{ duration: reduceMotion ? 0 : 0.16, ease: 'easeOut' }}
+          >
+            {tabContent}
+          </motion.div>
         </DetailContentSheet>
       </main>
-      <div className="sticky-actions filming-work-detail-actions">
-        <ActionButton onClick={() => go('map')}><MapPin size={18} /> 지도에서 촬영지 보기</ActionButton>
-      </div>
     </section>
   );
 }
@@ -4145,7 +4448,7 @@ function FilmingScreen({ screen, go, id }) {
   if (screen === 'scene-list') return <section className="phone standard-screen scene-list-v3"><BackHeader title="촬영 장면 · 운현궁" onBack={() => go('filming-content')} /><main className="page-scroll scene-list-scroll"><header><h1>이곳에서 촬영된 장면</h1><p>장면 ID가 확인된 항목만 촬영할 수 있어요</p></header><div className="scene-sort-row"><Chip active>작품별</Chip><Chip>최신순</Chip></div><article className="scene-work-card"><img src="/assets/figma/intro-visual.png" alt="운현궁 촬영 장소" /><div><span>작품 정보</span><small>촬영지 장면 연결 준비 중</small><p>이 예시 목록에는 실제 촬영지 장면 ID가 없어 카메라를 연결하지 않아요.</p></div></article><p className="scene-list-note" role="status">장소 상세의 실제 촬영 장면 목록에서 선택해주세요.</p><div className="sticky-actions"><ActionButton onClick={() => go('filming-locations')}>촬영지 다시 찾기</ActionButton></div></main></section>;
   if (screen === 'onsite') return <section className="phone standard-screen onsite-screen"><main className="page-scroll"><div className="onsite-hero"><img src="/assets/figma/intro-visual.png" alt="운현궁 전경" /><div className="onsite-overlay-actions"><IconButton label="이전" onClick={() => go('arrival')}>‹</IconButton><IconButton label="장소 저장" onClick={() => go('saved')}>♡</IconButton></div></div><div className="onsite-copy"><p className="eyebrow">안국 · 궁궐</p><h1>운현궁</h1><p>화-일 09:00-18:00</p><div className="chip-row"><Chip active>지금 여유</Chip><Chip>관람 약 20분</Chip></div><ScreenSection title="운현궁에서 놓치지 말 것"><div className="why-card"><span>현장 위치 확인 완료 · 오늘 업데이트</span><strong>노안당과 이로당을 잇는<br />마당 동선을 천천히 걸어보세요.</strong><p>오후에는 처마 그림자가 선명해요.</p></div></ScreenSection><ScreenSection title="지금 현장에서는" action="방금 도착"><div className="onsite-fact-grid"><article><span>관람</span><b>약 20분</b></article><article><span>촬영</span><b>삼각대 사용 제한</b></article></div></ScreenSection></div></main><div className="sticky-actions split onsite-actions"><ActionButton onClick={() => go('complete')}>관람 완료</ActionButton><ActionButton tone="secondary" onClick={() => go('filming-content')}>후기 보기</ActionButton></div></section>;
   if (screen === 'filming-content') return <section className="phone standard-screen filming-content-v3"><main className="page-scroll"><div className="filming-content-hero"><img src="/assets/figma/intro-visual.png" alt="운현궁 촬영지 전경" /><div className="filming-content-controls"><IconButton label="이전" onClick={() => go('onsite')}>‹</IconButton><IconButton label="장소 저장" onClick={() => go('saved')}>♡</IconButton></div></div><div className="filming-content-copy"><p className="eyebrow">촬영지 · 서울 종로</p><h1>운현궁 · 작품 정보</h1><p>촬영 가능한 장면은 실제 장면 ID가 있는 장소 상세에서 선택해주세요.</p><ScreenSection title="장면 선택 안내"><div className="why-card filming-why-card"><span>정확한 촬영지 장면 연결</span><strong>예시 이미지나 작품 ID를 촬영 장면 ID 대신 사용하지 않아요.</strong><p>장소 상세에서 확인된 촬영 장면만 카메라로 연결해요.</p></div></ScreenSection></div></main><div className="sticky-actions filming-content-actions"><ActionButton onClick={() => go('filming-locations')}>촬영지 찾기</ActionButton></div></section>;
-  if (screen === 'scene-detail') return <section className="phone standard-screen scene-detail-v3"><main className="page-scroll"><figure className="scene-detail-reference"><img src="/assets/scenes/filming-location-1.jpg" alt="선택한 촬영 장면 참고 이미지" /></figure><div className="scene-detail-copy"><p className="eyebrow">촬영 장면 · {id ? `#${id}` : '선택 필요'}</p><SceneDetailHeading>이 장면의 구도를 맞춰보세요</SceneDetailHeading><p>사진을 참고해 같은 위치와 시선으로 촬영할 수 있어요.</p><ScreenSection title="촬영 전 확인"><p className="scene-detail-description">참고 장면은 카메라 화면 위에 겹쳐서 위치와 크기, 투명도를 조절할 수 있어요.</p><small>참고 이미지를 확인한 뒤 카메라 권한을 요청해요.</small></ScreenSection></div></main><div className="sticky-actions scene-detail-actions"><SceneDetailCameraPanel id={id} go={go} /></div></section>;
+  if (screen === 'scene-detail') return <section className="phone standard-screen scene-detail-v3"><main className="page-scroll"><figure className="scene-detail-reference"><img src="/assets/scenes/filming-location-1.jpg" alt="선택한 촬영 장면 참고 이미지" /></figure><div className="scene-detail-copy"><p className="eyebrow">촬영 장면</p><SceneDetailHeading>이 장면의 구도를 맞춰보세요</SceneDetailHeading><p>사진을 참고해 같은 위치와 시선으로 촬영할 수 있어요.</p></div></main><div className="sticky-actions scene-detail-actions"><SceneDetailCameraPanel id={id} go={go} /></div></section>;
   if (screen === 'shot-result') return <SceneShotResultScreen id={id} go={go} />;
   if (screen === 'photo-saved') return <CourseComplete go={go} photoSaved />;
   if (screen === 'image-missing') return <section className="phone standard-screen missing-filming-v3"><BackHeader title="촬영지 정보" onBack={() => go('filming-content')} /><main className="page-scroll missing-filming-scroll"><p className="eyebrow">촬영지 · 서울 종로</p><h1>운현궁 · 작품 정보</h1><div className="chip-row"><Chip active>위치 확인</Chip><Chip>정보 1개</Chip></div><ScreenSection title="장면 이미지 준비 중"><div className="why-card"><span>참고 장면을 불러올 수 없어요</span><strong>공공데이터 위치는 정상적으로 확인됐어요</strong><p>TMDB에 제공된 스틸 이미지가 없어<br />현재는 위치와 촬영 방향만 안내해요.</p></div><p className="missing-update-copy">이미지가 추가되면 자동으로 표시돼요</p></ScreenSection><ScreenSection title="대체 안내"><div className="scene-spec-grid"><article><span>방향</span><b>동쪽 · 92°</b></article><article><span>높이</span><b>눈높이</b></article></div></ScreenSection></main><div className="sticky-actions"><ActionButton onClick={() => go('filming-locations')}>촬영지 다시 찾기</ActionButton></div></section>;
@@ -4318,7 +4621,7 @@ function MyScreen({ screen, go }) {
 function AppScreenFrame({ basketCount, children, go, hideHeader = false }) {
   return (
     <div className="screen-frame">
-      {!hideHeader && <AppHeader basketCount={basketCount} onBasket={() => go('basket')} onLiveTalk={() => go('live-talk')} />}
+      {!hideHeader && <AppHeader basketCount={basketCount} onHome={() => go('map')} onBasket={() => go('basket')} onLiveTalk={() => go('live-talk')} />}
       <div className={`screen-frame-content${hideHeader ? '' : ' with-app-header'}`}>{children}</div>
     </div>
   );
@@ -4335,7 +4638,7 @@ function RenderScreen({ screen, id, go, basketState, courseFlow, onBasketAdded, 
   else if (screen === 'saved') renderedScreen = <SavedConfirmation go={go} />;
   else if (screen === 'trending' || screen === 'filming-locations' || screen === 'popups') renderedScreen = <CollectionScreen screen={screen} go={go} />;
   else if (screen === 'ai-guide') renderedScreen = <AiGuide go={go} />;
-  else if (screen === 'live-talk') renderedScreen = <LiveTalk go={go} />;
+  else if (screen === 'live-talk') renderedScreen = <LiveTalk />;
   else if (screen === 'course-home') renderedScreen = <CourseHome go={go} onNavigate={(tab) => go(rootRoutes[tab])} onAuthRequired={onAuthRequired} basketState={basketState} onBasketAdded={onBasketAdded} onBasketRefresh={onBasketRetry} />;
   else if (screen === 'course-conditions') renderedScreen = <CourseConditions go={go} draft={courseFlow.draft} basketState={basketState} onContinue={courseFlow.continueFromConditions} />;
   else if (screen === 'course-place-times') renderedScreen = <CoursePlaceTimes go={go} basketState={basketState} settings={courseFlow.settings} onSettingsChange={courseFlow.updateStopSetting} onSubmit={courseFlow.submit} previewStatus={courseFlow.preview.status} onRetry={onBasketRetry} onAuthRequired={onAuthRequired} />;
@@ -4349,7 +4652,7 @@ function RenderScreen({ screen, id, go, basketState, courseFlow, onBasketAdded, 
   else if (routeGroups.record.includes(screen)) renderedScreen = <RecordScreen screen={screen} go={go} />;
   else renderedScreen = <MyScreen screen={screen} go={go} />;
 
-  return <AppScreenFrame basketCount={basketState.items.length} go={go} hideHeader={screen === 'place' || screen === 'filming-work' || screen === 'event-detail' || screen === 'live-talk' || screen === 'camera' || screen === 'shot-result'}>{renderedScreen}</AppScreenFrame>;
+  return <AppScreenFrame basketCount={basketState.items.length} go={go} hideHeader={screen === 'place' || screen === 'filming-work' || screen === 'event-detail' || screen === 'camera' || screen === 'shot-result' || screen === 'active-course'}>{renderedScreen}</AppScreenFrame>;
 }
 
 export default function ProductFlow() {
@@ -4417,6 +4720,25 @@ export default function ProductFlow() {
   }, [basketItemKey]);
 
   const go = useCallback((next, nextId, options = {}) => {
+    if (screen === 'write-review' && next === 'record') {
+      const returnHash = window.sessionStorage.getItem('ddemachim.review-return-hash');
+      if (returnHash?.startsWith('#/')) {
+        window.sessionStorage.removeItem('ddemachim.review-return-hash');
+        window.location.hash = returnHash;
+        return;
+      }
+    }
+    if (next === 'write-review') window.sessionStorage.setItem('ddemachim.review-return-hash', window.location.hash);
+    if (next === 'scene-detail' && screen === 'place' && id) {
+      window.sessionStorage.setItem('ddemachim.scene-return-place-id', String(id));
+    }
+    if (screen === 'camera' && next === 'scene-detail') {
+      const placeId = window.sessionStorage.getItem('ddemachim.scene-return-place-id');
+      if (placeId && /^\d+$/.test(placeId)) {
+        next = 'place';
+        nextId = placeId;
+      }
+    }
     if (!routes.has(next)) return;
     const sceneTarget = createSceneNavigationTarget(next, nextId);
     if (['scene-detail', 'camera', 'shot-result'].includes(next) && !sceneTarget) return;
@@ -4425,7 +4747,7 @@ export default function ProductFlow() {
     if (options.replace) window.history.replaceState(null, '', nextHash);
     else window.location.hash = nextHash;
     setRoute({ screen: next, id: targetId });
-  }, []);
+  }, [screen]);
 
   const handleBasketAdded = (item) => {
     basketMutationVersionRef.current += 1;
@@ -4472,6 +4794,7 @@ export default function ProductFlow() {
 
   const confirmCourse = async (selection, replaceActive = false) => {
     if (courseMutation.status === 'loading' && !replaceActive) return;
+    const shouldReplaceActive = replaceActive || courseMutation.status === 'replace-active';
     setCourseMutation({ status: 'loading', error: null });
     const previewRequest = buildCoursePreviewRequest(courseDraft, buildCoursePreviewPlaces(courseStopSettings));
 
@@ -4481,7 +4804,7 @@ export default function ProductFlow() {
         strategy: selection.strategy,
         routeSelections: selection.routeSelections,
         startTiming: courseDraft?.startTiming || 'SCHEDULED',
-        replaceActive,
+        replaceActive: shouldReplaceActive,
       });
       basketMutationVersionRef.current += 1;
       setBasketState({ items: [], status: 'success' });
@@ -4495,13 +4818,10 @@ export default function ProductFlow() {
         return;
       }
       if (error?.code === 'COURSE4091') {
-        const confirmed = globalThis.confirm?.('진행 중인 코스를 종료하고 이 코스를 시작할까요?') ?? false;
-        if (confirmed) {
-          setCourseMutation({ status: 'idle', error: null });
-          await confirmCourse(selection, true);
-          return;
-        }
-        setCourseMutation({ status: 'idle', error: null });
+        setCourseMutation({
+          status: 'replace-active',
+          error: '진행 중인 코스가 있어요. 아래 버튼을 한 번 더 누르면 기존 코스를 종료하고 이 코스를 시작해요.',
+        });
         return;
       }
       setCourseMutation({ status: 'error', error: error?.message || '코스를 저장하지 못했어요. 다시 시도해주세요.' });
@@ -4530,5 +4850,6 @@ export default function ProductFlow() {
     mutation: courseMutation,
   };
 
-  return <main className="app-shell"><SceneCameraProvider screen={screen} routeId={id}><motion.div className="screen-transition" data-screen={screen} key={screen} {...pageMotion}><RenderScreen screen={screen} id={id} go={go} basketState={basketState} courseFlow={courseFlow} onBasketAdded={handleBasketAdded} onBasketItemRemoved={handleBasketItemRemoved} onBasketRetry={() => setBasketRefreshKey((key) => key + 1)} onAuthRequired={handleAuthRequired} onLoginSuccess={handleLoginSuccess} /></motion.div></SceneCameraProvider></main>;
+  const screenMotionKey = Object.values(rootRoutes).includes(screen) ? 'root-tab' : screen;
+  return <main className="app-shell"><SceneCameraProvider screen={screen} routeId={id}><motion.div className="screen-transition" data-screen={screen} key={screenMotionKey} {...pageMotion}><RenderScreen screen={screen} id={id} go={go} basketState={basketState} courseFlow={courseFlow} onBasketAdded={handleBasketAdded} onBasketItemRemoved={handleBasketItemRemoved} onBasketRetry={() => setBasketRefreshKey((key) => key + 1)} onAuthRequired={handleAuthRequired} onLoginSuccess={handleLoginSuccess} /></motion.div></SceneCameraProvider></main>;
 }

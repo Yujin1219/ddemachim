@@ -2,6 +2,7 @@ package com.ddemachim.server.domain.course.controller;
 
 import com.ddemachim.server.domain.course.dto.CourseCreateRequest;
 import com.ddemachim.server.domain.course.dto.CourseDetailResponse;
+import com.ddemachim.server.domain.course.dto.CourseReplanRequest;
 import com.ddemachim.server.domain.course.dto.CourseStartRequest;
 import com.ddemachim.server.domain.course.dto.CourseSummaryResponse;
 import com.ddemachim.server.domain.course.enums.CourseStatus;
@@ -62,5 +63,22 @@ public class CourseController {
             @RequestBody(required = false) CourseStartRequest request) {
         CourseStartRequest effectiveRequest = request == null ? new CourseStartRequest(false) : request;
         return ResponseEntity.ok(ApiResponse.onSuccess(courseService.start(memberId, courseId, effectiveRequest)));
+    }
+
+    @Operation(summary = "진행 중인 코스 완료")
+    @PostMapping("/{courseId}/complete")
+    public ResponseEntity<ApiResponse<CourseDetailResponse>> complete(
+            @AuthenticationPrincipal Long memberId,
+            @PathVariable Long courseId) {
+        return ResponseEntity.ok(ApiResponse.onSuccess(courseService.complete(memberId, courseId)));
+    }
+
+    @Operation(summary = "체류시간 변경 후 남은 코스 재계산")
+    @PostMapping("/{courseId}/replan")
+    public ResponseEntity<ApiResponse<CourseDetailResponse>> replan(
+            @AuthenticationPrincipal Long memberId,
+            @PathVariable Long courseId,
+            @Valid @RequestBody CourseReplanRequest request) {
+        return ResponseEntity.ok(ApiResponse.onSuccess(courseService.replan(memberId, courseId, request)));
     }
 }

@@ -32,7 +32,7 @@ import com.ddemachim.server.domain.route.enums.RouteStatus;
 import com.ddemachim.server.domain.user.entity.Member;
 import com.ddemachim.server.domain.user.enums.Role;
 import com.ddemachim.server.domain.user.repository.MemberRepository;
-import com.fasterxml.jackson.databind.ObjectMapper;
+import tools.jackson.databind.ObjectMapper;
 import java.time.Clock;
 import java.time.Instant;
 import java.time.LocalDate;

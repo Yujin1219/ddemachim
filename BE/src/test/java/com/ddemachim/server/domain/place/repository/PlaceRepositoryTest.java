@@ -13,13 +13,16 @@ import org.springframework.boot.jdbc.test.autoconfigure.AutoConfigureTestDatabas
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.jdbc.core.JdbcTemplate;
+import org.locationtech.jts.geom.Coordinate;
+import org.locationtech.jts.geom.GeometryFactory;
+import org.locationtech.jts.geom.PrecisionModel;
 import org.springframework.test.util.ReflectionTestUtils;
 import org.springframework.test.context.jdbc.Sql;
 
 @DataJpaTest
 @AutoConfigureTestDatabase(replace = AutoConfigureTestDatabase.Replace.NONE)
 @Sql(scripts = "/place-trend-test-schema.sql")
-class PlaceRepositoryTest {
+public class PlaceRepositoryTest {
 
     private static final String TEST_DISTRICT = "정렬테스트구";
 
@@ -78,6 +81,22 @@ class PlaceRepositoryTest {
         assertThat(nonFilmingResult.getContent())
                 .extracting(Place::getId)
                 .containsExactly(withoutImage.getId(), imagePlaceWithLowerId.getId(), imagePlaceWithHigherId.getId());
+    }
+
+    @Test
+    void searchForAi_filmingCategoryMatchesFilmingLocationTag() {
+        Place filmingPlace = place("종로 촬영 장소", "https://example.com/filming.jpg");
+        ReflectionTestUtils.setField(filmingPlace, "location",
+                new GeometryFactory(new PrecisionModel(), 4326)
+                        .createPoint(new Coordinate(126.98, 37.57)));
+        entityManager.persist(filmingPlace);
+        entityManager.flush();
+        entityManager.clear();
+
+        var result = placeRepository.searchForAi(
+                "촬영지", TEST_DISTRICT, "FILMING_LOCATION", 10);
+
+        assertThat(result).extracting(Place::getId).containsExactly(filmingPlace.getId());
     }
 
     private static Place place(String name, String imageUrl) {

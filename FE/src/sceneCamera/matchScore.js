@@ -2,8 +2,8 @@ export const MATCH_ANALYSIS = Object.freeze({
   width: 240,
   height: 320,
   intervalMs: 400,
-  edgeThreshold: 72,
-  dilationRadius: 3,
+  edgeThreshold: 54,
+  dilationRadius: 6,
   smoothingAlpha: 0.3,
   minimumReferencePixels: 48,
 });

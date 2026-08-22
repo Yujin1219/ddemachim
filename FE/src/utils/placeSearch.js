@@ -94,7 +94,7 @@ export function mapKakaoPlaceToSearchRow(place) {
     distanceMeters,
     id: `kakao:${place?.providerPlaceId}`,
     externalSource: 'KAKAO',
-    showCongestion: true,
+    showCongestion: false,
     meta: [distanceLabel, address].filter(Boolean).join(' · '),
     labels: {
       content: '카카오 검색',
@@ -128,6 +128,6 @@ export function mapKakaoPlaceToMapCard(place) {
     meta: address,
     badge: '카카오 검색',
     externalSource: 'KAKAO',
-    showCongestion: hasValidCoordinates(place),
+    showCongestion: false,
   };
 }

@@ -6,12 +6,18 @@ import com.ddemachim.server.domain.aiguide.exception.AiGuideException;
 import com.ddemachim.server.domain.course.enums.CourseRouteStrategy;
 import com.ddemachim.server.domain.course.enums.CourseStartType;
 import com.ddemachim.server.domain.course.dto.AiCourseRequest;
+import com.ddemachim.server.domain.place.service.AiPlaceSearchService;
 import com.ddemachim.server.domain.route.enums.RouteMode;
 import com.ddemachim.server.global.mcp.DdemachimMcpTools;
 import com.ddemachim.server.global.properties.AiGuideProperties;
 import java.net.SocketTimeoutException;
 import java.net.http.HttpTimeoutException;
+import java.time.Clock;
 import java.time.Duration;
+import java.time.LocalDate;
+import java.time.LocalTime;
+import java.time.ZoneId;
+import java.time.format.DateTimeParseException;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.LinkedHashMap;
@@ -33,21 +39,29 @@ import org.springframework.web.client.RestClientResponseException;
 import tools.jackson.core.JacksonException;
 import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.ObjectMapper;
+import tools.jackson.databind.node.ObjectNode;
 
 @Component
 @Slf4j
 public class OpenAiResponsesClient implements AiGuideLlmClient {
 
     private static final String RESPONSES_PATH = "/v1/responses";
+    private static final ZoneId SEOUL = ZoneId.of("Asia/Seoul");
     private static final String SYSTEM_INSTRUCTION = """
             당신은 서울 도보 여행 서비스 때마침의 AI 가이드입니다.
             장소, 혼잡도, 이동시간, 코스에 관한 사실은 제공된 때마침 함수 도구를 우선 사용하세요.
             도구 결과에 없는 정보는 추측하지 말고 확인이 필요한 점을 짧게 질문하세요.
             답변은 친절하고 간결한 한국어로 작성하고, 장소를 추천할 때는 근거와 주의사항을 함께 알려주세요.
+            사용자가 단순히 장소를 추천해 달라고 하면 날짜, 시작 시간, 혼잡도 정보를 추가로 요구하지 말고 search_places만 호출해 결과를 추천하세요.
+            사용자가 “경복궁 주변 카페”처럼 명시한 기준 장소 주변을 요청하면 search_places_near_reference를 호출하세요. 이 도구는 기준 장소를 먼저 해석해 좌표를 얻고, 그 반경 안의 때마침 저장 장소만 반환합니다. 기준 장소 자체를 추천 결과에 섞지 마세요.
+            혼잡도, 이동시간 또는 코스 생성은 사용자가 해당 조건을 명시적으로 요청했을 때만 관련 도구를 호출하세요.
+            search_places의 visitDate는 선택 사항이며 장소의 등록일이 아니라 방문 예정일에 운영시간을 확인하기 위한 값입니다. 날짜가 없다는 이유로 장소 추천을 미루지 말고, 등록일 기준으로 검색했다는 표현도 사용하지 마세요.
             주변 검색 좌표는 오직 client_context에 제공된 현재 위치 또는 사용자가 명시한 기준 장소를 검색해 얻은 좌표만 사용하세요. 좌표가 없으면 현재 위치 허용 또는 기준 지역/역을 질문하고 임의 좌표를 만들지 마세요.
             AI 추천 코스에는 create_ai_course를 사용하세요. search_places/search_nearby_places가 반환한 실제 placeId만 사용하고 ID를 만들지 마세요.
             사용자가 반드시 가겠다고 한 장소는 requiredPlaceIds, 나머지 검색 후보는 candidatePlaceIds로 구분하세요. 최종 순서는 직접 정하지 말고 create_ai_course 결과를 설명하세요.
             create_ai_course에 날짜, 시작 시각, 출발 좌표, 사용 가능 시간이 하나라도 없으면 호출하지 말고 빠진 정보만 질문하세요. 이전 대화의 지역·날짜·선택 장소와 현재 답변을 합쳐 판단하세요.
+            단, 사용자가 “지금”, “지금부터”, “바로 시작” 또는 “당장”이라고 하면 client_context.currentTime을 시작 시각, client_context.currentDate를 날짜로 사용하세요. client_context.currentLocation이 제공된 경우에는 그 좌표를 출발 위치로 사용하고 위치를 다시 묻지 마세요.
+            이동 방식이나 빠르게/여유롭게 같은 경로 선호는 사용자에게 필수로 묻지 마세요. create_ai_course의 routePreference와 schedulePreference는 제공되지 않으면 각각 FAST와 BALANCED로 정해 호출하세요.
             기존 create_course는 장바구니 화면의 basketItemId 기반 미리보기 호환 기능이며 AI 추천 코스에는 사용하지 마세요.
             """;
 
@@ -55,13 +69,14 @@ public class OpenAiResponsesClient implements AiGuideLlmClient {
     private final AiGuideProperties properties;
     private final ObjectMapper objectMapper;
     private final DdemachimMcpTools mcpTools;
+    private final Clock clock;
 
     @Autowired
     public OpenAiResponsesClient(
             AiGuideProperties properties,
             ObjectMapper objectMapper,
             DdemachimMcpTools mcpTools) {
-        this(properties, objectMapper, mcpTools, RestClient.builder());
+        this(properties, objectMapper, mcpTools, RestClient.builder(), Clock.system(SEOUL));
     }
 
     OpenAiResponsesClient(
@@ -69,9 +84,19 @@ public class OpenAiResponsesClient implements AiGuideLlmClient {
             ObjectMapper objectMapper,
             DdemachimMcpTools mcpTools,
             RestClient.Builder restClientBuilder) {
+        this(properties, objectMapper, mcpTools, restClientBuilder, Clock.system(SEOUL));
+    }
+
+    private OpenAiResponsesClient(
+            AiGuideProperties properties,
+            ObjectMapper objectMapper,
+            DdemachimMcpTools mcpTools,
+            RestClient.Builder restClientBuilder,
+            Clock clock) {
         this.properties = properties;
         this.objectMapper = objectMapper;
         this.mcpTools = mcpTools;
+        this.clock = clock;
         SimpleClientHttpRequestFactory requestFactory = new SimpleClientHttpRequestFactory();
         requestFactory.setConnectTimeout(durationOrDefault(properties.getConnectTimeout(), Duration.ofSeconds(3)));
         requestFactory.setReadTimeout(durationOrDefault(properties.getReadTimeout(), Duration.ofSeconds(45)));
@@ -88,10 +113,20 @@ public class OpenAiResponsesClient implements AiGuideLlmClient {
             ObjectMapper objectMapper,
             DdemachimMcpTools mcpTools,
             RestClient restClient) {
+        this(properties, objectMapper, mcpTools, restClient, Clock.system(SEOUL));
+    }
+
+    OpenAiResponsesClient(
+            AiGuideProperties properties,
+            ObjectMapper objectMapper,
+            DdemachimMcpTools mcpTools,
+            RestClient restClient,
+            Clock clock) {
         this.properties = properties;
         this.objectMapper = objectMapper;
         this.mcpTools = mcpTools;
         this.restClient = restClient;
+        this.clock = clock;
     }
 
     @Override
@@ -102,6 +137,7 @@ public class OpenAiResponsesClient implements AiGuideLlmClient {
                 ? request.previousResponseId() : null;
         int toolCalls = 0;
         Map<String, Object> failedToolResults = new LinkedHashMap<>();
+        List<Long> recommendedPlaceIds = new ArrayList<>();
 
         for (int round = 0; round < properties.getMaxToolRounds(); round++) {
             JsonNode response = requestResponse(input, previousResponseId);
@@ -110,14 +146,14 @@ public class OpenAiResponsesClient implements AiGuideLlmClient {
             String answer = extractAnswer(response);
             if (functionCalls.isEmpty()) {
                 if (StringUtils.hasText(answer)) {
-                    return new LlmReply(answer, responseId);
+                    return new LlmReply(answer, responseId, List.copyOf(recommendedPlaceIds));
                 }
                 throw new AiGuideException(AiGuideErrorStatus.INVALID_UPSTREAM_RESPONSE);
             }
             if (!StringUtils.hasText(responseId)) {
                 throw new AiGuideException(AiGuideErrorStatus.INVALID_UPSTREAM_RESPONSE);
             }
-            LlmReply clarification = courseClarification(functionCalls, responseId);
+            LlmReply clarification = courseClarification(functionCalls, responseId, request);
             if (clarification != null) {
                 return clarification;
             }
@@ -128,10 +164,11 @@ public class OpenAiResponsesClient implements AiGuideLlmClient {
             input = new ArrayList<>();
             for (JsonNode functionCall : functionCalls) {
                 toolCalls++;
-                FunctionResult functionResult = functionResult(functionCall, failedToolResults);
+                FunctionResult functionResult = functionResult(functionCall, failedToolResults, request);
                 if (functionResult.clarification() != null) {
                     return new LlmReply(functionResult.clarification(), responseId);
                 }
+                appendRecommendedPlaceIds(recommendedPlaceIds, functionResult.result());
                 input.add(functionResult.input());
             }
             previousResponseId = responseId;
@@ -174,6 +211,11 @@ public class OpenAiResponsesClient implements AiGuideLlmClient {
             }
             if (exception.getStatusCode().value() == 401
                     || exception.getStatusCode().value() == 403) {
+                throw new AiGuideException(AiGuideErrorStatus.CONFIGURATION, exception);
+            }
+            if (exception.getStatusCode().value() == 400
+                    || exception.getStatusCode().value() == 404) {
+                // 잘못된 모델명, 요청 형식, base URL 등은 연결 장애가 아니라 설정 문제다.
                 throw new AiGuideException(AiGuideErrorStatus.CONFIGURATION, exception);
             }
             throw new AiGuideException(AiGuideErrorStatus.UPSTREAM_UNAVAILABLE, exception);
@@ -248,8 +290,11 @@ public class OpenAiResponsesClient implements AiGuideLlmClient {
         return body;
     }
 
-    private static List<Map<String, Object>> initialInput(AiGuideRequest request) {
+    private List<Map<String, Object>> initialInput(AiGuideRequest request) {
         List<Map<String, Object>> input = new ArrayList<>();
+        input.add(message("developer", "client_context.currentDate: " + LocalDate.now(clock)
+                + " (Asia/Seoul), client_context.currentTime: " + LocalTime.now(clock).withSecond(0).withNano(0)
+                + ". 오늘/내일/모레와 지금 같은 상대 시간은 이 날짜와 시각을 기준으로 해석하세요."));
         if (request.currentLocation() != null
                 && request.currentLocation().latitude() != null
                 && request.currentLocation().longitude() != null) {
@@ -300,26 +345,34 @@ public class OpenAiResponsesClient implements AiGuideLlmClient {
     }
 
     private FunctionResult functionResult(
-            JsonNode functionCall, Map<String, Object> failedToolResults) {
+            JsonNode functionCall, Map<String, Object> failedToolResults, AiGuideRequest request) {
         String name = textValue(functionCall.path("name"));
         String callId = callId(functionCall);
         try {
-            String toolCallKey = canonicalToolCallKey(name, functionCall.path("arguments"));
+            NormalizedToolArguments normalized = normalizeToolArguments(
+                    name, functionCall.path("arguments"), request);
+            if (normalized.clarification() != null) {
+                return new FunctionResult(null, normalized.clarification(), null);
+            }
+            String toolCallKey = canonicalToolCallKey(name, normalized.arguments());
             Object result;
             if (failedToolResults.containsKey(toolCallKey)) {
                 result = failedToolResults.get(toolCallKey);
             } else {
-                result = executeTool(name, functionCall.path("arguments"));
+                result = executeTool(name, normalized.arguments());
                 if (isFailedToolResult(result)) {
                     failedToolResults.put(toolCallKey, result);
                 }
             }
-            String clarification = createCourseFailureClarification(name, result);
+            String clarification = emptyPlaceSearchClarification(name, result);
+            if (clarification == null) {
+                clarification = createCourseFailureClarification(name, result);
+            }
             Map<String, Object> input = Map.of(
                     "type", "function_call_output",
                     "call_id", callId,
                     "output", objectMapper.writeValueAsString(result));
-            return new FunctionResult(input, clarification);
+            return new FunctionResult(input, clarification, result);
         } catch (AiGuideException exception) {
             throw exception;
         } catch (JacksonException | IllegalArgumentException exception) {
@@ -327,9 +380,120 @@ public class OpenAiResponsesClient implements AiGuideLlmClient {
         }
     }
 
-    private LlmReply courseClarification(List<JsonNode> functionCalls, String interactionId) {
+    private NormalizedToolArguments normalizeToolArguments(
+            String name, JsonNode arguments, AiGuideRequest request)
+            throws JacksonException {
+        JsonNode argumentObject = arguments;
+        if (arguments.isTextual()) {
+            argumentObject = objectMapper.readTree(arguments.asText());
+        }
+        if (argumentObject == null || !argumentObject.isObject()) {
+            throw new AiGuideException(AiGuideErrorStatus.INVALID_TOOL_CALL);
+        }
+        if ("create_ai_course".equals(name)) {
+            enrichImmediateAiCourseArguments((ObjectNode) argumentObject, request);
+        }
+        String dateField = switch (name) {
+            case "search_places" -> "visitDate";
+            case "create_ai_course" -> "date";
+            default -> null;
+        };
+        if (dateField == null || !argumentObject.path(dateField).isTextual()) {
+            return new NormalizedToolArguments(argumentObject, null);
+        }
+        String rawDate = argumentObject.path(dateField).asText().trim();
+        if (!StringUtils.hasText(rawDate)) {
+            return new NormalizedToolArguments(argumentObject, null);
+        }
+        LocalDate resolvedDate = resolveVisitDate(rawDate);
+        if (resolvedDate == null) {
+            log.warn("AI tool date argument could not be normalized: tool={}, field={}", name, dateField);
+            return new NormalizedToolArguments(null,
+                    "방문 날짜를 확인하기 어려워요. 오늘, 내일, 모레 또는 YYYY-MM-DD 형식으로 알려주세요.");
+        }
+        ObjectNode normalized = (ObjectNode) argumentObject;
+        normalized.put(dateField, resolvedDate.toString());
+        return new NormalizedToolArguments(normalized, null);
+    }
+
+    private void enrichImmediateAiCourseArguments(ObjectNode arguments, AiGuideRequest request) {
+        if (!requestsImmediateStart(request)) {
+            return;
+        }
+        if (isMissing(arguments, "date")) {
+            arguments.put("date", LocalDate.now(clock).toString());
+        }
+        if (isMissing(arguments, "startTime")
+                || isCurrentTimeExpression(textValue(arguments.path("startTime")))) {
+            arguments.put("startTime", LocalTime.now(clock).withSecond(0).withNano(0).toString());
+        }
+        if (hasCurrentLocation(request)) {
+            JsonNode startLocation = arguments.path("startLocation");
+            ObjectNode location = startLocation.isObject()
+                    ? (ObjectNode) startLocation : arguments.putObject("startLocation");
+            if (isMissing(location, "latitude")) {
+                location.put("latitude", request.currentLocation().latitude());
+            }
+            if (isMissing(location, "longitude")) {
+                location.put("longitude", request.currentLocation().longitude());
+            }
+            if (isMissing(location, "name")) {
+                location.put("name", "현재 위치");
+            }
+        }
+        if (isMissing(arguments, "routePreference")) {
+            arguments.put("routePreference", AiCourseRequest.RoutePreference.FAST.name());
+        }
+        if (isMissing(arguments, "schedulePreference")) {
+            arguments.put("schedulePreference", AiCourseRequest.SchedulePreference.BALANCED.name());
+        }
+    }
+
+    private static boolean isCurrentTimeExpression(String value) {
+        return "지금".equals(value) || "현재".equals(value) || "현재 시각".equals(value);
+    }
+
+    private static boolean requestsImmediateStart(AiGuideRequest request) {
+        String message = request.message();
+        return StringUtils.hasText(message)
+                && (message.contains("지금") || message.contains("지금부터")
+                || message.contains("바로 시작") || message.contains("당장"));
+    }
+
+    private static boolean hasCurrentLocation(AiGuideRequest request) {
+        return request.currentLocation() != null
+                && request.currentLocation().latitude() != null
+                && request.currentLocation().longitude() != null;
+    }
+
+    private LocalDate resolveVisitDate(String rawDate) {
+        LocalDate today = LocalDate.now(clock);
+        return switch (rawDate) {
+            case "오늘" -> today;
+            case "내일" -> today.plusDays(1);
+            case "모레" -> today.plusDays(2);
+            default -> {
+                try {
+                    yield LocalDate.parse(rawDate);
+                } catch (DateTimeParseException ignored) {
+                    yield null;
+                }
+            }
+        };
+    }
+
+    private LlmReply courseClarification(
+            List<JsonNode> functionCalls, String interactionId, AiGuideRequest request) {
         for (JsonNode functionCall : functionCalls) {
             String toolName = textValue(functionCall.path("name"));
+            if ("create_ai_course".equals(toolName)) {
+                List<String> missing = missingAiCourseInputs(functionCall.path("arguments"), request);
+                if (!missing.isEmpty()) {
+                    return new LlmReply("AI 코스를 만들려면 " + String.join(", ", missing)
+                            + " 정보가 필요해요. 확인해서 알려주시면 추천해드릴게요.", interactionId);
+                }
+                continue;
+            }
             if (!"create_course".equals(toolName)) {
                 continue;
             }
@@ -342,6 +506,40 @@ public class OpenAiResponsesClient implements AiGuideLlmClient {
             }
         }
         return null;
+    }
+
+    private List<String> missingAiCourseInputs(JsonNode arguments, AiGuideRequest request) {
+        if (arguments == null || arguments.isMissingNode() || arguments.isNull()) {
+            return new ArrayList<>(List.of("코스 날짜", "출발 시각", "출발 위치", "사용 가능 시간", "추천 후보 장소"));
+        }
+        if (arguments.isTextual()) {
+            try {
+                arguments = objectMapper.readTree(arguments.asText());
+            } catch (JacksonException exception) {
+                return new ArrayList<>();
+            }
+        }
+        if (!arguments.isObject()) {
+            return new ArrayList<>();
+        }
+
+        List<String> missing = new ArrayList<>();
+        boolean immediateStart = requestsImmediateStart(request);
+        if (isMissing(arguments, "date") && !immediateStart) missing.add("코스 날짜");
+        if (isMissing(arguments, "startTime") && !immediateStart) missing.add("출발 시각");
+        if (isMissing(arguments, "availableMinutes")) missing.add("사용 가능 시간");
+        JsonNode startLocation = arguments.path("startLocation");
+        if (!startLocation.isObject()) {
+            if (!hasCurrentLocation(request)) missing.add("출발 위치");
+        } else if (isMissing(startLocation, "latitude") || isMissing(startLocation, "longitude")) {
+            if (!hasCurrentLocation(request)) missing.add("출발 위치 좌표");
+        }
+        JsonNode required = arguments.path("requiredPlaceIds");
+        JsonNode candidates = arguments.path("candidatePlaceIds");
+        if ((!required.isArray() || required.isEmpty()) && (!candidates.isArray() || candidates.isEmpty())) {
+            missing.add("추천 후보 장소");
+        }
+        return missing;
     }
 
     private List<String> missingCourseInputs(JsonNode arguments) {
@@ -438,6 +636,36 @@ public class OpenAiResponsesClient implements AiGuideLlmClient {
         };
     }
 
+    private static String emptyPlaceSearchClarification(String name, Object result) {
+        if (!"search_places".equals(name)
+                || !(result instanceof DdemachimMcpTools.McpToolResponse<?> response)
+                || !response.isSuccess()
+                || !(response.result() instanceof AiPlaceSearchService.SearchResult searchResult)
+                || !searchResult.places().isEmpty()) {
+            return null;
+        }
+        return "검색 결과가 없어요. 기준 지역 또는 원하는 장소 유형을 조금 더 구체적으로 알려주세요.";
+    }
+
+    private static void appendRecommendedPlaceIds(List<Long> target, Object result) {
+        if (target.size() >= 6) {
+            return;
+        }
+        if (!(result instanceof DdemachimMcpTools.McpToolResponse<?> response) || !response.isSuccess()) {
+            return;
+        }
+        List<Long> ids;
+        if (response.result() instanceof AiPlaceSearchService.SearchResult search) {
+            ids = search.places().stream().map(AiPlaceSearchService.SearchPlace::placeId).toList();
+        } else if (response.result() instanceof AiPlaceSearchService.NearbyResult nearby) {
+            ids = nearby.places().stream().map(AiPlaceSearchService.NearbyPlace::placeId).toList();
+        } else {
+            ids = List.of();
+        }
+        ids.stream().filter(java.util.Objects::nonNull).filter(id -> !target.contains(id)).limit(6 - target.size())
+                .forEach(target::add);
+    }
+
     private String canonicalToolCallKey(String name, JsonNode arguments) throws JacksonException {
         JsonNode argumentObject = arguments;
         if (arguments.isTextual()) {
@@ -499,6 +727,8 @@ public class OpenAiResponsesClient implements AiGuideLlmClient {
                         objectMapper.readValue(argumentJson, DdemachimMcpTools.SearchPlacesRequest.class));
                 case "search_nearby_places" -> mcpTools.searchNearbyPlaces(
                         objectMapper.readValue(argumentJson, DdemachimMcpTools.SearchNearbyPlacesRequest.class));
+                case "search_places_near_reference" -> mcpTools.searchPlacesNearReference(
+                        objectMapper.readValue(argumentJson, DdemachimMcpTools.SearchPlacesNearReferenceRequest.class));
                 case "get_place_detail" -> mcpTools.getPlaceDetail(
                         objectMapper.readValue(argumentJson, DdemachimMcpTools.PlaceDetailRequest.class));
                 case "get_crowding" -> mcpTools.getCrowding(
@@ -550,17 +780,23 @@ public class OpenAiResponsesClient implements AiGuideLlmClient {
 
     private static List<Map<String, Object>> functionTools() {
         return List.of(
-                functionTool("search_places", "지역, 자연어 검색어, 복수 카테고리와 방문 날짜로 실제 장소를 검색합니다. 운영시간, 좌표, 기본 체류시간, 태그와 실제 placeId를 반환합니다.",
+                functionTool("search_places", "지역, 자연어 검색어와 복수 카테고리로 실제 장소를 검색합니다. 카테고리는 한국어도 지원합니다: 촬영지=FILMING_LOCATION, 요즘 유행하는 곳·요즘 핫한 곳·요즘 뜨는 곳·요즘 갈만한 곳=BLOG_TREND, 전시=EXHIBITION, 행사=POPUP, 음식점·맛집=RESTAURANT, 카페=CAFE. 단순 장소 추천은 날짜를 묻지 말고 이 도구만 즉시 호출하세요. visitDate는 선택 사항이며 등록일이 아니라 방문 예정일의 운영시간 확인에만 사용합니다. 날짜가 있다면 YYYY-MM-DD로 전달하세요. 운영시간, 좌표, 기본 체류시간, 태그와 실제 placeId를 반환합니다.",
                         properties(
                                 new Schema("query", string()), new Schema("area", string()),
                                 new Schema("categories", arraySchema(string())),
-                                new Schema("visitDate", string()), new Schema("limit", integer())), List.of()),
-                functionTool("search_nearby_places", "브라우저 권한 또는 사용자가 지정한 실제 좌표를 기준으로 PostGIS 반경 검색을 합니다. 좌표가 없으면 절대 호출하거나 추측하지 말고 현재 위치 허용 또는 기준 지역/역을 질문하세요. 거리, 도보시간, 영업 여부, 혼잡도, 태그와 실제 placeId를 반환합니다.",
+                                new Schema("visitDate", date()), new Schema("limit", integer())), List.of()),
+                functionTool("search_nearby_places", "브라우저 권한 또는 사용자가 지정한 실제 좌표를 기준으로 PostGIS 반경 검색을 합니다. category는 촬영지, 요즘 핫한 곳, 전시, 행사, 음식점·맛집, 카페 같은 한국어 표현도 지원합니다. 좌표가 없으면 절대 호출하거나 추측하지 말고 현재 위치 허용 또는 기준 지역/역을 질문하세요. 거리, 도보시간, 영업 여부, 혼잡도, 태그와 실제 placeId를 반환합니다.",
                         properties(new Schema("latitude", number()), new Schema("longitude", number()),
                                 new Schema("category", string()), new Schema("radiusMeters", integer()),
                                 new Schema("query", string()), new Schema("openNow", bool()),
                                 new Schema("limit", integer()), new Schema("at", string())),
                         List.of("latitude", "longitude")),
+                functionTool("search_places_near_reference", "사용자가 말한 기준 장소(예: 경복궁) 주변의 장소를 찾습니다. 먼저 때마침 DB에서 기준 장소를 찾고, 없을 때만 카카오로 좌표를 보완한 뒤, 반경 안의 때마침 저장 장소만 반환합니다. '경복궁 주변 카페' 같은 요청에 사용하세요.",
+                        properties(new Schema("reference", string()), new Schema("category", string()),
+                                new Schema("radiusMeters", integer()), new Schema("query", string()),
+                                new Schema("openNow", bool()), new Schema("limit", integer()),
+                                new Schema("at", string())),
+                        List.of("reference")),
                 functionTool("get_place_detail", "저장된 장소의 상세 정보와 운영 정보를 조회합니다.",
                         properties(new Schema("placeId", integer())), List.of("placeId")),
                 functionTool("get_crowding", "저장된 장소의 현재 또는 지정 시각 혼잡도를 조회합니다.",
@@ -585,7 +821,7 @@ public class OpenAiResponsesClient implements AiGuideLlmClient {
                                 new Schema("strategy", enumSchema(CourseRouteStrategy.values()))),
                         List.of("serviceDate", "desiredStartTime", "start", "places")),
                 functionTool("create_ai_course", "AI 추천 코스 생성 전용입니다. 장바구니/basketItemId를 사용하지 않습니다. 검색 Tool에서 받은 실제 placeId만 사용하고 임의 ID를 만들지 마세요. 날짜, 시작 시간, 출발 위치 좌표, 사용 가능 시간이 부족하면 호출하지 말고 질문하세요. 이전 대화의 정보를 결합하세요. requiredPlaceIds는 사용자가 꼭 가겠다고 한 장소, candidatePlaceIds는 일반 후보입니다. 최종 방문 순서는 서버 CoursePlanner가 결정합니다.",
-                        properties(new Schema("date", string()), new Schema("startTime", string()),
+                        properties(new Schema("date", date()), new Schema("startTime", string()),
                                 new Schema("startLocation", objectSchema(properties(
                                         new Schema("latitude", number()), new Schema("longitude", number()),
                                         new Schema("name", string())), List.of("latitude", "longitude"))),
@@ -638,6 +874,10 @@ public class OpenAiResponsesClient implements AiGuideLlmClient {
         return Map.of("type", "string");
     }
 
+    private static Map<String, Object> date() {
+        return Map.of("type", "string", "format", "date");
+    }
+
     private static Map<String, Object> integer() {
         return Map.of("type", "integer");
     }
@@ -654,7 +894,10 @@ public class OpenAiResponsesClient implements AiGuideLlmClient {
         return node != null && node.isTextual() ? node.asText() : null;
     }
 
-    private record FunctionResult(Map<String, Object> input, String clarification) {
+    private record FunctionResult(Map<String, Object> input, String clarification, Object result) {
+    }
+
+    private record NormalizedToolArguments(JsonNode arguments, String clarification) {
     }
 
     private static String callId(JsonNode functionCall) {

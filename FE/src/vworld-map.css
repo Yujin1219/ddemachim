@@ -39,24 +39,28 @@
   text-align: center;
 }
 
-.vworld-place-marker { --marker-size: 34px; --crowding-fill: rgb(255 255 255 / 78%); --crowding-edge: rgb(100 116 139 / 32%); --crowding-ink: #334155; width: var(--marker-size); height: var(--marker-size); position: relative; display: grid; place-items: center; padding: 0; border: 1px solid rgb(255 255 255 / 86%); border-radius: 50%; color: var(--crowding-ink); background: linear-gradient(145deg, rgb(255 255 255 / 72%), rgb(255 255 255 / 18%) 52%, transparent 53%), var(--crowding-fill); box-shadow: 0 0 0 1px var(--crowding-edge), 0 5px 14px rgb(24 40 61 / 16%), inset 0 1px 0 rgb(255 255 255 / 78%); backdrop-filter: blur(12px) saturate(125%); -webkit-backdrop-filter: blur(12px) saturate(125%); cursor: pointer; transform: translate(var(--marker-offset-x, 0), calc(var(--marker-offset-y, 0) - 1px)); transition: transform 160ms ease, background-color 160ms ease, box-shadow 160ms ease; }
-.vworld-place-marker.is-entering { animation: vworld-marker-in 280ms cubic-bezier(.2,.9,.3,1.2) both; animation-delay: var(--marker-delay, 0ms); }
+.vworld-place-marker { --marker-size: 24px; --crowding-ring: rgb(148 163 184 / 42%); --crowding-halo: transparent; width: var(--marker-size); height: var(--marker-size); position: relative; display: grid; place-items: center; padding: 0; border: 3px solid var(--crowding-ring); border-radius: 50%; color: var(--marker-color, #24364b); background: rgb(255 255 255 / 94%); box-shadow: 0 0 0 4px var(--crowding-halo), 0 4px 10px rgb(24 40 61 / 14%), inset 0 1px 0 rgb(255 255 255 / 90%); backdrop-filter: blur(10px) saturate(115%); -webkit-backdrop-filter: blur(10px) saturate(115%); cursor: pointer; transform: translate(var(--marker-offset-x, 0), calc(var(--marker-offset-y, 0) - 1px)); transition: transform 160ms ease, border-color 180ms ease, box-shadow 180ms ease; }
+.vworld-place-marker.is-entering { animation: vworld-marker-in 300ms cubic-bezier(0.23, 1, 0.32, 1) both; animation-delay: var(--marker-delay, 0ms); }
 .vworld-place-marker.is-entering.is-renumber { animation: none; }
 .vworld-place-marker.is-entering.is-renumber span { animation: vworld-marker-renumber 420ms cubic-bezier(.2,.9,.3,1.05) both; animation-delay: var(--marker-delay, 0ms); transform-origin: center; }
-.vworld-place-marker.is-selected { --marker-size: 42px; z-index: 3; border-width: 2px; box-shadow: 0 0 0 2px var(--crowding-edge), 0 8px 20px rgb(24 40 61 / 20%), inset 0 1px 0 rgb(255 255 255 / 84%); }
-.vworld-place-marker.is-selected::before { position: absolute; width: 180%; height: 180%; border: 2px solid var(--crowding-edge); border-radius: 50%; content: ''; pointer-events: none; will-change: transform, opacity; animation: vworld-marker-pulse 2.4s ease-out infinite; }
+.vworld-place-marker.has-crowding-ring::before { position: absolute; inset: -6px; border: 2px solid var(--crowding-ring); border-radius: 50%; content: ''; opacity: 0; pointer-events: none; will-change: transform, opacity; animation: vworld-crowding-live 2.4s cubic-bezier(0.23, 1, 0.32, 1) infinite; }
+.vworld-place-marker.is-selected { --marker-size: 30px; z-index: 3; color: #fff; background: var(--crowding-ring); border-color: rgb(255 255 255 / 96%); box-shadow: 0 0 0 3px var(--crowding-ring), 0 0 0 8px var(--crowding-halo), 0 7px 16px rgb(24 40 61 / 20%); }
+.vworld-place-marker.is-selected::before { inset: -10px; animation-duration: 1.9s; }
+.vworld-place-marker.is-selected .vworld-place-marker__content { animation: vworld-marker-selected-float 260ms cubic-bezier(0.23, 1, 0.32, 1) both; }
 .vworld-place-marker.is-arrived { z-index: 4; animation: vworld-marker-arrive 640ms cubic-bezier(.2,.9,.3,1.2) both; }
 .vworld-place-marker.is-arrived::after { border: 2px solid var(--crowding-edge); animation: vworld-marker-arrive-ring 640ms ease-out both; }
 .vworld-place-marker::after { position: absolute; inset: -10px; border-radius: 50%; content: ''; }
 .vworld-place-marker__content { width: 100%; height: 100%; display: grid; place-items: center; }
 .vworld-place-marker__content svg { width: 52%; height: 52%; display: block; overflow: visible; }
+.vworld-place-marker__crowding-status { position: absolute; top: calc(100% + 7px); left: 50%; min-width: max-content; padding: 4px 8px; border: 1px solid rgb(255 255 255 / 72%); border-radius: 999px; color: #24364b; background: rgb(255 255 255 / 88%); box-shadow: 0 5px 14px rgb(24 40 61 / 13%); backdrop-filter: blur(12px) saturate(120%); -webkit-backdrop-filter: blur(12px) saturate(120%); font-size: 10px; font-weight: 700; line-height: 14px; pointer-events: none; transform: translateX(-50%); white-space: nowrap; }
+.vworld-place-marker__crowding-status::before { width: 6px; height: 6px; display: inline-block; margin-right: 5px; border-radius: 50%; background: var(--crowding-ring); content: ''; vertical-align: 1px; }
 .vworld-place-marker:hover { transform: translate(var(--marker-offset-x, 0), calc(var(--marker-offset-y, 0) - 3px)) scale(1.08); }
 .vworld-place-marker:focus-visible { transform: translate(var(--marker-offset-x, 0), calc(var(--marker-offset-y, 0) - 3px)) scale(1.08); outline: 2px solid #172033; outline-offset: 2px; }
-.vworld-place-marker.is-zoom-far { --marker-size: 28px; }
-.vworld-place-marker.is-zoom-mid { --marker-size: 34px; }
-.vworld-place-marker.is-zoom-near { --marker-size: 38px; }
-.vworld-place-marker.is-selected { --marker-size: 42px; }
-.vworld-place-marker.is-numbered { --marker-size: 30px; border-width: 2px; font-size: 11px; font-weight: 700; line-height: 1; }
+.vworld-place-marker.is-zoom-far { --marker-size: 20px; }
+.vworld-place-marker.is-zoom-mid { --marker-size: 24px; }
+.vworld-place-marker.is-zoom-near { --marker-size: 28px; }
+.vworld-place-marker.is-selected { --marker-size: 30px; }
+.vworld-place-marker.is-numbered { --marker-size: 23px; font-size: 9px; font-weight: 700; line-height: 1; }
 .vworld-place-marker.is-numbered .vworld-place-marker__content { display: grid; }
 .vworld-place-marker.is-restaurant, .vworld-place-cluster.is-restaurant { --marker-color: #dc2626; }
 .vworld-place-marker.is-cafe-dessert, .vworld-place-cluster.is-cafe-dessert { --marker-color: #b45309; }
@@ -72,36 +76,55 @@
 .vworld-place-marker.is-walk, .vworld-place-cluster.is-walk { --marker-color: #0f766e; }
 .vworld-place-marker.is-photo-spot, .vworld-place-cluster.is-photo-spot { --marker-color: #4f46e5; }
 .vworld-place-marker.is-filming, .vworld-place-cluster.is-filming { --marker-color: #7c3aed; }
+.vworld-place-marker:not(.is-numbered) { --marker-color: #24364b; }
 .vworld-place-marker.is-search { --marker-size: 38px; }
-.vworld-place-marker.is-crowding-relaxed { --crowding-fill: rgb(222 247 233 / 78%); --crowding-edge: rgb(24 133 83 / 48%); --crowding-ink: #12643f; }
-.vworld-place-marker.is-crowding-normal { --crowding-fill: rgb(224 236 255 / 80%); --crowding-edge: rgb(23 88 189 / 46%); --crowding-ink: #174da4; }
-.vworld-place-marker.is-crowding-crowded { --crowding-fill: rgb(255 237 213 / 82%); --crowding-edge: rgb(194 65 12 / 48%); --crowding-ink: #9a3412; }
-.vworld-place-marker.is-crowding-very-crowded { --crowding-fill: rgb(254 226 226 / 82%); --crowding-edge: rgb(220 38 38 / 48%); --crowding-ink: #b42318; }
-.vworld-place-cluster { min-width: var(--cluster-size, 28px); height: var(--cluster-size, 28px); display: grid; place-items: center; padding: 0 7px; border: 1px solid rgb(255 255 255 / 86%); border-radius: 999px; color: var(--marker-color, #1f4fbf); background: color-mix(in srgb, var(--marker-color, #1f4fbf) 16%, rgb(255 255 255 / 84%)); box-shadow: 0 0 0 1px color-mix(in srgb, var(--marker-color, #1f4fbf) 34%, transparent), 0 5px 14px rgb(24 40 61 / 14%), inset 0 1px 0 rgb(255 255 255 / 76%); backdrop-filter: blur(10px) saturate(120%); -webkit-backdrop-filter: blur(10px) saturate(120%); font-size: 10px; font-weight: 800; line-height: 1; cursor: pointer; transition: transform 160ms ease; }
+.vworld-place-marker.is-ring-relaxed { --crowding-ring: #22a06b; --crowding-halo: rgb(34 160 107 / 14%); }
+.vworld-place-marker.is-ring-moderate { --crowding-ring: #f59e0b; --crowding-halo: rgb(245 158 11 / 15%); }
+.vworld-place-marker.is-ring-crowded { --crowding-ring: #ef4444; --crowding-halo: rgb(239 68 68 / 16%); }
+.vworld-place-cluster { min-width: var(--cluster-size, 28px); height: var(--cluster-size, 28px); display: grid; place-items: center; padding: 0 7px; border: 1px solid rgb(255 255 255 / 82%); border-radius: 999px; color: #24364b; background: rgb(255 255 255 / 82%); box-shadow: 0 5px 12px rgb(24 40 61 / 12%), inset 0 1px 0 rgb(255 255 255 / 72%); backdrop-filter: blur(10px) saturate(120%); -webkit-backdrop-filter: blur(10px) saturate(120%); font-size: 10px; font-weight: 800; line-height: 1; cursor: pointer; transition: transform 160ms ease; }
 .vworld-place-cluster.is-entering { animation: vworld-cluster-in 300ms cubic-bezier(.2,.9,.3,1.2) both; animation-delay: var(--marker-delay, 0ms); }
 .vworld-place-cluster.is-zoom-far { --cluster-size: 26px; font-size: 9px; }
 .vworld-place-cluster.is-zoom-mid { --cluster-size: 28px; }
 .vworld-place-cluster.is-zoom-near { --cluster-size: 30px; }
 .vworld-place-cluster:hover { transform: translateY(-2px) scale(1.05); }
 .vworld-place-cluster:focus-visible { transform: translateY(-2px) scale(1.05); outline: 2px solid #172033; outline-offset: 2px; }
-.vworld-user-location-marker { width: 26px; height: 26px; display: grid; place-items: center; border: 3px solid #fff; border-radius: 50%; background: #5b9cf5; box-shadow: 0 3px 10px rgb(24 40 61 / 24%); pointer-events: none; }
+.vworld-user-location-marker { width: 26px; height: 26px; position: relative; display: grid; place-items: center; border: 1px solid rgba(255,255,255,.86); border-radius: 50%; background: linear-gradient(145deg, rgba(235,249,255,.94), rgba(91,174,232,.7)); box-shadow: inset 0 1px 0 rgba(255,255,255,.9), 0 4px 12px rgb(24 40 61 / 24%); backdrop-filter: blur(12px) saturate(165%); -webkit-backdrop-filter: blur(12px) saturate(165%); pointer-events: none; }
+.vworld-user-location-marker::before, .vworld-user-location-marker::after { position: absolute; inset: -7px; border: 2px solid rgb(91 174 232 / 48%); border-radius: 50%; content: ''; animation: vworld-user-location-pulse 2.4s cubic-bezier(0.23, 1, 0.32, 1) infinite; }
+.vworld-user-location-marker::after { animation-delay: 1.2s; }
 .vworld-user-location-dot { width: 7px; height: 7px; display: block; border-radius: 50%; background: #fff; }
 .vworld-route-spark-overlay, .vworld-route-spark { pointer-events: none !important; }
+.course-preview-stage .vworld-place-marker.is-numbered { --marker-size: 20px; border: 2px solid #fff; color: #fff; background: #5b9cf5; box-shadow: 0 3px 8px rgb(24 40 61 / 18%); font-size: 9px; }
+.course-preview-stage .vworld-place-marker.is-numbered.is-selected { --marker-size: 25px; background: #3972be; box-shadow: 0 4px 10px rgb(24 40 61 / 24%); }
+.course-preview-stage .vworld-place-marker.is-numbered.is-selected .vworld-place-marker__content { animation: course-preview-marker-select 260ms var(--ease-out) both; }
+@keyframes course-preview-marker-select { 0% { transform: scale(.85); } 58% { transform: scale(1.08); } 100% { transform: scale(1); } }
 .vworld-route-spark { width: 9px; height: 9px; display: block; border-radius: 50%; background: #fff; box-shadow: 0 0 0 3px rgb(37 99 235 / 40%), 0 0 14px 5px rgb(37 99 235 / 55%); animation: vworld-route-spark-pulse 700ms ease-in-out infinite; }
 
 @keyframes vworld-marker-in {
-  from { opacity: 0; transform: translate(var(--marker-offset-x, 0), calc(var(--marker-offset-y, 0) - 10px)) scale(.55); }
-  to { opacity: 1; transform: translate(var(--marker-offset-x, 0), calc(var(--marker-offset-y, 0) - 1px)) scale(1); }
+  0% { opacity: 0; transform: translate(var(--marker-offset-x, 0), calc(var(--marker-offset-y, 0) - 10px)) scale(.6); }
+  72% { opacity: 1; transform: translate(var(--marker-offset-x, 0), calc(var(--marker-offset-y, 0) - 1px)) scale(1.08); }
+  100% { opacity: 1; transform: translate(var(--marker-offset-x, 0), calc(var(--marker-offset-y, 0) - 1px)) scale(1); }
 }
 @keyframes vworld-cluster-in {
   0% { opacity: 0; transform: scale(.5); }
   62% { opacity: 1; transform: scale(1.16); }
   100% { opacity: 1; transform: scale(1); }
 }
-@keyframes vworld-marker-pulse {
-  0% { opacity: .9; transform: scale(.65); }
-  41.67% { opacity: 0; transform: scale(1.22); }
-  83.33%, 100% { opacity: .9; transform: scale(.65); }
+@keyframes vworld-crowding-live {
+  0% { opacity: .28; transform: scale(.8); }
+  62%, 100% { opacity: 0; transform: scale(1.55); }
+}
+@keyframes vworld-marker-selected-float {
+  0% { transform: translateY(0); }
+  55% { transform: translateY(-4px); }
+  100% { transform: translateY(0); }
+}
+@keyframes vworld-hot-marker-ripple {
+  0% { opacity: .5; transform: scale(.7); }
+  100% { opacity: 0; transform: scale(1.7); }
+}
+@keyframes vworld-user-location-pulse {
+  0% { opacity: .52; transform: scale(.72); }
+  100% { opacity: 0; transform: scale(1.7); }
 }
 @keyframes vworld-marker-renumber {
   0% { opacity: 0; transform: rotateX(-84deg); }
@@ -122,10 +145,9 @@
   50% { transform: scale(1.3); }
 }
 @media (prefers-reduced-motion: reduce) {
-  .vworld-place-marker.is-selected::before { animation: none; opacity: .45; }
-  .vworld-place-marker.is-entering, .vworld-place-marker.is-entering.is-renumber span, .vworld-place-cluster.is-entering, .vworld-place-marker.is-arrived, .vworld-place-marker.is-arrived::after, .vworld-route-spark { animation: none; }
+  .vworld-place-marker.is-entering, .vworld-place-marker.is-entering.is-renumber span, .vworld-place-marker.is-selected .vworld-place-marker__content, .vworld-place-marker.is-hot::after, .vworld-place-cluster.is-entering, .vworld-place-marker.is-arrived, .vworld-place-marker.is-arrived::after, .vworld-user-location-marker::before, .vworld-user-location-marker::after, .vworld-route-spark { animation: none; }
 }
 @media (prefers-reduced-transparency: reduce) {
-  .vworld-place-marker { background: color-mix(in srgb, var(--crowding-ink) 12%, #fff); backdrop-filter: none; -webkit-backdrop-filter: none; }
-  .vworld-place-cluster { background: color-mix(in srgb, var(--marker-color, #1f4fbf) 14%, #fff); backdrop-filter: none; -webkit-backdrop-filter: none; }
+  .vworld-place-marker { background: #fff; backdrop-filter: none; -webkit-backdrop-filter: none; }
+  .vworld-place-cluster { background: #fff; backdrop-filter: none; -webkit-backdrop-filter: none; }
 }

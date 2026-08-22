@@ -29,8 +29,8 @@ export function CongestionBadge({ congestion, className = '', compact = false })
   );
 }
 
-export function CongestionPointBadge({ longitude, latitude, className = 'congestion-detail-badge' }) {
+export function CongestionPointBadge({ longitude, latitude, className = 'congestion-detail-badge', compact = false }) {
   const congestion = useMockCrowdingAtPoint(longitude, latitude);
 
-  return <CongestionBadge congestion={congestion} className={className} />;
+  return <CongestionBadge congestion={congestion} className={className} compact={compact} />;
 }

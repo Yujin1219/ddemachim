@@ -14,6 +14,7 @@ import com.ddemachim.server.domain.place.dto.PlaceDetailResponse;
 import com.ddemachim.server.domain.place.dto.PlaceSummaryResponse;
 import com.ddemachim.server.domain.place.service.PlaceQueryService;
 import com.ddemachim.server.domain.place.service.AiPlaceSearchService;
+import com.ddemachim.server.domain.place.service.AiPlaceReferenceSearchService;
 import com.ddemachim.server.domain.route.dto.RouteComparisonRequest;
 import com.ddemachim.server.domain.route.dto.RouteComparisonResponse;
 import com.ddemachim.server.domain.route.enums.RouteMode;
@@ -50,6 +51,7 @@ public class DdemachimMcpTools {
     private final RouteComparisonService routeComparisonService;
     private final CoursePreviewService coursePreviewService;
     private final AiPlaceSearchService aiPlaceSearchService;
+    private final AiPlaceReferenceSearchService aiPlaceReferenceSearchService;
     private final AiCourseService aiCourseService;
 
     @Autowired
@@ -59,12 +61,14 @@ public class DdemachimMcpTools {
             RouteComparisonService routeComparisonService,
             CoursePreviewService coursePreviewService,
             AiPlaceSearchService aiPlaceSearchService,
+            AiPlaceReferenceSearchService aiPlaceReferenceSearchService,
             AiCourseService aiCourseService) {
         this.placeQueryService = placeQueryService;
         this.crowdingService = crowdingService;
         this.routeComparisonService = routeComparisonService;
         this.coursePreviewService = coursePreviewService;
         this.aiPlaceSearchService = aiPlaceSearchService;
+        this.aiPlaceReferenceSearchService = aiPlaceReferenceSearchService;
         this.aiCourseService = aiCourseService;
     }
 
@@ -73,7 +77,18 @@ public class DdemachimMcpTools {
             CrowdingService crowdingService,
             RouteComparisonService routeComparisonService,
             CoursePreviewService coursePreviewService) {
-        this(placeQueryService, crowdingService, routeComparisonService, coursePreviewService, null, null);
+        this(placeQueryService, crowdingService, routeComparisonService, coursePreviewService, null, null, null);
+    }
+
+    public DdemachimMcpTools(
+            PlaceQueryService placeQueryService,
+            CrowdingService crowdingService,
+            RouteComparisonService routeComparisonService,
+            CoursePreviewService coursePreviewService,
+            AiPlaceSearchService aiPlaceSearchService,
+            AiCourseService aiCourseService) {
+        this(placeQueryService, crowdingService, routeComparisonService, coursePreviewService,
+                aiPlaceSearchService, null, aiCourseService);
     }
 
     @McpTool(
@@ -122,6 +137,30 @@ public class DdemachimMcpTools {
             return failure(INVALID_INPUT_CODE, "유효한 현재 위치 좌표가 필요합니다.", null);
         } catch (RuntimeException exception) {
             return failure(INTERNAL_ERROR_CODE, "주변 장소 검색을 처리할 수 없습니다.", null);
+        }
+    }
+
+    @McpTool(
+            name = "search_places_near_reference",
+            description = "Resolves a named landmark such as 경복궁 first, then searches only saved ddemachim places in the requested radius. It uses Kakao only as a coordinate fallback and never returns Kakao results as recommendations.",
+            generateOutputSchema = true)
+    public McpToolResponse<AiPlaceReferenceSearchService.NearReferenceResult> searchPlacesNearReference(
+            @McpToolParam(description = "Named landmark and nearby place filters", required = true)
+            SearchPlacesNearReferenceRequest request) {
+        if (request == null || !org.springframework.util.StringUtils.hasText(request.reference())) {
+            return failure(INVALID_INPUT_CODE, "기준 장소 이름이 필요합니다.", null);
+        }
+        try {
+            if (aiPlaceReferenceSearchService == null) {
+                return failure(INTERNAL_ERROR_CODE, "기준 장소 주변 검색이 설정되지 않았습니다.", null);
+            }
+            return success(aiPlaceReferenceSearchService.search(new AiPlaceReferenceSearchService.NearReferenceCondition(
+                    request.reference(), request.category(), request.radiusMeters(), request.query(),
+                    request.openNow(), request.limit(), request.at())));
+        } catch (IllegalArgumentException exception) {
+            return failure(INVALID_INPUT_CODE, "유효한 기준 장소 이름이 필요합니다.", null);
+        } catch (RuntimeException exception) {
+            return failure(INTERNAL_ERROR_CODE, "기준 장소 주변 검색을 처리할 수 없습니다.", null);
         }
     }
 
@@ -318,6 +357,16 @@ public class DdemachimMcpTools {
     public record SearchNearbyPlacesRequest(
             Double latitude,
             Double longitude,
+            String category,
+            Integer radiusMeters,
+            String query,
+            Boolean openNow,
+            Integer limit,
+            OffsetDateTime at) {
+    }
+
+    public record SearchPlacesNearReferenceRequest(
+            String reference,
             String category,
             Integer radiusMeters,
             String query,

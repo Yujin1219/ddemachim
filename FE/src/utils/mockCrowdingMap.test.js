@@ -122,6 +122,8 @@ test('adds a grid level class and status-oriented accessible wording to a covere
     ariaLabel: '3번 북촌한옥청보리 장소 보기 · 혼잡도 붐빔',
     className: 'is-crowding-very-crowded',
     levelLabel: '붐빔',
+    ringTone: 'crowded',
+    statusLabel: '붐빔',
   });
   assert.deepEqual(getMockCrowdingMarkerPresentation({
     placeName: '격자 밖 장소',
@@ -132,6 +134,20 @@ test('adds a grid level class and status-oriented accessible wording to a covere
     className: '',
     levelLabel: null,
   });
+});
+
+test('maps four congestion data levels to the three marker-ring tones', () => {
+  const presentations = ['RELAXED', 'NORMAL', 'CROWDED', 'VERY_CROWDED'].map((level) => (
+    getMockCrowdingMarkerPresentation({
+      placeName: '장소',
+      grid: { ...GRID, level, levelLabel: '' },
+    })
+  ));
+
+  assert.deepEqual(
+    presentations.map(({ ringTone }) => ringTone),
+    ['relaxed', 'moderate', 'moderate', 'crowded'],
+  );
 });
 
 test('reconciles a selected grid to refreshed score and slot data or clears it outside the viewport', () => {

@@ -29,7 +29,7 @@ export function formatCourseDateLabel(value) {
   const date = new Date(Number(year), Number(month) - 1, Number(day));
   if (Number.isNaN(date.getTime())) return '선택 필요';
   const weekdays = ['일요일', '월요일', '화요일', '수요일', '목요일', '금요일', '토요일'];
-  return `${Number(month)}월 ${Number(day)}일 ${weekdays[date.getDay()]}`;
+  return `${Number(month)}월 ${Number(day)}일 · ${weekdays[date.getDay()]}`;
 }
 
 export function formatCourseTimeLabel(value) {

@@ -154,10 +154,10 @@ test('formats valid congestion scores into four Korean levels and omits malforme
   assert.equal(formatCongestionLevel(101), null);
 });
 
-test('rejects malformed, empty, and FAST-missing preview responses', () => {
+test('rejects malformed and empty preview responses while accepting a saved single-strategy course', () => {
   assert.equal(normalizeCoursePreview(null), null);
   assert.equal(normalizeCoursePreview({ options: [] }), null);
-  assert.equal(normalizeCoursePreview({ options: [option('EASY', [stop(1)])] }), null);
+  assert.equal(normalizeCoursePreview({ options: [option('EASY', [stop(1)])] })?.strategy, 'EASY');
   assert.equal(normalizeCoursePreview({ options: [option('FAST', [])] }), null);
   assert.equal(normalizeCoursePreview({ options: [{ strategy: 'FAST', stops: null }] }), null);
 });
@@ -395,7 +395,7 @@ test('builds the exact preview payload and validates the one-to-five unique plac
   });
   assert.equal(validateCoursePreviewRequest(payload), null);
   assert.equal(validateCoursePreviewRequest({ ...payload, places: [] }), '코스에 포함할 장소를 1개 이상 담아주세요.');
-  assert.equal(validateCoursePreviewRequest({ ...payload, places: Array.from({ length: 6 }, (_, index) => ({ basketItemId: index + 1, dwellMinutes: 60, arrivalDeadline: null })) }), '코스에는 장소를 최대 5개까지 담을 수 있어요.');
+  assert.equal(validateCoursePreviewRequest({ ...payload, places: Array.from({ length: 6 }, (_, index) => ({ basketItemId: index + 1, dwellMinutes: 60, arrivalDeadline: null })) }), null);
   assert.equal(validateCoursePreviewRequest({ ...payload, places: [payload.places[0], payload.places[0]] }), '같은 장소는 코스에 한 번만 담을 수 있어요.');
 });
 

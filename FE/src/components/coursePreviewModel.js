@@ -65,7 +65,6 @@ export function validateCoursePreviewRequest(payload) {
 
   const places = Array.isArray(payload?.places) ? payload.places : [];
   if (places.length === 0) return '코스에 포함할 장소를 1개 이상 담아주세요.';
-  if (places.length > 5) return '코스에는 장소를 최대 5개까지 담을 수 있어요.';
   const settingsValid = places.every((place) => {
     const basketItemId = place?.basketItemId;
     const dwellMinutes = place?.dwellMinutes;
@@ -150,7 +149,7 @@ function sanitizeCoursePreviewPlaceName(value) {
 export function normalizeCoursePreviewFailure(result, payload) {
   if (!result || typeof result !== 'object' || Array.isArray(result)) return null;
   const places = payload?.places;
-  if (!Array.isArray(places) || places.length < 1 || places.length > 5) return null;
+  if (!Array.isArray(places) || places.length < 1) return null;
   const basketItemIds = places.map((place) => place?.basketItemId);
   if (basketItemIds.some((id) => !Number.isSafeInteger(id) || id <= 0)) return null;
   if (new Set(basketItemIds).size !== basketItemIds.length) return null;
@@ -258,6 +257,9 @@ function normalizeStep(step) {
     distanceMeters: finiteNumber(step?.distanceMeters),
     description: step?.description || null,
     geometry: normalizeGeometry(step?.geometry),
+    latitude: finiteNumber(step?.latitude),
+    longitude: finiteNumber(step?.longitude),
+    turnType: finiteNumber(step?.turnType),
   };
 }
 
@@ -449,6 +451,7 @@ function normalizeStop(stop) {
     ...stop,
     sequenceNo: finiteNumber(stop?.sequenceNo),
     basketItemId: finiteNumber(stop?.basketItemId),
+    placeId: finiteNumber(stop?.placeId),
     latitude: finiteNumber(stop?.latitude),
     longitude: finiteNumber(stop?.longitude),
     defaultDwellMinutes: finiteNumber(stop?.defaultDwellMinutes),
@@ -520,7 +523,7 @@ export function normalizeCoursePreview(response) {
       .map((option) => normalizeOption(response, option))
       .filter(Boolean)
     : [];
-  const fast = options.find((option) => option.strategy === 'FAST');
-  if (!fast) return null;
-  return { ...fast, options };
+  const baseline = options.find((option) => option.strategy === 'FAST') || options[0];
+  if (!baseline) return null;
+  return { ...baseline, options };
 }

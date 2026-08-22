@@ -110,7 +110,12 @@ public interface PlaceRepository extends JpaRepository<Place, Long> {
                     from place p
                     left join place_category c on p.category_id = c.id
                     where p.location is not null
-                    and (:categories is null or c.code = any(string_to_array(:categories, ',')))
+                    and (:categories is null
+                        or c.code = any(string_to_array(:categories, ','))
+                        or ('FILMING_LOCATION' = any(string_to_array(:categories, ','))
+                            and 'FILMING_LOCATION' = any(p.tags))
+                        or ('BLOG_TREND' = any(string_to_array(:categories, ','))
+                            and 'BLOG_TREND' = any(p.tags)))
                     and (:area is null or p.district ilike concat('%', cast(:area as text), '%')
                         or p.neighborhood ilike concat('%', cast(:area as text), '%')
                         or p.road_address ilike concat('%', cast(:area as text), '%')
@@ -139,7 +144,10 @@ public interface PlaceRepository extends JpaRepository<Place, Long> {
                     from place p
                     left join place_category c on p.category_id = c.id
                     where p.location is not null
-                    and (:category is null or c.code = :category)
+                    and (:category is null
+                        or c.code = :category
+                        or (:category = 'FILMING_LOCATION' and 'FILMING_LOCATION' = any(p.tags))
+                        or (:category = 'BLOG_TREND' and 'BLOG_TREND' = any(p.tags)))
                     and (:query is null or :category is not null
                         or p.name ilike concat('%', cast(:query as text), '%')
                         or p.description ilike concat('%', cast(:query as text), '%')

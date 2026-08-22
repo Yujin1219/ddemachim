@@ -4,12 +4,14 @@ import com.ddemachim.server.domain.course.dto.CourseCreateRequest;
 import com.ddemachim.server.domain.course.dto.CourseDetailResponse;
 import com.ddemachim.server.domain.course.dto.CoursePreviewRequest;
 import com.ddemachim.server.domain.course.dto.CoursePreviewResponse;
+import com.ddemachim.server.domain.course.dto.CourseReplanRequest;
 import com.ddemachim.server.domain.course.dto.CourseStartRequest;
 import com.ddemachim.server.domain.course.dto.CourseSummaryResponse;
 import com.ddemachim.server.domain.course.entity.Course;
 import com.ddemachim.server.domain.course.entity.CourseRevision;
 import com.ddemachim.server.domain.course.entity.CourseStop;
 import com.ddemachim.server.domain.course.enums.CourseReplanReason;
+import com.ddemachim.server.domain.course.enums.CourseRouteStrategy;
 import com.ddemachim.server.domain.course.enums.CourseStartTiming;
 import com.ddemachim.server.domain.course.enums.CourseStatus;
 import com.ddemachim.server.domain.course.exception.CourseErrorStatus;
@@ -25,8 +27,8 @@ import com.ddemachim.server.domain.user.entity.Member;
 import com.ddemachim.server.domain.user.exception.AuthErrorStatus;
 import com.ddemachim.server.domain.user.exception.AuthException;
 import com.ddemachim.server.domain.user.repository.MemberRepository;
-import com.fasterxml.jackson.core.type.TypeReference;
-import com.fasterxml.jackson.databind.ObjectMapper;
+import tools.jackson.core.type.TypeReference;
+import tools.jackson.databind.ObjectMapper;
 import java.math.BigDecimal;
 import java.math.RoundingMode;
 import java.time.Clock;
@@ -205,6 +207,126 @@ public class CourseService {
         return detailFrom(target, revision, optionFrom(revision, stops));
     }
 
+    @Transactional
+    public CourseDetailResponse complete(Long memberId, Long courseId) {
+        Course course = ownedCourse(memberId, courseId);
+        if (course.getStatus() != CourseStatus.IN_PROGRESS) {
+            throw new CourseException(CourseErrorStatus.INVALID_COURSE_STATUS);
+        }
+        course.complete();
+        CourseRevision revision = requireCurrentRevision(course);
+        List<CourseStop> stops = courseStopRepository
+                .findAllByCourseRevisionIdOrderBySequenceNoAsc(revision.getId());
+        return detailFrom(course, revision, optionFrom(revision, stops));
+    }
+
+    @Transactional
+    public CourseDetailResponse replan(Long memberId, Long courseId, CourseReplanRequest request) {
+        Course course = ownedCourse(memberId, courseId);
+        if (course.getStatus() != CourseStatus.IN_PROGRESS) {
+            throw new CourseException(CourseErrorStatus.INVALID_COURSE_STATUS);
+        }
+        CourseRevision currentRevision = requireCurrentRevision(course);
+        List<CourseStop> currentStops = courseStopRepository
+                .findAllByCourseRevisionIdOrderBySequenceNoAsc(currentRevision.getId());
+        int currentIndex = indexOfStop(currentStops, request.currentStopBasketItemId());
+        if (currentIndex < 0 || currentIndex >= currentStops.size() - 1) {
+            throw new CourseException(CourseErrorStatus.INVALID_COURSE_SELECTION);
+        }
+        List<CourseStop> remainingStops = currentStops.subList(currentIndex + 1, currentStops.size());
+        CoursePreviewRequest.Start start = new CoursePreviewRequest.Start(
+                com.ddemachim.server.domain.course.enums.CourseStartType.CURRENT_LOCATION,
+                "현재 위치", request.latitude(), request.longitude());
+        CoursePreviewResponse.Option replanned = currentRevision.getRouteStrategy() == CourseRouteStrategy.QUIET
+                ? replanQuiet(currentRevision, remainingStops, start, request.departureTime())
+                : rescheduleExistingRoute(currentRevision, remainingStops, request.departureTime());
+        CourseRevision revision = courseRevisionRepository.save(CourseRevision.create(
+                course,
+                currentRevision.getRevisionNo() + 1,
+                currentRevision.getRouteStrategy(),
+                currentRevision.getServiceDate(),
+                request.departureTime(),
+                replanned.scheduledEnd(),
+                start.type(), start.name(), start.latitude(), start.longitude(),
+                ALGORITHM_VERSION,
+                CourseReplanReason.USER_EDIT));
+        Map<Long, ResolvedPlace> resolvedByBasketId = remainingStops.stream()
+                .map(this::resolvedFromStop)
+                .collect(Collectors.toMap(ResolvedPlace::basketItemId, Function.identity()));
+        List<CourseStop> stops = replanned.stops().stream()
+                .map(stop -> createStop(revision, stop, resolvedByBasketId.get(stop.basketItemId())))
+                .toList();
+        courseStopRepository.saveAll(stops);
+        course.changeCurrentRevision(revision, stops.size());
+        return detailFrom(course, revision, replanned);
+    }
+
+    private int indexOfStop(List<CourseStop> stops, Long basketItemId) {
+        for (int index = 0; index < stops.size(); index += 1) {
+            if (Objects.equals(stops.get(index).getSourceBasketItemId(), basketItemId)) return index;
+        }
+        return -1;
+    }
+
+    private CoursePreviewResponse.Option replanQuiet(
+            CourseRevision revision,
+            List<CourseStop> remainingStops,
+            CoursePreviewRequest.Start start,
+            LocalTime departureTime) {
+        List<CoursePreviewRequest.Place> places = remainingStops.stream()
+                .map(stop -> new CoursePreviewRequest.Place(
+                        stop.getSourceBasketItemId(), stop.getDwellMinutes(), stop.getArrivalDeadline()))
+                .toList();
+        CoursePreviewRequest request = new CoursePreviewRequest(
+                revision.getServiceDate(), departureTime, start, places);
+        List<ResolvedPlace> resolved = remainingStops.stream().map(this::resolvedFromStop).toList();
+        return coursePreviewService.previewResolved(request, resolved).options().stream()
+                .filter(option -> option.strategy() == CourseRouteStrategy.QUIET)
+                .findFirst()
+                .orElseThrow(() -> new CourseException(CourseErrorStatus.INVALID_COURSE_SELECTION));
+    }
+
+    private CoursePreviewResponse.Option rescheduleExistingRoute(
+            CourseRevision revision,
+            List<CourseStop> remainingStops,
+            LocalTime departureTime) {
+        LocalTime previousDeparture = departureTime;
+        List<CoursePreviewResponse.Stop> stops = new ArrayList<>();
+        for (int index = 0; index < remainingStops.size(); index += 1) {
+            CourseStop stop = remainingStops.get(index);
+            LocalTime arrival = previousDeparture.plusMinutes(Math.max(0, stop.getTravelMinutesFromPrevious()));
+            LocalTime departure = arrival.plusMinutes(stop.getDwellMinutes());
+            RouteOption route = stop.getSelectedRouteSnapshot() == null
+                    ? null : objectMapper.convertValue(stop.getSelectedRouteSnapshot(), RouteOption.class);
+            stops.add(new CoursePreviewResponse.Stop(
+                    index + 1, stop.getSourceBasketItemId(), stop.getPlaceNameSnapshot(), stop.getAddressSnapshot(),
+                    stop.getLatitudeSnapshot(), stop.getLongitudeSnapshot(), stop.getDefaultDwellMinutes(), stop.getDwellMinutes(),
+                    stop.getDwellSource(), stop.getArrivalDeadline(), stop.getArrivalBufferMinutes(), arrival, departure,
+                    stop.getTravelMinutesFromPrevious(), stop.getTravelDistanceMeters(), stop.getAscentMeters(),
+                    stop.getCongestionScoreSnapshot(), stop.getHoursSourceType(), stop.getOpenTimeSnapshot(), stop.getCloseTimeSnapshot(),
+                    stop.getEvent() == null ? null : stop.getEvent().getId(), stop.getEventEndTimeSnapshot(),
+                    route == null ? null : route.mode(), route, null, route,
+                    stop.getPlace() == null ? null : stop.getPlace().getId()));
+            previousDeparture = departure;
+        }
+        int travelMinutes = stops.stream().mapToInt(CoursePreviewResponse.Stop::travelMinutesFromPrevious).sum();
+        int distanceMeters = stops.stream().mapToInt(CoursePreviewResponse.Stop::travelDistanceMeters).sum();
+        return new CoursePreviewResponse.Option(
+                revision.getRouteStrategy(), stops.size(), durationMinutes(departureTime, previousDeparture),
+                travelMinutes, distanceMeters, sumNullable(stops.stream().map(CoursePreviewResponse.Stop::ascentMeters).toList()),
+                averageNullable(stops.stream().map(CoursePreviewResponse.Stop::congestionScore).toList()),
+                departureTime, previousDeparture, stops);
+    }
+
+    private ResolvedPlace resolvedFromStop(CourseStop stop) {
+        return new ResolvedPlace(
+                stop.getSourceBasketItemId(), stop.getPlace(), stop.getUserPlace(), stop.getPlaceNameSnapshot(),
+                stop.getAddressSnapshot(), stop.getLatitudeSnapshot(), stop.getLongitudeSnapshot(),
+                stop.getDefaultDwellMinutes(), stop.getDwellMinutes(), stop.getDwellSource(), stop.getArrivalDeadline(),
+                stop.getHoursSourceType(), stop.getOpenTimeSnapshot(), stop.getCloseTimeSnapshot(), false,
+                stop.getPlace() == null ? null : stop.getPlace().getId());
+    }
+
     private Member lockMember(Long memberId) {
         return memberRepository.findByIdForUpdate(memberId)
                 .orElseThrow(() -> new AuthException(AuthErrorStatus.INVALID_ACCESS_TOKEN));
@@ -292,7 +414,14 @@ public class CourseService {
                 revision.getDesiredEndTime(),
                 course.getPlannedStopCount(),
                 durationMinutes(revision.getDesiredStartTime(), revision.getDesiredEndTime()),
-                stops.isEmpty() ? null : stops.get(0).getPlaceNameSnapshot());
+                stops.isEmpty() ? null : stops.get(0).getPlaceNameSnapshot(),
+                stops.isEmpty() || stops.get(0).getPlace() == null
+                        ? null
+                        : stops.get(0).getPlace().getImageUrl(),
+                stops.stream()
+                        .map(stop -> new CourseSummaryResponse.RouteCoordinate(
+                                stop.getLongitudeSnapshot(), stop.getLatitudeSnapshot()))
+                        .toList());
     }
 
     private CourseDetailResponse detailFrom(
@@ -362,7 +491,8 @@ public class CourseService {
                 route == null ? null : route.mode(),
                 route,
                 null,
-                route);
+                route,
+                stop.getPlace() == null ? null : stop.getPlace().getId());
     }
 
     private CoursePreviewResponse.Option applyRouteSelections(
