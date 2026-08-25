@@ -57,9 +57,35 @@ class AiPlaceSearchServiceTest {
                 "종로 촬영지", "종로", List.of("FILMING"), null, 10));
 
         ArgumentCaptor<String> categoryFilter = ArgumentCaptor.forClass(String.class);
-        verify(places).searchForAi(eq("FILMING_LOCATION"), eq("종로"), categoryFilter.capture(), eq(10));
+        verify(places).searchForAi(eq("FILMING_LOCATION"), eq("종로"), categoryFilter.capture(), eq(20));
         assertThat(categoryFilter.getValue()).isEqualTo("FILMING_LOCATION");
         assertThat(result.places()).hasSize(1);
+    }
+
+    @Test
+    void filmingSearchBalancesCategoriesInsteadOfReturningAnAllRestaurantPrefix() {
+        List<Place> filmingPlaces = List.of(
+                place(1L, "식당 1", "RESTAURANT"),
+                place(2L, "식당 2", "RESTAURANT"),
+                place(3L, "식당 3", "RESTAURANT"),
+                place(4L, "식당 4", "RESTAURANT"),
+                place(5L, "촬영 건물", "ETC"),
+                place(6L, "촬영 카페", "CAFE"),
+                place(7L, "촬영 상점", "SHOPPING"));
+        when(places.searchForAi(any(), any(), any(), anyInt())).thenReturn(filmingPlaces);
+        when(hours.findByPlaceIdInAndDayOfWeek(any(), any(Short.class))).thenReturn(List.of());
+        AiPlaceSearchService service = new AiPlaceSearchService(
+                places, hours, crowding, routes,
+                Clock.fixed(Instant.parse("2026-08-20T07:00:00Z"), ZoneId.of("Asia/Seoul")));
+
+        var result = service.search(new AiPlaceSearchService.SearchCondition(
+                "종로 촬영지", "종로", List.of("FILMING_LOCATION"), null, 5));
+
+        assertThat(result.places()).hasSize(5);
+        assertThat(result.places()).extracting(AiPlaceSearchService.SearchPlace::category)
+                .contains("ETC", "CAFE", "SHOPPING")
+                .filteredOn("RESTAURANT"::equals)
+                .hasSizeLessThanOrEqualTo(2);
     }
 
     @Test
@@ -156,6 +182,20 @@ class AiPlaceSearchServiceTest {
         when(place.getTags()).thenReturn(new String[]{"한식", "조용한"});
         GeometryFactory factory = new GeometryFactory(new PrecisionModel(), 4326);
         when(place.getLocation()).thenReturn(factory.createPoint(new Coordinate(126.973, 37.578)));
+        return place;
+    }
+
+    private static Place place(long id, String name, String categoryCode) {
+        Place place = mock(Place.class);
+        PlaceCategory category = mock(PlaceCategory.class);
+        when(category.getCode()).thenReturn(categoryCode);
+        when(place.getId()).thenReturn(id);
+        when(place.getName()).thenReturn(name);
+        when(place.getCategory()).thenReturn(category);
+        when(place.getTags()).thenReturn(new String[]{"FILMING_LOCATION"});
+        when(place.getDefaultDwellMinutes()).thenReturn(60);
+        GeometryFactory factory = new GeometryFactory(new PrecisionModel(), 4326);
+        when(place.getLocation()).thenReturn(factory.createPoint(new Coordinate(126.97 + id / 1000.0, 37.57)));
         return place;
     }
 }

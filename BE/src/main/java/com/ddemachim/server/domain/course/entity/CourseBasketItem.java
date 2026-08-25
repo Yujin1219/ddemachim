@@ -50,21 +50,44 @@ public class CourseBasketItem {
     @JoinColumn(name = "user_place_id")
     private UserPlace userPlace;
 
+    @Column(name = "image_url", columnDefinition = "text")
+    private String imageUrl;
+
     @CreationTimestamp
     @Column(name = "created_at", nullable = false, updatable = false)
     private OffsetDateTime createdAt;
 
     public static CourseBasketItem forPlace(Member member, Place place) {
+        return forPlace(member, place, null);
+    }
+
+    public static CourseBasketItem forPlace(Member member, Place place, String imageUrl) {
         CourseBasketItem item = new CourseBasketItem();
         item.member = member;
         item.place = place;
+        item.imageUrl = normalizeImageUrl(imageUrl);
         return item;
     }
 
     public static CourseBasketItem forUserPlace(Member member, UserPlace userPlace) {
+        return forUserPlace(member, userPlace, null);
+    }
+
+    public static CourseBasketItem forUserPlace(Member member, UserPlace userPlace, String imageUrl) {
         CourseBasketItem item = new CourseBasketItem();
         item.member = member;
         item.userPlace = userPlace;
+        item.imageUrl = normalizeImageUrl(imageUrl);
         return item;
+    }
+
+    public void updateImageUrl(String imageUrl) {
+        String normalized = normalizeImageUrl(imageUrl);
+        if (normalized != null) this.imageUrl = normalized;
+    }
+
+    private static String normalizeImageUrl(String imageUrl) {
+        if (imageUrl == null || imageUrl.isBlank()) return null;
+        return imageUrl.trim();
     }
 }

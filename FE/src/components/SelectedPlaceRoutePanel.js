@@ -1,4 +1,5 @@
 import React, { Fragment, useEffect } from 'react';
+import { BusFront, CarFront, Footprints } from 'lucide-react';
 
 import {
   buildKakaoTaxiHref,
@@ -17,6 +18,12 @@ export const ROUTE_MODE_LABELS = {
   WALK: '도보',
   TRANSIT: '대중교통',
   TAXI: '택시',
+};
+
+const ROUTE_MODE_ICONS = {
+  WALK: Footprints,
+  TRANSIT: BusFront,
+  TAXI: CarFront,
 };
 
 function h(type, props, ...children) {
@@ -235,25 +242,37 @@ export default function SelectedPlaceRoutePanel({
     h(
       'div',
       { className: 'route-mode-tabs', role: 'group', 'aria-label': '이동 수단 선택' },
-      visibleModes.map((mode) => h(
-        'button',
-        {
-          key: mode,
-          type: 'button',
-          className: `route-mode-tab${resolvedMode === mode ? ' is-active' : ''}`,
-          'aria-pressed': resolvedMode === mode,
-          onClick: () => onModeChange?.(mode),
-        },
-        h('span', { className: 'route-mode-label' }, ROUTE_MODE_LABELS[mode]),
-        h(
-          'span',
-          { className: 'route-mode-metrics' },
-          h('span', { className: 'route-mode-status' }, routeTabStatus(routeStatus, routeData, mode)),
-          routeRowSecondary(routeStatus, routeData, mode)
-            && h('span', { className: 'route-mode-secondary' }, routeRowSecondary(routeStatus, routeData, mode)),
-          fastestMode === mode && h('span', { className: 'route-fastest-badge' }, '가장 빠름'),
-        ),
-      )),
+      visibleModes.map((mode) => {
+        const ModeIcon = ROUTE_MODE_ICONS[mode];
+        return h(
+          'button',
+          {
+            key: mode,
+            type: 'button',
+            className: `route-mode-tab${resolvedMode === mode ? ' is-active' : ''}`,
+            'aria-pressed': resolvedMode === mode,
+            onClick: () => onModeChange?.(mode),
+          },
+          h(
+            'span',
+            { className: 'route-mode-heading' },
+            h(ModeIcon, { className: 'route-mode-icon', size: 17, strokeWidth: 2, 'aria-hidden': true }),
+            h('span', { className: 'route-mode-label' }, ROUTE_MODE_LABELS[mode]),
+          ),
+          h(
+            'span',
+            { className: 'route-mode-metrics' },
+            h('span', { className: 'route-mode-status' }, routeTabStatus(routeStatus, routeData, mode)),
+            routeRowSecondary(routeStatus, routeData, mode)
+              && h('span', { className: 'route-mode-secondary' }, routeRowSecondary(routeStatus, routeData, mode)),
+          ),
+          h(
+            'span',
+            { className: 'route-fastest-slot' },
+            fastestMode === mode && h('span', { className: 'route-fastest-badge' }, '가장 빠름'),
+          ),
+        );
+      }),
     ),
     h(RouteStatusMessage, {
       location,

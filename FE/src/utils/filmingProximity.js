@@ -27,6 +27,13 @@ export function findNearbyFilmingPlace(currentLocation, places, radiusMeters = D
   }, null);
 }
 
+export function openNearbyFilmingScenes(place, navigate) {
+  const placeId = Number(place?.id);
+  if (!Number.isSafeInteger(placeId) || placeId < 1 || typeof navigate !== 'function') return false;
+  navigate('nearby-filming', placeId);
+  return true;
+}
+
 export function uniqueFilmingWorks(locations) {
   const seen = new Set();
   return (Array.isArray(locations) ? locations : []).flatMap((location) => {

@@ -17,8 +17,8 @@ export function getMockCongestionAccessibleLabel(congestion) {
 export function getMockCongestionBadgeLabel(congestion) {
   if (!congestion || congestion.status === 'idle') return null;
   if (congestion.status === 'ready' && congestion.congestionLevel) {
-    return `혼잡도 ${congestion.congestionLevel}`;
+    return congestion.congestionLevel;
   }
-  if (congestion.status === 'loading') return '혼잡도 확인 중';
-  return '혼잡도 없음';
+  if (congestion.status === 'loading') return '확인 중';
+  return '정보 없음';
 }

@@ -222,6 +222,10 @@ export function sendAiGuideMessage({ message, history = [], currentLocation = nu
   }, { signal, auth: true });
 }
 
+export function createAiCoursePreview(proposal, { signal } = {}) {
+  return post('/v1/ai-courses/preview', proposal, { signal, auth: true });
+}
+
 function toQuery(params = {}) {
   const search = new URLSearchParams();
   Object.entries(params).forEach(([key, value]) => {
@@ -288,8 +292,8 @@ export function fetchPlace(id, { signal } = {}) {
   return request(`/places/${id}`, { signal });
 }
 
-export function addPlaceToCourseBasket(placeId, { signal } = {}) {
-  return request(`/course-basket/places/${placeId}`, { method: 'POST', signal, auth: true });
+export function addPlaceToCourseBasket(placeId, { signal, imageUrl } = {}) {
+  return request(`/course-basket/places/${placeId}${toQuery({ imageUrl })}`, { method: 'POST', signal, auth: true });
 }
 
 export function addKakaoPlaceToCourseBasket(place, { signal } = {}) {
@@ -303,6 +307,7 @@ export function addKakaoPlaceToCourseBasket(place, { signal } = {}) {
     longitude: Number(place.longitude),
     latitude: Number(place.latitude),
     phone: place.phone ?? '',
+    imageUrl: place.imageUrl ?? '',
   };
   return post('/course-basket/kakao-places', payload, { signal, auth: true });
 }
@@ -359,8 +364,8 @@ export function fetchMediaContents({ page = 0, size = 10, signal } = {}) {
   return request(`/media-contents${toQuery({ page, size })}`, { signal });
 }
 
-export function fetchFilmingWorks({ contentType, page = 0, size = 12, signal } = {}) {
-  return request(`/media-contents/filming-works${toQuery({ contentType, page, size })}`, { signal });
+export function fetchFilmingWorks({ contentType, keyword, page = 0, size = 12, signal } = {}) {
+  return request(`/media-contents/filming-works${toQuery({ contentType, keyword, page, size })}`, { signal });
 }
 
 export function fetchMediaContent(id, { signal } = {}) {
@@ -369,4 +374,8 @@ export function fetchMediaContent(id, { signal } = {}) {
 
 export function fetchMediaFilmingLocations(mediaContentId, { signal } = {}) {
   return request(`/media-contents/${mediaContentId}/filming-locations`, { signal });
+}
+
+export function fetchFilmingLocation(filmingLocationId, { signal } = {}) {
+  return request(`/filming-locations/${filmingLocationId}`, { signal });
 }

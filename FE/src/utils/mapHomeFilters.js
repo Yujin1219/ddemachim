@@ -28,6 +28,15 @@ export function toggleMapFilterSelection(selectedKeys, filterKey) {
   return SELECTABLE_MAP_HOME_FILTER_KEYS.filter((key) => selected.has(key));
 }
 
+export function prioritizeSelectedMapFilters(filters, selectedKeys) {
+  const selected = new Set(Array.isArray(selectedKeys) ? selectedKeys : []);
+  const items = Array.isArray(filters) ? filters : [];
+  return [
+    ...items.filter((filter) => selected.has(filter.key)),
+    ...items.filter((filter) => !selected.has(filter.key)),
+  ];
+}
+
 export function tagMapItemsForFilter(items, filterKey) {
   if (!Array.isArray(items)) return [];
   return items.map((item) => item?.mapCategoryKey ? item : { ...item, mapCategoryKey: filterKey });
@@ -73,6 +82,19 @@ export function resolveMapClusterTone(places) {
   return 'mixed';
 }
 
+function mapItemKey(item = {}) {
+  return `${item.externalSource || 'INTERNAL'}:${item.id}`;
+}
+
+export function resolveExpandedClusterPlaces(viewportPlaces, expandedPlaces) {
+  const viewport = Array.isArray(viewportPlaces) ? viewportPlaces : [];
+  const expanded = Array.isArray(expandedPlaces) ? expandedPlaces : [];
+  if (!expanded.length) return viewport;
+
+  const viewportByKey = new Map(viewport.map((place) => [mapItemKey(place), place]));
+  return expanded.map((place) => viewportByKey.get(mapItemKey(place)) || place);
+}
+
 export function mapFilterApiParams(filter) {
   if (filter?.type === 'tag') return { tag: filter.code };
   if (filter?.type === 'category' || filter?.type === 'mixed') {
@@ -106,6 +128,34 @@ export function mapEventsForFilter(events, filterKey) {
 function cleanEventTitle(title) {
   const trimmed = String(title || '').trim();
   return trimmed.replace(/^(?:\[[^\]]*\]\s*)+/, '').trim() || trimmed;
+}
+
+export function eventToCourseBasketTarget(event = {}) {
+  if (event.placeId !== null && event.placeId !== undefined && String(event.placeId).trim() !== '') {
+    return { type: 'PLACE', placeId: event.placeId, imageUrl: event.mainImage || event.image || null };
+  }
+  if (event.id === null || event.id === undefined || !hasCoordinates(event)) return null;
+
+  return {
+    type: 'EXTERNAL',
+    place: {
+      providerPlaceId: String(event.id).replace(/^event:/, ''),
+      name: cleanEventTitle(event.title || event.name),
+      categoryName: '전시·행사',
+      categoryGroupCode: 'EVENT',
+      roadAddress: event.venueName || event.placeName || event.roadAddress || '',
+      longitude: Number(event.longitude),
+      latitude: Number(event.latitude),
+      imageUrl: event.mainImage || event.image || null,
+    },
+  };
+}
+
+export function eventDetailActionState(activeTab) {
+  return {
+    showInlineReviewWrite: activeTab === 'review',
+    showStickyReviewWrite: false,
+  };
 }
 
 export function eventToMapMarker(event) {

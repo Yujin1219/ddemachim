@@ -105,6 +105,25 @@ test('renders the selected-place card and origin context above route comparison 
   assert.equal(renderer.root.findAll((node) => node.props['aria-live'] === 'polite').length > 0, true);
 });
 
+test('keeps the fastest badge in a separate row from the long transit label', async () => {
+  const renderer = await renderPanel({
+    routeData: {
+      routes: [
+        route('WALK'),
+        route('TRANSIT', { durationSeconds: 300 }),
+        route('TAXI'),
+      ],
+    },
+  });
+  const transitButton = modeButtons(renderer).find((button) => textContent(button).includes('대중교통'));
+  const heading = transitButton.findByProps({ className: 'route-mode-heading' });
+  const badge = transitButton.findByProps({ className: 'route-fastest-badge' });
+
+  assert.equal(textContent(heading), '대중교통');
+  assert.equal(badge.parent.props.className, 'route-fastest-slot');
+  assert.equal(textContent(badge), '가장 빠름');
+});
+
 test('reports manual mode clicks without a duplicate detail action', async () => {
   const modeChanges = [];
   const renderer = await renderPanel({

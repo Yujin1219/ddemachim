@@ -33,7 +33,7 @@ class PlaceTrendResultRepositoryTest {
     private EntityManager entityManager;
 
     @Test
-    void findLatestVisibleResults_filtersRunAndExpiry_deduplicatesPlaces_andOrdersResults() {
+    void findLatestStoredResults_keepsLatestSuccessfulResults_afterExpiry_andOrdersResults() {
         OffsetDateTime now = OffsetDateTime.now(ZoneOffset.UTC);
         OffsetDateTime future = now.plusDays(1);
         OffsetDateTime past = now.minusDays(1);
@@ -65,18 +65,19 @@ class PlaceTrendResultRepositoryTest {
         entityManager.flush();
         entityManager.clear();
 
-        List<PlaceTrendResult> results = placeTrendResultRepository.findLatestVisibleResults(PageRequest.of(0, 20));
+        List<PlaceTrendResult> results = placeTrendResultRepository.findLatestStoredResults(PageRequest.of(0, 20));
 
         assertThat(results).extracting(result -> result.getPlace().getName())
-                .containsExactly("높은 트렌딩 장소", "최신 결과 장소", "낮은 트렌딩 장소", "관찰 장소");
+                .containsExactly("만료 결과 장소", "높은 트렌딩 장소", "최신 결과 장소", "낮은 트렌딩 장소", "관찰 장소");
         assertThat(results).extracting(PlaceTrendResult::getStatus)
                 .containsExactly(
                         PlaceTrendStatus.TRENDING,
                         PlaceTrendStatus.TRENDING,
                         PlaceTrendStatus.TRENDING,
+                        PlaceTrendStatus.TRENDING,
                         PlaceTrendStatus.WATCH);
         assertThat(results).extracting(PlaceTrendResult::getInterestChangePercent)
-                .containsExactly(30.0, 15.0, 10.0, 99.0);
+                .containsExactly(100.0, 30.0, 15.0, 10.0, 99.0);
 
         PlaceTrendResult detailResult = placeTrendResultRepository
                 .findFirstVisibleByPlaceId(latestPlace.getId())

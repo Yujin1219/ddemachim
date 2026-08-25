@@ -37,6 +37,27 @@ export function routeLegFeatureSpecs(routeLegs, project = (coordinate) => coordi
     .filter(Boolean);
 }
 
+export function orderRouteFeaturesBySequence(features) {
+  if (!Array.isArray(features)) return [];
+  return features
+    .map((feature, index) => {
+      const routeSequence = Number(feature?.get?.('routeSequence'));
+      return {
+        feature,
+        index,
+        routeSequence: Number.isFinite(routeSequence) ? routeSequence : Number.MAX_SAFE_INTEGER,
+      };
+    })
+    .sort((left, right) => left.routeSequence - right.routeSequence || left.index - right.index)
+    .map((item) => item.feature);
+}
+
+export function routeDrawTransition(currentKey, nextKey, shapeChanged = false) {
+  if (!nextKey) return 'cancel';
+  if (currentKey !== nextKey) return 'start';
+  return shapeChanged ? 'replace' : 'keep';
+}
+
 export function lineStringLength(coordinates) {
   if (!Array.isArray(coordinates) || coordinates.length < 2) return 0;
   return coordinates.slice(1).reduce((total, coordinate, index) => {

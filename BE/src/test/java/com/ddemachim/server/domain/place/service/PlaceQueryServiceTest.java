@@ -10,12 +10,15 @@ import static org.mockito.Mockito.when;
 import com.ddemachim.server.domain.place.dto.PlaceDetailResponse;
 import com.ddemachim.server.domain.place.dto.PlaceTrendSummaryResponse;
 import com.ddemachim.server.domain.place.entity.Place;
+import com.ddemachim.server.domain.place.entity.PlaceCategory;
+import com.ddemachim.server.domain.place.entity.PlaceMenu;
 import com.ddemachim.server.domain.place.entity.PlaceTrendResult;
 import com.ddemachim.server.domain.place.enums.PlaceTrendStatus;
 import com.ddemachim.server.domain.place.exception.InvalidFilmingContentTypeException;
 import com.ddemachim.server.domain.place.exception.InvalidPlaceTrendLimitException;
 import com.ddemachim.server.domain.place.repository.PlaceFilmingContentTypeProjection;
 import com.ddemachim.server.domain.place.repository.PlaceOperatingHoursRepository;
+import com.ddemachim.server.domain.place.repository.PlaceMenuRepository;
 import com.ddemachim.server.domain.place.repository.PlaceRepository;
 import com.ddemachim.server.domain.place.repository.PlaceTrendResultRepository;
 import java.time.LocalDate;
@@ -23,6 +26,7 @@ import java.time.OffsetDateTime;
 import java.time.ZoneOffset;
 import java.util.List;
 import java.util.Optional;
+import java.util.Set;
 import org.locationtech.jts.geom.Point;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -43,6 +47,9 @@ class PlaceQueryServiceTest {
 
     @Mock
     private PlaceOperatingHoursRepository placeOperatingHoursRepository;
+
+    @Mock
+    private PlaceMenuRepository placeMenuRepository;
 
     @Mock
     private PlaceTrendResultRepository placeTrendResultRepository;
@@ -111,7 +118,7 @@ class PlaceQueryServiceTest {
                 11.538,
                 measuredAt);
         when(result.getPlace()).thenReturn(place);
-        when(placeTrendResultRepository.findLatestVisibleResults(PageRequest.of(0, 6)))
+        when(placeTrendResultRepository.findLatestStoredResults(PageRequest.of(0, 6)))
                 .thenReturn(List.of(result));
 
         List<PlaceTrendSummaryResponse> trends = placeQueryService.getTrends(6);
@@ -128,7 +135,7 @@ class PlaceQueryServiceTest {
         assertThat(trends.getFirst().trend().interestChangePercent()).isEqualTo(11.538);
         assertThat(trends.getFirst().trend().measuredAt()).isEqualTo(measuredAt);
         assertThat(trends.getFirst().trend().updatedAt()).isEqualTo(LocalDate.of(2026, 8, 13));
-        verify(placeTrendResultRepository).findLatestVisibleResults(PageRequest.of(0, 6));
+        verify(placeTrendResultRepository).findLatestStoredResults(PageRequest.of(0, 6));
     }
 
     @Test
@@ -143,12 +150,12 @@ class PlaceQueryServiceTest {
 
     @Test
     void getTrends_acceptsMaximumPublicLimit() {
-        when(placeTrendResultRepository.findLatestVisibleResults(PageRequest.of(0, 50)))
+        when(placeTrendResultRepository.findLatestStoredResults(PageRequest.of(0, 50)))
                 .thenReturn(List.of());
 
         assertThat(placeQueryService.getTrends(50)).isEmpty();
 
-        verify(placeTrendResultRepository).findLatestVisibleResults(PageRequest.of(0, 50));
+        verify(placeTrendResultRepository).findLatestStoredResults(PageRequest.of(0, 50));
     }
 
     @Test
@@ -156,12 +163,142 @@ class PlaceQueryServiceTest {
         Place place = place(55L, "관찰 중인 장소", "종로구");
         when(placeRepository.findById(55L)).thenReturn(Optional.of(place));
         when(placeOperatingHoursRepository.findByPlaceIdOrderByDayOfWeek(55L)).thenReturn(List.of());
+        when(placeMenuRepository.findByPlaceIdOrderById(55L)).thenReturn(List.of());
         when(placeTrendResultRepository.findFirstVisibleByPlaceId(55L)).thenReturn(Optional.empty());
 
         PlaceDetailResponse result = placeQueryService.getDetail(55L);
 
         assertThat(result.trend()).isNull();
         verify(placeTrendResultRepository).findFirstVisibleByPlaceId(55L);
+    }
+
+    @Test
+    void getDetail_fillsAnEmptyCafeMenuFromOneStableCafeOrDessertDonor() {
+        Place place = place(55L, "메뉴 없는 카페", "종로구");
+        PlaceCategory category = category("CAFE", "카페");
+        List<PlaceMenu> donorMenus = List.of(
+                menu(201L, "카페라테", 5_500),
+                menu(202L, "바스크 치즈케이크", 7_000));
+        when(place.getCategory()).thenReturn(category);
+        when(placeRepository.findById(55L)).thenReturn(Optional.of(place));
+        when(placeOperatingHoursRepository.findByPlaceIdOrderByDayOfWeek(55L)).thenReturn(List.of());
+        when(placeMenuRepository.findByPlaceIdOrderById(55L)).thenReturn(List.of());
+        when(placeMenuRepository.findDistinctPlaceIdsWithMenusByCategoryCodes(
+                Set.of("CAFE", "DESSERT"), 55L)).thenReturn(List.of(12L, 18L));
+        when(placeMenuRepository.findByPlaceIdOrderById(18L)).thenReturn(donorMenus);
+        when(placeTrendResultRepository.findFirstVisibleByPlaceId(55L)).thenReturn(Optional.empty());
+
+        PlaceDetailResponse result = placeQueryService.getDetail(55L);
+
+        assertThat(result.menus()).extracting("name")
+                .containsExactly("카페라테", "바스크 치즈케이크");
+    }
+
+    @Test
+    void getDetail_keepsARealMenuInsteadOfLookingForADemoDonor() {
+        Place place = place(56L, "메뉴 있는 음식점", "종로구");
+        PlaceCategory category = category("RESTAURANT", "음식점");
+        PlaceMenu actualMenu = menu(301L, "비빔밥", 11_000);
+        when(place.getCategory()).thenReturn(category);
+        when(placeRepository.findById(56L)).thenReturn(Optional.of(place));
+        when(placeOperatingHoursRepository.findByPlaceIdOrderByDayOfWeek(56L)).thenReturn(List.of());
+        when(placeMenuRepository.findByPlaceIdOrderById(56L)).thenReturn(List.of(actualMenu));
+        when(placeTrendResultRepository.findFirstVisibleByPlaceId(56L)).thenReturn(Optional.empty());
+
+        PlaceDetailResponse result = placeQueryService.getDetail(56L);
+
+        assertThat(result.menus()).extracting("name").containsExactly("비빔밥");
+        verify(placeMenuRepository, org.mockito.Mockito.never())
+                .findDistinctPlaceIdsWithMenusByCategoryCodes(Set.of("RESTAURANT"), 56L);
+    }
+
+    @Test
+    void getDetail_fillsAnEmptyRestaurantMenuOnlyFromARestaurantDonor() {
+        Place place = place(58L, "메뉴 없는 음식점", "종로구");
+        PlaceCategory category = category("RESTAURANT", "음식점");
+        PlaceMenu donorMenu = menu(401L, "제육볶음", 12_000);
+        when(place.getCategory()).thenReturn(category);
+        when(placeRepository.findById(58L)).thenReturn(Optional.of(place));
+        when(placeOperatingHoursRepository.findByPlaceIdOrderByDayOfWeek(58L)).thenReturn(List.of());
+        when(placeMenuRepository.findByPlaceIdOrderById(58L)).thenReturn(List.of());
+        when(placeMenuRepository.findDistinctPlaceIdsWithMenusByCategoryCodes(
+                Set.of("RESTAURANT"), 58L)).thenReturn(List.of(31L, 32L));
+        when(placeMenuRepository.findByPlaceIdOrderById(31L)).thenReturn(List.of(donorMenu));
+        when(placeTrendResultRepository.findFirstVisibleByPlaceId(58L)).thenReturn(Optional.empty());
+
+        PlaceDetailResponse result = placeQueryService.getDetail(58L);
+
+        assertThat(result.menus()).extracting("name").containsExactly("제육볶음");
+    }
+
+    @Test
+    void getDetail_treatsALegacyEtcCafeAsACafeMenuTarget() {
+        Place place = place(59L, "꿈꾸는커피", "종로구");
+        PlaceCategory category = category("ETC", "기타");
+        PlaceMenu donorMenu = menu(501L, "바닐라 라떼", 5_800);
+        when(place.getCategory()).thenReturn(category);
+        when(placeRepository.findById(59L)).thenReturn(Optional.of(place));
+        when(placeOperatingHoursRepository.findByPlaceIdOrderByDayOfWeek(59L)).thenReturn(List.of());
+        when(placeMenuRepository.findByPlaceIdOrderById(59L)).thenReturn(List.of());
+        when(placeMenuRepository.findDistinctPlaceIdsWithMenusByCategoryCodes(
+                Set.of("CAFE", "DESSERT"), 59L)).thenReturn(List.of(42L));
+        when(placeMenuRepository.findByPlaceIdOrderById(42L)).thenReturn(List.of(donorMenu));
+        when(placeTrendResultRepository.findFirstVisibleByPlaceId(59L)).thenReturn(Optional.empty());
+
+        PlaceDetailResponse result = placeQueryService.getDetail(59L);
+
+        assertThat(result.menus()).extracting("name").containsExactly("바닐라 라떼");
+    }
+
+    @Test
+    void getDetail_treatsALegacyEtcFoodPlaceAsARestaurantMenuTarget() {
+        Place place = place(60L, "능전", "종로구");
+        PlaceCategory category = category("ETC", "기타");
+        PlaceMenu donorMenu = menu(601L, "김치찌개", 10_000);
+        when(place.getCategory()).thenReturn(category);
+        when(place.getTags()).thenReturn(new String[0]);
+        when(placeRepository.findById(60L)).thenReturn(Optional.of(place));
+        when(placeOperatingHoursRepository.findByPlaceIdOrderByDayOfWeek(60L)).thenReturn(List.of());
+        when(placeMenuRepository.findByPlaceIdOrderById(60L)).thenReturn(List.of());
+        when(placeMenuRepository.findDistinctPlaceIdsWithMenusByCategoryCodes(
+                Set.of("RESTAURANT"), 60L)).thenReturn(List.of(43L));
+        when(placeMenuRepository.findByPlaceIdOrderById(43L)).thenReturn(List.of(donorMenu));
+        when(placeTrendResultRepository.findFirstVisibleByPlaceId(60L)).thenReturn(Optional.empty());
+
+        PlaceDetailResponse result = placeQueryService.getDetail(60L);
+
+        assertThat(result.menus()).extracting("name").containsExactly("김치찌개");
+    }
+
+    @Test
+    void getDetail_doesNotTreatALegacyEtcFilmingLocationAsAFoodPlace() {
+        Place place = place(61L, "서울 부암동 개인주택", "종로구");
+        PlaceCategory category = category("ETC", "기타");
+        when(place.getCategory()).thenReturn(category);
+        when(place.getTags()).thenReturn(new String[] {"FILMING_LOCATION"});
+        when(placeRepository.findById(61L)).thenReturn(Optional.of(place));
+        when(placeOperatingHoursRepository.findByPlaceIdOrderByDayOfWeek(61L)).thenReturn(List.of());
+        when(placeMenuRepository.findByPlaceIdOrderById(61L)).thenReturn(List.of());
+        when(placeTrendResultRepository.findFirstVisibleByPlaceId(61L)).thenReturn(Optional.empty());
+
+        PlaceDetailResponse result = placeQueryService.getDetail(61L);
+
+        assertThat(result.menus()).isEmpty();
+    }
+
+    @Test
+    void getDetail_leavesAnEmptyNonFoodPlaceMenuEmpty() {
+        Place place = place(57L, "메뉴 없는 관광지", "종로구");
+        PlaceCategory category = category("ATTRACTION", "관광지");
+        when(place.getCategory()).thenReturn(category);
+        when(placeRepository.findById(57L)).thenReturn(Optional.of(place));
+        when(placeOperatingHoursRepository.findByPlaceIdOrderByDayOfWeek(57L)).thenReturn(List.of());
+        when(placeMenuRepository.findByPlaceIdOrderById(57L)).thenReturn(List.of());
+        when(placeTrendResultRepository.findFirstVisibleByPlaceId(57L)).thenReturn(Optional.empty());
+
+        PlaceDetailResponse result = placeQueryService.getDetail(57L);
+
+        assertThat(result.menus()).isEmpty();
     }
 
     @Test
@@ -176,6 +313,7 @@ class PlaceQueryServiceTest {
                 measuredAt);
         when(placeRepository.findById(56L)).thenReturn(Optional.of(place));
         when(placeOperatingHoursRepository.findByPlaceIdOrderByDayOfWeek(56L)).thenReturn(List.of());
+        when(placeMenuRepository.findByPlaceIdOrderById(56L)).thenReturn(List.of());
         when(place.getImageUrl()).thenReturn("https://example.com/place.jpg");
         when(place.getImageSource()).thenReturn("KAKAO");
         when(place.getImageAttribution()).thenReturn("Kakao Local");
@@ -207,6 +345,21 @@ class PlaceQueryServiceTest {
         when(place.getName()).thenReturn(name);
         when(place.getDistrict()).thenReturn(district);
         return place;
+    }
+
+    private static PlaceCategory category(String code, String label) {
+        PlaceCategory category = mock(PlaceCategory.class);
+        when(category.getCode()).thenReturn(code);
+        when(category.getLabelKo()).thenReturn(label);
+        return category;
+    }
+
+    private static PlaceMenu menu(Long id, String name, Integer price) {
+        PlaceMenu menu = mock(PlaceMenu.class);
+        when(menu.getId()).thenReturn(id);
+        when(menu.getMenuName()).thenReturn(name);
+        when(menu.getMenuPrice()).thenReturn(price);
+        return menu;
     }
 
     private static PlaceTrendResult trendResult(

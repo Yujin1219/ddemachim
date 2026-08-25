@@ -60,17 +60,19 @@ function RailNode({ x, className }) {
   );
 }
 
-export default function CoursePreviewLoader() {
+export default function CoursePreviewLoader({ complete = false }) {
   return h(
     'div',
     {
-      className: 'course-preview-loader-status',
+      className: `course-preview-loader-status${complete ? ' is-complete' : ''}`,
       role: 'status',
       'aria-live': 'polite',
-      'aria-busy': true,
+      'aria-busy': !complete,
     },
     h('span', { className: 'course-preview-loader-announcement' },
-      '최적화된 코스를 만들고 있어요. 코스 미리보기를 준비하고 있습니다.',
+      complete
+        ? '코스 생성이 완료됐어요. 코스 미리보기를 열고 있습니다.'
+        : '최적화된 코스를 만들고 있어요. 코스 미리보기를 준비하고 있습니다.',
     ),
     h(
       'svg',
@@ -192,23 +194,23 @@ export default function CoursePreviewLoader() {
         h('text', { x: 195, y: 414, className: 'course-preview-loader-message course-preview-loader-message-three' }, '붐비는 시간대를 피해 순서를 조정하고 있어요'),
         h('text', { x: 195, y: 414, className: 'course-preview-loader-message course-preview-loader-message-four' }, '운영시간과 전체 일정을 확인하고 있어요'),
       ),
-      h('line', { x1: 86, y1: 466, x2: 194, y2: 466, stroke: '#e3ebf8', strokeWidth: 3, strokeLinecap: 'round' }),
-      h('line', { x1: 196, y1: 466, x2: 304, y2: 466, stroke: '#e3ebf8', strokeWidth: 3, strokeLinecap: 'round' }),
-      h('line', { x1: 306, y1: 466, x2: 360, y2: 466, stroke: '#e3ebf8', strokeWidth: 3, strokeLinecap: 'round' }),
-      h('line', { x1: 86, y1: 466, x2: 194, y2: 466, stroke: '#6d9cf7', strokeWidth: 3, strokeLinecap: 'round', className: 'course-preview-loader-progress-one' }),
-      h('line', { x1: 196, y1: 466, x2: 304, y2: 466, stroke: '#6d9cf7', strokeWidth: 3, strokeLinecap: 'round', className: 'course-preview-loader-progress-two' }),
-      h('line', { x1: 306, y1: 466, x2: 360, y2: 466, stroke: '#6d9cf7', strokeWidth: 3, strokeLinecap: 'round', className: 'course-preview-loader-progress-three' }),
-      h(RailNode, { x: 86, className: 'course-preview-loader-step-one' }),
-      h(RailNode, { x: 195, className: 'course-preview-loader-step-two' }),
-      h(RailNode, { x: 304, className: 'course-preview-loader-step-three' }),
-      h(RailNode, { x: 360, className: 'course-preview-loader-step-four' }),
+      h('line', { x1: 66, y1: 466, x2: 152, y2: 466, stroke: '#e3ebf8', strokeWidth: 3, strokeLinecap: 'round' }),
+      h('line', { x1: 152, y1: 466, x2: 238, y2: 466, stroke: '#e3ebf8', strokeWidth: 3, strokeLinecap: 'round' }),
+      h('line', { x1: 238, y1: 466, x2: 324, y2: 466, stroke: '#e3ebf8', strokeWidth: 3, strokeLinecap: 'round' }),
+      h('line', { x1: 66, y1: 466, x2: 152, y2: 466, stroke: '#6d9cf7', strokeWidth: 3, strokeLinecap: 'round', className: 'course-preview-loader-progress-one' }),
+      h('line', { x1: 152, y1: 466, x2: 238, y2: 466, stroke: '#6d9cf7', strokeWidth: 3, strokeLinecap: 'round', className: 'course-preview-loader-progress-two' }),
+      h('line', { x1: 238, y1: 466, x2: 324, y2: 466, stroke: '#6d9cf7', strokeWidth: 3, strokeLinecap: 'round', className: 'course-preview-loader-progress-three' }),
+      h(RailNode, { x: 66, className: 'course-preview-loader-step-one' }),
+      h(RailNode, { x: 152, className: 'course-preview-loader-step-two' }),
+      h(RailNode, { x: 238, className: 'course-preview-loader-step-three' }),
+      h(RailNode, { x: 324, className: 'course-preview-loader-step-four' }),
       h(
         'g',
         { className: 'course-preview-loader-type', fontSize: 12.5, fill: '#52657f', textAnchor: 'middle' },
-        h('text', { x: 86, y: 495 }, '빠른 길'),
-        h('text', { x: 195, y: 495 }, '편한 길'),
-        h('text', { x: 304, y: 495 }, '한적한 길'),
-        h('text', { x: 360, y: 495 }, '완성'),
+        h('text', { x: 66, y: 495 }, '빠른 길'),
+        h('text', { x: 152, y: 495 }, '편한 길'),
+        h('text', { x: 238, y: 495 }, '한적한 길'),
+        h('text', { x: 324, y: 495 }, '완료'),
       ),
       h('text', {
         x: 195,

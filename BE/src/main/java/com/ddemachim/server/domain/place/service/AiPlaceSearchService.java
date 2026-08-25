@@ -39,6 +39,8 @@ public class AiPlaceSearchService {
     private static final ZoneId SEOUL = ZoneId.of("Asia/Seoul");
     private static final int MAX_LIMIT = 20;
     private static final int MAX_RADIUS_METERS = 10_000;
+    private static final List<String> FILMING_CATEGORY_ORDER = List.of(
+            "ETC", "ATTRACTION", "CULTURE", "PHOTO_SPOT", "SHOPPING", "CAFE", "RESTAURANT");
     private static final Map<String, String> CATEGORY_ALIASES = Map.ofEntries(
             Map.entry("촬영지", "FILMING_LOCATION"),
             Map.entry("FILMING", "FILMING_LOCATION"),
@@ -89,7 +91,11 @@ public class AiPlaceSearchService {
         LocalDate visitDate = condition.visitDate() == null ? LocalDate.now(clock) : condition.visitDate();
         String categoryFilter = categories(condition.query(), condition.categories());
         List<Place> places = placeRepository.searchForAi(
-                repositoryQuery(condition.query()), catalogArea(condition.area()), categoryFilter, limit);
+                repositoryQuery(condition.query()), catalogArea(condition.area()), categoryFilter,
+                isFilmingFilter(categoryFilter) ? MAX_LIMIT : limit);
+        if (isFilmingFilter(categoryFilter)) {
+            places = diversifyFilmingPlaces(places, limit);
+        }
         Map<Long, PlaceOperatingHours> hours = hours(places, visitDate);
         return new SearchResult(places.stream().map(place -> toSearchPlace(place, hours.get(place.getId()))).toList());
     }
@@ -250,6 +256,40 @@ public class AiPlaceSearchService {
     private static String repositoryQuery(String value) {
         String query = blankToNull(value);
         return query != null && query.contains("촬영지") ? "FILMING_LOCATION" : query;
+    }
+
+    private static boolean isFilmingFilter(String categoryFilter) {
+        return categoryFilter != null && List.of(categoryFilter.split(",")).contains("FILMING_LOCATION");
+    }
+
+    private static List<Place> diversifyFilmingPlaces(List<Place> places, int limit) {
+        Map<String, List<Place>> byCategory = new LinkedHashMap<>();
+        for (Place place : places) {
+            byCategory.computeIfAbsent(category(place), ignored -> new ArrayList<>()).add(place);
+        }
+        List<String> categories = new ArrayList<>(byCategory.keySet());
+        categories.sort(Comparator
+                .comparingInt((String category) -> filmingCategoryPriority(category))
+                .thenComparing(category -> Objects.toString(category, "")));
+        List<Place> result = new ArrayList<>();
+        for (int offset = 0; result.size() < limit; offset++) {
+            boolean added = false;
+            for (String category : categories) {
+                List<Place> bucket = byCategory.get(category);
+                if (offset < bucket.size()) {
+                    result.add(bucket.get(offset));
+                    added = true;
+                    if (result.size() == limit) break;
+                }
+            }
+            if (!added) break;
+        }
+        return List.copyOf(result);
+    }
+
+    private static int filmingCategoryPriority(String category) {
+        int index = FILMING_CATEGORY_ORDER.indexOf(category);
+        return index >= 0 ? index : FILMING_CATEGORY_ORDER.size();
     }
 
     private static String categoryFromQuery(String value) {

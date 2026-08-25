@@ -76,7 +76,7 @@ test('mounted same-ID retake survives the result-to-camera route update and rebi
   });
 
   assert.equal(session.api.state.reference, referenceBeforeRetake);
-  assert.deepEqual(session.api.state.overlay, { x: 0.2, y: 0, scale: 1.4, opacity: 0.5, visible: true });
+  assert.deepEqual(session.api.state.overlay, { x: 0.2, y: 0, scale: 1.4, opacity: 0.45, visible: true, mode: 'image' });
   assert.equal(session.api.state.captured, null);
   assert.equal(session.api.state.flowState, 'camera-ready');
   assert.equal(session.video.srcObject, second.stream);

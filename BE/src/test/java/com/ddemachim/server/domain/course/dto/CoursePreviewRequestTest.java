@@ -58,7 +58,7 @@ class CoursePreviewRequestTest {
     }
 
     @Test
-    void rejectsMoreThanFivePlaces() {
+    void acceptsMoreThanFivePlaces() {
         CoursePreviewRequest request = new CoursePreviewRequest(
                 LocalDate.of(2026, 8, 18),
                 LocalTime.of(10, 0),
@@ -71,7 +71,7 @@ class CoursePreviewRequestTest {
                         place(5L, 30, null),
                         place(6L, 30, null)));
 
-        assertThat(paths(validator.validate(request))).contains("places");
+        assertThat(validator.validate(request)).isEmpty();
     }
 
     @Test

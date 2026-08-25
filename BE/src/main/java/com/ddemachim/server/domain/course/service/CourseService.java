@@ -136,7 +136,7 @@ public class CourseService {
         if (activeCourse != null) {
             activeCourse.archiveActive();
         }
-        Course course = courseRepository.save(Course.create(member, titleFor(selected.stops())));
+        Course course = courseRepository.save(Course.create(member, titleFor(selected.stops()), request.visibility()));
         CourseRevision revision = courseRevisionRepository.save(CourseRevision.create(
                 course,
                 1,

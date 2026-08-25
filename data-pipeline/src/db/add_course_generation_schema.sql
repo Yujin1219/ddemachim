@@ -38,6 +38,7 @@ CREATE TABLE IF NOT EXISTS course (
     member_id           bigint NOT NULL,
     title               varchar(200) NOT NULL,
     status              varchar(20) NOT NULL,
+    visibility          varchar(20) NOT NULL DEFAULT 'PRIVATE',
     planned_stop_count  integer NOT NULL DEFAULT 0,
     version             bigint NOT NULL DEFAULT 0,
     created_at          timestamptz NOT NULL DEFAULT now(),
@@ -46,6 +47,17 @@ CREATE TABLE IF NOT EXISTS course (
 
 DO $$
 BEGIN
+    IF NOT EXISTS (
+        SELECT 1
+        FROM pg_constraint
+        WHERE conname = 'chk_course_visibility'
+          AND conrelid = 'course'::regclass
+    ) THEN
+        ALTER TABLE course
+            ADD CONSTRAINT chk_course_visibility
+            CHECK (visibility IN ('PUBLIC', 'PRIVATE'));
+    END IF;
+
     IF NOT EXISTS (
         SELECT 1
         FROM pg_constraint

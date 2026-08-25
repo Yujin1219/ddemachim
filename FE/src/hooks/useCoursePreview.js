@@ -92,5 +92,19 @@ export function useCoursePreview({ loadPreview = fetchCoursePreview, onAuthRequi
     setState(INITIAL_STATE);
   }, []);
 
-  return { ...state, submit, retry, reset };
+  const adopt = useCallback((response) => {
+    requestIdRef.current += 1;
+    controllerRef.current?.abort();
+    controllerRef.current = null;
+    inFlightRef.current = null;
+    const preview = normalizeCoursePreview(response);
+    if (!preview) {
+      setState({ preview: null, failure: null, status: 'error', message: '코스 미리보기 응답이 비어 있어요.' });
+      return null;
+    }
+    setState({ preview, failure: null, status: 'success', message: null });
+    return preview;
+  }, []);
+
+  return { ...state, submit, retry, reset, adopt };
 }

@@ -41,8 +41,11 @@ public class MediaContentController {
             @Parameter(description = "DRAMA, VARIETY, MOVIE")
                     @RequestParam(required = false)
                     String contentType,
+            @Parameter(description = "작품 제목 검색 키워드 (부분 일치)")
+                    @RequestParam(required = false)
+                    String keyword,
             Pageable pageable) {
-        return ApiResponse.onSuccess(mediaQueryService.getFilmingWorks(contentType, pageable));
+        return ApiResponse.onSuccess(mediaQueryService.getFilmingWorks(contentType, keyword, pageable));
     }
 
     @Operation(

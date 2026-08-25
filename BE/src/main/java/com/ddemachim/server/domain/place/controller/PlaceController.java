@@ -70,7 +70,7 @@ public class PlaceController {
 
     @Operation(
             summary = "장소 트렌드 목록 조회",
-            description = "성공한 트렌드 실행의 만료되지 않은 장소 결과만 공개 트렌드 목록으로 조회합니다. "
+            description = "DB에 저장된 마지막 성공 트렌드 실행의 장소 결과를 공개 트렌드 목록으로 조회합니다. "
                     + "장소별 최신 결과를 사용하며 TRENDING, 변화율 내림차순으로 정렬합니다. "
                     + "상태, 최근/이전 Search Trend 평균, 변화율, 측정 시각과 기존 호환용 updatedAt 날짜를 반환합니다. "
                     + "limit은 기본 6건이며 1~50건을 지원합니다.")

@@ -4,6 +4,7 @@ import {
   completedCourses,
   publicCourses,
   scheduledCourses,
+  visiblePublicCourses,
 } from './courseHomeModel.js';
 
 const personalFields = [
@@ -42,7 +43,7 @@ test('keeps scheduled and completed courses as separate immutable states', () =>
   assert.ok(Object.isFrozen(completedCourses));
 });
 
-test('publishes complete metadata for each public course', () => {
+test('keeps complete shared-course metadata and exposes only public courses', () => {
   assert.ok(publicCourses.length > 0);
   assert.ok(Object.isFrozen(publicCourses));
 
@@ -50,11 +51,16 @@ test('publishes complete metadata for each public course', () => {
     assert.ok(course.id);
     assert.ok(course.author);
     assert.ok(course.title);
+    assert.ok(['PUBLIC', 'PRIVATE'].includes(course.visibility));
     assert.ok(Number.isInteger(course.placeCount) && course.placeCount > 0);
     assert.ok(course.duration);
     assert.equal(course.places.length, course.placeCount);
-    assert.ok(course.places.every((place) => typeof place === 'string' && place.trim()));
-    assert.ok(course.image.startsWith('/assets/'));
+    assert.ok(course.places.every((place) => place.name && place.category));
+    assert.equal(course.routeCoordinates.length, course.placeCount);
     assert.ok(Object.isFrozen(course));
   }
+
+  assert.ok(visiblePublicCourses().length > 0);
+  assert.ok(visiblePublicCourses().every((course) => course.visibility === 'PUBLIC'));
+  assert.equal(visiblePublicCourses().some((course) => course.id === 'private-night-museum'), false);
 });

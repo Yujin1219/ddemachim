@@ -4,6 +4,13 @@ export const DEFAULT_OVERLAY = Object.freeze({ x: 0, y: 0, scale: 1, opacity: 0.
 
 const clamp = (value, min, max) => Math.min(max, Math.max(min, Number(value)));
 
+function overlayDefaults(reference) {
+  return {
+    ...DEFAULT_OVERLAY,
+    ...(reference?.defaultOverlay ?? {}),
+  };
+}
+
 export function createSceneSession() {
   return {
     filmingLocationId: null,
@@ -33,6 +40,7 @@ export function sceneCameraReducer(state, action) {
         notice: state.notice,
         filmingLocationId: action.id,
         reference: action.reference ? Object.freeze({ ...action.reference }) : null,
+        overlay: overlayDefaults(action.reference),
         token: state.token + 1,
         flowState: action.reference ? 'preparing' : 'error',
         error: action.reference ? null : { code: 'missing-reference', message: '사용할 수 있는 참고 장면이 아직 없어요.' },
@@ -51,7 +59,7 @@ export function sceneCameraReducer(state, action) {
         },
       };
     }
-    case 'RESET_OVERLAY': return { ...state, overlay: { ...DEFAULT_OVERLAY } };
+    case 'RESET_OVERLAY': return { ...state, overlay: overlayDefaults(state.reference) };
     case 'SET_COMPARISON': return { ...state, comparison: Math.round(clamp(action.value, 0, 100)) };
     case 'SET_EXPORT_MODE': return { ...state, exportMode: action.value === 'overlay' ? 'overlay' : 'split' };
     case 'REFERENCE_READY': return { ...state, flowState: 'idle', error: null };

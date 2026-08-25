@@ -65,3 +65,23 @@ test('does not advertise grid keyboard selection when the crowding layer is hidd
 
   await act(async () => renderer.unmount());
 });
+
+test('navigation location control exposes whether follow camera is active', async () => {
+  const { NavigationLocationButton } = await import('./VWorldMapRegion.js');
+  assert.equal(typeof NavigationLocationButton, 'function');
+  let clicks = 0;
+  let renderer;
+  await act(async () => {
+    renderer = create(createElement(NavigationLocationButton, {
+      following: false,
+      onClick: () => { clicks += 1; },
+    }));
+  });
+
+  const button = renderer.root.findByType('button');
+  assert.equal(button.props['aria-label'], '현재 위치로 돌아가서 자동 추적 시작');
+  assert.equal(button.props['aria-pressed'], false);
+  await act(async () => button.props.onClick());
+  assert.equal(clicks, 1);
+  await act(async () => renderer.unmount());
+});

@@ -119,7 +119,14 @@ class TmapRouteClientTest {
         assertThat(route.legs().get(1).routeName()).isEqualTo("종로01");
         assertThat(route.legs().get(1).geometry().coordinates().getFirst())
                 .containsExactly(126.9775, 37.5655);
-        assertThat(route.legs()).allSatisfy(leg -> assertThat(leg.steps()).isEmpty());
+        assertThat(route.legs().getFirst().steps())
+                .singleElement()
+                .satisfies(step -> {
+                    assertThat(step.streetName()).isEqualTo("세종대로23길");
+                    assertThat(step.description()).isEqualTo("광화문 방향으로 직진");
+                });
+        assertThat(route.legs().get(1).steps()).isEmpty();
+        assertThat(route.legs().get(2).steps()).isEmpty();
         assertThat(selected.walkSegments())
                 .extracting(TransitWalkSegment::walkOrdinal, TransitWalkSegment::legIndex)
                 .containsExactly(tuple(1, 0), tuple(2, 2));

@@ -116,7 +116,10 @@ class CoursePreviewControllerTest {
     }
 
     @Test
-    void rejectsMoreThanFivePlacesWithoutCallingTheService() throws Exception {
+    void acceptsMoreThanFivePlacesAndForwardsEveryPlaceToTheService() throws Exception {
+        when(coursePreviewService.preview(eq(3L), any(CoursePreviewRequest.class)))
+                .thenReturn(response());
+
         mockMvc.perform(post("/api/courses/preview")
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(validRequestJson().replace(
@@ -131,12 +134,14 @@ class CoursePreviewControllerTest {
                                   {"basketItemId":6,"dwellMinutes":30}
                                 ]
                                 """)))
-                .andExpect(status().isBadRequest())
-                .andExpect(jsonPath("$.isSuccess").value(false))
-                .andExpect(jsonPath("$.code").value("COMMON400"))
-                .andExpect(jsonPath("$.result.places").exists());
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.isSuccess").value(true));
 
-        verifyNoInteractions(coursePreviewService);
+        ArgumentCaptor<CoursePreviewRequest> requestCaptor = ArgumentCaptor.forClass(CoursePreviewRequest.class);
+        verify(coursePreviewService).preview(eq(3L), requestCaptor.capture());
+        assertThat(requestCaptor.getValue().places())
+                .extracting(CoursePreviewRequest.Place::basketItemId)
+                .containsExactly(1L, 2L, 3L, 4L, 5L, 6L);
     }
 
     @Test

@@ -1,5 +1,62 @@
 import { createElement } from 'react';
 
+function placeListLine(line) {
+  return /^\s*(?:[-*+]|\d+[.)])\s+/.test(line);
+}
+
+function parseWalkingMetrics(line) {
+  const walkingMatch = String(line).match(/도보\s*(?:약\s*)?(\d+)\s*분/);
+  const distanceMatch = String(line).match(/(\d+(?:\.\d+)?)\s*(km|m)\b/i);
+  const distance = distanceMatch ? Number(distanceMatch[1]) : null;
+  return {
+    walkingMinutes: walkingMatch ? Number(walkingMatch[1]) : null,
+    distanceMeters: distanceMatch
+      ? Math.round(distanceMatch[2].toLocaleLowerCase() === 'km' ? distance * 1000 : distance)
+      : null,
+  };
+}
+
+export function buildAiGuidePlacePresentation(content, recommendedPlaces) {
+  const places = Array.isArray(recommendedPlaces) ? recommendedPlaces : [];
+  const placesBySpecificity = [...places].sort((left, right) => (
+    String(right?.name ?? '').length - String(left?.name ?? '').length
+  ));
+  const metricsByPlaceId = new Map();
+  const messageLines = String(content ?? '').replace(/\r\n?/g, '\n').split('\n').filter((line) => {
+    if (!placeListLine(line)) return true;
+    const normalizedLine = line.replace(/\*\*/g, '').toLocaleLowerCase('ko-KR');
+    const place = placesBySpecificity.find((candidate) => (
+      candidate?.name && normalizedLine.includes(String(candidate.name).toLocaleLowerCase('ko-KR'))
+    ));
+    if (!place) return true;
+    if (!metricsByPlaceId.has(place.id)) metricsByPlaceId.set(place.id, parseWalkingMetrics(line));
+    return false;
+  });
+
+  const recommendations = places.map((place) => ({
+      place,
+      walkingMinutes: metricsByPlaceId.get(place.id)?.walkingMinutes ?? null,
+      distanceMeters: metricsByPlaceId.get(place.id)?.distanceMeters ?? null,
+    }));
+  const closestIndex = recommendations.reduce((closest, item, index, source) => {
+    if (item.distanceMeters === null) return closest;
+    if (closest === -1 || item.distanceMeters < source[closest].distanceMeters) return index;
+    return closest;
+  }, -1);
+
+  return {
+    messageContent: messageLines.join('\n').replace(/\n{3,}/g, '\n\n').trim(),
+    recommendations: recommendations.map((item, index) => ({
+      ...item,
+      reason: index === closestIndex
+        ? '가장 가까운 추천 장소예요'
+        : item.walkingMinutes !== null
+          ? '도보로 이동할 수 있는 곳이에요'
+          : null,
+    })),
+  };
+}
+
 function renderInlineMarkdown(value, keyPrefix) {
   const text = String(value ?? '');
   const tokenPattern = /\*\*[^*\n]+?\*\*|`[^`\n]+`|\[[^\]]+\]\(https?:\/\/[^\s)]+\)/g;
@@ -99,11 +156,10 @@ export function renderAiGuideMarkdown(content, keyPrefix = 'ai-guide', options =
     : [createElement('p', { className: 'ai-guide-markdown-paragraph', key: `${keyPrefix}-empty` }, '')];
 }
 
-export function scrollAiGuideToLatest(container) {
-  if (!container) return;
-  const top = container.scrollHeight;
-  container.scrollTop = top;
-  if (typeof container.scrollTo === 'function') {
-    container.scrollTo({ top, behavior: 'smooth' });
+export function scrollAiGuideToLatest(container, latestMessage, bottomSpacer) {
+  if (!container || typeof latestMessage?.scrollIntoView !== 'function') return;
+  if (bottomSpacer?.style) {
+    bottomSpacer.style.height = `${Math.max(0, container.clientHeight - latestMessage.offsetHeight)}px`;
   }
+  latestMessage.scrollIntoView({ block: 'start', behavior: 'smooth' });
 }

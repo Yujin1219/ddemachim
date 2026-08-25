@@ -18,6 +18,24 @@ test('starts a new ID with immutable reference defaults and resets result state'
   assert.equal(next.exportMode, 'split');
 });
 
+test('camera-specific framing is applied on entry and restored by reset', () => {
+  const shiftedReference = Object.freeze({
+    ...reference,
+    defaultOverlay: { x: -0.08, y: 0, scale: 1 },
+  });
+  let state = sceneCameraReducer(createSceneSession(), {
+    type: 'BEGIN_SCENE',
+    id: '78',
+    reference: shiftedReference,
+  });
+
+  assert.deepEqual(state.overlay, { x: -0.08, y: 0, scale: 1, opacity: 0.45, visible: true, mode: 'image' });
+
+  state = sceneCameraReducer(state, { type: 'SET_OVERLAY', patch: { x: 0.3, scale: 1.4 } });
+  state = sceneCameraReducer(state, { type: 'RESET_OVERLAY' });
+  assert.deepEqual(state.overlay, { x: -0.08, y: 0, scale: 1, opacity: 0.45, visible: true, mode: 'image' });
+});
+
 test('clamps overlay and comparison controls to their canonical limits', () => {
   let state = createSceneSession();
   state = sceneCameraReducer(state, { type: 'SET_OVERLAY', patch: { x: 9, y: -9, scale: 5, opacity: 0, visible: false } });

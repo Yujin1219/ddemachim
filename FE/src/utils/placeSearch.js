@@ -1,6 +1,107 @@
 export const SEARCH_LOCATION_TIMEOUT_MS = 3500;
 export const SEARCH_LOCATION_MAXIMUM_AGE_MS = 300000;
 
+const SEARCHABLE_ITEM_FIELDS = [
+  'name',
+  'title',
+  'meta',
+  'badge',
+  'searchText',
+  'venueName',
+  'placeName',
+  'eventType',
+  'categoryName',
+];
+
+function normalizeSearchToken(value) {
+  return String(value ?? '')
+    .toLocaleLowerCase('ko-KR')
+    .replace(/[^0-9a-z가-힣]/gi, '');
+}
+
+export function filterSearchItems(items, query) {
+  const source = Array.isArray(items) ? items : [];
+  const tokens = String(query ?? '')
+    .trim()
+    .split(/\s+/)
+    .map(normalizeSearchToken)
+    .filter(Boolean);
+  if (!tokens.length) return source;
+
+  return source.filter((item) => {
+    const searchableText = normalizeSearchToken([
+      ...SEARCHABLE_ITEM_FIELDS.map((field) => item?.[field]),
+      item?.labels?.content,
+      item?.labels?.category,
+    ].filter(Boolean).join(' '));
+    return tokens.every((token) => searchableText.includes(token));
+  });
+}
+
+export async function searchExploreCatalog(query, {
+  fetchPlaces,
+  fetchFilmingWorks,
+  fetchEvents,
+  signal,
+  size = 50,
+} = {}) {
+  const keyword = String(query ?? '').trim();
+  if (!keyword) {
+    return { places: [], works: [], events: [], hasPartialError: false };
+  }
+
+  const requests = [
+    fetchPlaces({ keyword, page: 0, size, signal }),
+    fetchFilmingWorks({ keyword, page: 0, size, signal }),
+    fetchEvents({ keyword, status: 'ONGOING', page: 0, size, signal }),
+  ];
+  const [places, works, events] = await Promise.allSettled(requests);
+
+  if (signal?.aborted) {
+    const error = new Error('Explore search aborted');
+    error.name = 'AbortError';
+    throw error;
+  }
+
+  const outcomes = [places, works, events];
+  if (outcomes.every((outcome) => outcome.status === 'rejected')) {
+    throw new AggregateError(outcomes.map((outcome) => outcome.reason), 'Explore search failed');
+  }
+
+  const contentOf = (outcome) => outcome.status === 'fulfilled' && Array.isArray(outcome.value?.content)
+    ? filterSearchItems(outcome.value.content, keyword)
+    : [];
+  return {
+    places: contentOf(places),
+    works: contentOf(works),
+    events: contentOf(events),
+    hasPartialError: outcomes.some((outcome) => outcome.status === 'rejected'),
+  };
+}
+
+export function rankSearchItems(items, query) {
+  const source = Array.isArray(items) ? items : [];
+  const normalizedQuery = normalizeSearchToken(query);
+  if (!normalizedQuery) return source;
+
+  return source
+    .map((item, sourceIndex) => {
+      const normalizedName = normalizeSearchToken(item?.name ?? item?.title);
+      const relevance = normalizedName === normalizedQuery
+        ? 4
+        : normalizedName.startsWith(normalizedQuery)
+          ? 3
+          : normalizedName.includes(normalizedQuery)
+            ? 2
+            : filterSearchItems([item], query).length > 0
+              ? 1
+              : 0;
+      return { item, relevance, sourceIndex };
+    })
+    .sort((left, right) => right.relevance - left.relevance || left.sourceIndex - right.sourceIndex)
+    .map(({ item }) => item);
+}
+
 function createAbortError() {
   if (typeof DOMException === 'function') {
     return new DOMException('Search location request aborted', 'AbortError');

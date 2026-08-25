@@ -21,6 +21,15 @@ export function normalizeReviewSummary(summary, reviews = []) {
   };
 }
 
+export function buildReviewSummaryView(summary, reviews = [], canWriteReview = false) {
+  const normalizedSummary = normalizeReviewSummary(summary, reviews);
+  return {
+    ...normalizedSummary,
+    reviewCountLabel: `${normalizedSummary.reviewCount}개 후기`,
+    canWriteReview: canWriteReview === true,
+  };
+}
+
 export function getReviewPreviewEmptyMessage(reviewCount) {
   return reviewCount === 0 ? '아직 방문자 후기가 없어요' : '후기 미리보기를 준비하고 있어요';
 }

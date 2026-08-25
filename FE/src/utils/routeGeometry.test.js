@@ -1,7 +1,9 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import { routeFitPointCoordinates, routeLegFeatureSpecs } from './routeGeometry.js';
+import * as routeGeometry from './routeGeometry.js';
+
+const { routeFitPointCoordinates, routeLegFeatureSpecs } = routeGeometry;
 
 test('rejects invalid LineString geometry and preserves valid leg order and metadata', () => {
   const projected = (coordinate) => coordinate.map((value) => Number((value * 10).toFixed(6)));
@@ -67,4 +69,38 @@ test('normalizes valid route fit endpoints and applies the projection transform'
     [253.9538, 75.1432],
     [254.0552, 74.9958],
   ]);
+});
+
+test('restores route feature sequence before drawing when the map source returns random order', () => {
+  assert.equal(typeof routeGeometry.orderRouteFeaturesBySequence, 'function');
+  const feature = (id, routeSequence) => ({
+    id,
+    get: (key) => (key === 'routeSequence' ? routeSequence : undefined),
+  });
+
+  const ordered = routeGeometry.orderRouteFeaturesBySequence([
+    feature('destination-connector', 3),
+    feature('transit-leg', 2),
+    feature('origin-connector', 0),
+    feature('walk-leg', 1),
+  ]);
+
+  assert.deepEqual(ordered.map((item) => item.id), [
+    'origin-connector',
+    'walk-leg',
+    'transit-leg',
+    'destination-connector',
+  ]);
+});
+
+test('keeps an in-progress route drawing alive when the same route renders again', () => {
+  assert.equal(
+    typeof routeGeometry.routeDrawTransition,
+    'function',
+    'route redraw decisions must distinguish a repeated render from cancellation',
+  );
+  assert.equal(routeGeometry.routeDrawTransition('course-overview', 'course-overview', false), 'keep');
+  assert.equal(routeGeometry.routeDrawTransition('course-overview', 'course-overview', true), 'replace');
+  assert.equal(routeGeometry.routeDrawTransition('course-overview', '', false), 'cancel');
+  assert.equal(routeGeometry.routeDrawTransition('course-overview', 'course-stop-2', false), 'start');
 });

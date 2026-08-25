@@ -14,10 +14,10 @@ const READY = Object.freeze({
 });
 
 test('visible congestion badges show only the current status', () => {
-  assert.equal(getMockCongestionBadgeLabel(READY), '혼잡도 약간 붐빔');
-  assert.equal(getMockCongestionBadgeLabel({ status: 'loading' }), '혼잡도 확인 중');
-  assert.equal(getMockCongestionBadgeLabel({ status: 'error' }), '혼잡도 없음');
-  assert.equal(getMockCongestionBadgeLabel({ status: 'uncovered' }), '혼잡도 없음');
+  assert.equal(getMockCongestionBadgeLabel(READY), '약간 붐빔');
+  assert.equal(getMockCongestionBadgeLabel({ status: 'loading' }), '확인 중');
+  assert.equal(getMockCongestionBadgeLabel({ status: 'error' }), '정보 없음');
+  assert.equal(getMockCongestionBadgeLabel({ status: 'uncovered' }), '정보 없음');
 });
 
 test('accessible labels stay aligned with status-oriented visible copy', () => {

@@ -23,8 +23,9 @@ import com.ddemachim.server.domain.aiguide.exception.AiGuideException;
 import com.ddemachim.server.domain.course.service.CoursePreviewService;
 import com.ddemachim.server.domain.crowding.service.CrowdingService;
 import com.ddemachim.server.domain.place.dto.PlaceDetailResponse;
-import com.ddemachim.server.domain.place.service.PlaceQueryService;
+import com.ddemachim.server.domain.place.service.AiPlaceReferenceSearchService;
 import com.ddemachim.server.domain.place.service.AiPlaceSearchService;
+import com.ddemachim.server.domain.place.service.PlaceQueryService;
 import com.ddemachim.server.domain.route.service.RouteComparisonService;
 import com.ddemachim.server.global.auth.security.MemberAuthentication;
 import com.ddemachim.server.global.mcp.DdemachimMcpTools;
@@ -32,10 +33,13 @@ import com.ddemachim.server.global.properties.AiGuideProperties;
 import java.time.Clock;
 import java.time.Instant;
 import java.time.LocalDate;
+import java.time.LocalTime;
 import java.time.ZoneId;
 import java.util.List;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 import org.springframework.http.HttpMethod;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
@@ -149,10 +153,8 @@ class OpenAiResponsesClientTest {
     }
 
     @Test
-    void immediateCourseUsesCurrentTimeAndBrowserLocationWithoutAskingForRoutePreference() {
+    void immediateCourseReturnsAConfirmableProposalWithoutExecutingPlanner() {
         DdemachimMcpTools mcpTools = mock(DdemachimMcpTools.class);
-        when(mcpTools.createAiCourse(any())).thenReturn(new DdemachimMcpTools.McpToolResponse<>(
-                true, "COMMON200", "성공", null));
         RestClient.Builder builder = RestClient.builder().baseUrl("https://example.test");
         MockRestServiceServer server = MockRestServiceServer.bindTo(builder).build();
         server.expect(requestTo(RESPONSES_URL))
@@ -163,9 +165,6 @@ class OpenAiResponsesClientTest {
                                 "create_ai_course", "call_1",
                                 "{\"availableMinutes\":180,\"requiredPlaceIds\":[],\"candidatePlaceIds\":[101]}"),
                         MediaType.APPLICATION_JSON));
-        server.expect(requestTo(RESPONSES_URL))
-                .andRespond(withSuccess(finalResponse("바로 출발하는 촬영지 코스를 만들었어요.", "resp_2"),
-                        MediaType.APPLICATION_JSON));
         Clock clock = Clock.fixed(
                 Instant.parse("2026-08-21T03:00:00Z"), ZoneId.of("Asia/Seoul"));
 
@@ -174,8 +173,14 @@ class OpenAiResponsesClientTest {
                         "촬영지 코스 만들어줘 지금 시작할거야", List.of(),
                         new AiGuideRequest.CurrentLocation(37.577, 126.972)));
 
-        assertThat(reply.answer()).isEqualTo("바로 출발하는 촬영지 코스를 만들었어요.");
-        verify(mcpTools).createAiCourse(any());
+        assertThat(reply.answer()).contains("이대로 코스를 생성할까요");
+        assertThat(reply.courseProposal()).isNotNull();
+        assertThat(reply.courseProposal().date()).isEqualTo(LocalDate.of(2026, 8, 21));
+        assertThat(reply.courseProposal().startTime()).isEqualTo(LocalTime.NOON);
+        assertThat(reply.courseProposal().candidatePlaceIds()).containsExactly(101L);
+        assertThat(reply.recommendedPlaceIds()).containsExactly(101L);
+        assertThat(reply.responseId()).isNull();
+        verify(mcpTools, times(0)).createAiCourse(any());
         server.verify();
     }
 
@@ -195,6 +200,7 @@ class OpenAiResponsesClientTest {
                 .complete(new AiGuideRequest("언젠가 종로 촬영지 추천해줘", List.of()));
 
         assertThat(reply.answer()).contains("방문 날짜").contains("YYYY-MM-DD");
+        assertThat(reply.responseId()).isNull();
         verify(mcpTools, times(0)).searchPlaces(any());
         server.verify();
     }
@@ -276,7 +282,287 @@ class OpenAiResponsesClientTest {
     }
 
     @Test
-    void emptyPlaceSearchReturnsClarificationWithoutStartingAnotherToolRound() {
+    void emptyGenericSearchCanRecoverWithReferenceSearchInTheNextToolRound() {
+        DdemachimMcpTools mcpTools = mock(DdemachimMcpTools.class);
+        when(mcpTools.searchPlaces(any())).thenReturn(new DdemachimMcpTools.McpToolResponse<>(
+                true, "COMMON200", "성공", new AiPlaceSearchService.SearchResult(List.of())));
+        when(mcpTools.searchPlacesNearReference(any())).thenReturn(new DdemachimMcpTools.McpToolResponse<>(
+                true,
+                "COMMON200",
+                "성공",
+                new AiPlaceReferenceSearchService.NearReferenceResult(
+                        new AiPlaceReferenceSearchService.ReferencePlace(
+                                "경복궁", "DDEMACHIM", "서울 종로구 사직로 161", 37.5796, 126.9770),
+                        new AiPlaceSearchService.NearbyResult(List.of(new AiPlaceSearchService.NearbyPlace(
+                                8271L, "효자로", "FILMING_LOCATION", 275, 4, true, "NORMAL",
+                                37.5801, 126.9741, List.of("FILMING_LOCATION")))))));
+        RestClient.Builder builder = RestClient.builder().baseUrl("https://example.test");
+        MockRestServiceServer server = MockRestServiceServer.bindTo(builder).build();
+        server.expect(requestTo(RESPONSES_URL))
+                .andExpect(content().string(allOf(
+                        containsString("search_places가 빈 결과를 반환"),
+                        containsString("search_places/search_nearby_places/search_places_near_reference"))))
+                .andRespond(withSuccess(functionCallResponse(
+                                "search_places", "call_1",
+                                "{\"query\":\"촬영지\",\"area\":\"경복궁\","
+                                        + "\"categories\":[\"FILMING_LOCATION\"]}"),
+                        MediaType.APPLICATION_JSON));
+        server.expect(requestTo(RESPONSES_URL))
+                .andExpect(content().string(allOf(
+                        containsString("\"previous_response_id\":\"resp_1\""),
+                        containsString("\"type\":\"function_call_output\""),
+                        containsString("\\\"places\\\":[]"))))
+                .andRespond(withSuccess(functionCallResponse(
+                                "resp_2", "search_places_near_reference", "call_2",
+                                "{\"reference\":\"경복궁\",\"category\":\"FILMING_LOCATION\","
+                                        + "\"radiusMeters\":1000,\"limit\":10}"),
+                        MediaType.APPLICATION_JSON));
+        server.expect(requestTo(RESPONSES_URL))
+                .andExpect(content().string(allOf(
+                        containsString("\"previous_response_id\":\"resp_2\""),
+                        containsString("\"type\":\"function_call_output\""),
+                        containsString("효자로"))))
+                .andRespond(withSuccess(finalResponse("경복궁 주변 촬영지를 찾았어요.", "resp_3"),
+                        MediaType.APPLICATION_JSON));
+
+        var reply = client(properties(), mcpTools, builder.build())
+                .complete(new AiGuideRequest("경복궁 주변으로 촬영지 코스 3시간짜리 만들어줘", List.of()));
+
+        assertThat(reply.answer()).isEqualTo("경복궁 주변 촬영지를 찾았어요.");
+        assertThat(reply.recommendedPlaceIds()).containsExactly(8271L);
+        verify(mcpTools).searchPlaces(new DdemachimMcpTools.SearchPlacesRequest(
+                "촬영지", "경복궁", List.of("FILMING_LOCATION"), null, null));
+        verify(mcpTools).searchPlacesNearReference(new DdemachimMcpTools.SearchPlacesNearReferenceRequest(
+                "경복궁", "FILMING_LOCATION", 1_000, null, null, 10, null));
+        server.verify();
+    }
+
+    @Test
+    void referenceSearchUsesNamedVicinityFromUserMessageOverModelArgument() {
+        DdemachimMcpTools mcpTools = mock(DdemachimMcpTools.class);
+        when(mcpTools.searchPlacesNearReference(any())).thenReturn(new DdemachimMcpTools.McpToolResponse<>(
+                true,
+                "COMMON200",
+                "성공",
+                new AiPlaceReferenceSearchService.NearReferenceResult(
+                        new AiPlaceReferenceSearchService.ReferencePlace(
+                                "경복궁", "DDEMACHIM", "서울 종로구 사직로 161", 37.5796, 126.9770),
+                        new AiPlaceSearchService.NearbyResult(List.of()))));
+        RestClient.Builder builder = RestClient.builder().baseUrl("https://example.test");
+        MockRestServiceServer server = MockRestServiceServer.bindTo(builder).build();
+        server.expect(requestTo(RESPONSES_URL))
+                .andRespond(withSuccess(functionCallResponse(
+                                "search_places_near_reference", "call_1",
+                                "{\"reference\":\"천궁\",\"category\":\"CAFE\","
+                                        + "\"radiusMeters\":1000,\"limit\":10}"),
+                        MediaType.APPLICATION_JSON));
+        server.expect(requestTo(RESPONSES_URL))
+                .andExpect(content().string(allOf(
+                        containsString("\\\"authoritativeReference\\\":\\\"경복궁\\\""),
+                        containsString("\\\"toolResponse\\\""))))
+                .andRespond(withSuccess(finalResponse(
+                                "천궁으로 잘못 해석됐지만 추천 카페는 A와 B입니다.\\n천궁 주변 후보입니다.",
+                                "resp_2"),
+                        MediaType.APPLICATION_JSON));
+
+        var reply = client(properties(), mcpTools, builder.build())
+                .complete(new AiGuideRequest("경복궁 주변 카페 추천해줘", List.of()));
+
+        assertThat(reply.answer()).isEqualTo(
+                "경복궁 주변 기준으로 추천 카페는 A와 B입니다.\n경복궁 주변 후보입니다.");
+        verify(mcpTools).searchPlacesNearReference(new DdemachimMcpTools.SearchPlacesNearReferenceRequest(
+                "경복궁", "CAFE", 1_000, null, null, 10, null));
+        server.verify();
+    }
+
+    @Test
+    void namedVicinityRecommendationUsesDeterministicToolAnswerWhenPlacesExist() {
+        DdemachimMcpTools mcpTools = mock(DdemachimMcpTools.class);
+        when(mcpTools.searchPlacesNearReference(any())).thenReturn(new DdemachimMcpTools.McpToolResponse<>(
+                true, "COMMON200", "성공", new AiPlaceReferenceSearchService.NearReferenceResult(
+                        new AiPlaceReferenceSearchService.ReferencePlace(
+                                "또마참숲돼지갈비", "DDEMACHIM", "서울 종로구", 37.5796, 126.9770),
+                        new AiPlaceSearchService.NearbyResult(List.of(
+                                new AiPlaceSearchService.NearbyPlace(
+                                        101L, "서경카페", "CAFE", 210, 3, null, "RELAXED",
+                                        37.58, 126.98, List.of()))))));
+        RestClient.Builder builder = RestClient.builder().baseUrl("https://example.test");
+        MockRestServiceServer server = MockRestServiceServer.bindTo(builder).build();
+        server.expect(requestTo(RESPONSES_URL))
+                .andRespond(withSuccess(functionCallResponse(
+                                "search_places_near_reference", "call_1",
+                                "{\"reference\":\"천궁\",\"category\":\"CAFE\","
+                                        + "\"radiusMeters\":1000,\"limit\":10}"),
+                        MediaType.APPLICATION_JSON));
+
+        var reply = client(properties(), mcpTools, builder.build())
+                .complete(new AiGuideRequest("경복궁 주변 카페 추천해줘", List.of()));
+
+        assertThat(reply.answer()).isEqualTo(
+                "경복궁 주변에서 가까운 장소를 찾았어요.\n\n"
+                        + "- **서경카페** — 도보 약 3분, 210m\n\n"
+                        + "영업 여부는 방문 전에 확인해 주세요.");
+        assertThat(reply.responseId()).isNull();
+        assertThat(reply.recommendedPlaceIds()).containsExactly(101L);
+        server.verify();
+    }
+
+    @Test
+    void namedVicinityWithCrowdingIntentContinuesModelToolFlow() {
+        DdemachimMcpTools mcpTools = mock(DdemachimMcpTools.class);
+        when(mcpTools.searchPlacesNearReference(any())).thenReturn(new DdemachimMcpTools.McpToolResponse<>(
+                true, "COMMON200", "성공", new AiPlaceReferenceSearchService.NearReferenceResult(
+                        new AiPlaceReferenceSearchService.ReferencePlace(
+                                "경복궁", "DDEMACHIM", "서울 종로구 사직로 161", 37.5796, 126.9770),
+                        new AiPlaceSearchService.NearbyResult(List.of(
+                                new AiPlaceSearchService.NearbyPlace(
+                                        101L, "서경카페", "CAFE", 210, 3, null, "RELAXED",
+                                        37.58, 126.98, List.of()))))));
+        RestClient.Builder builder = RestClient.builder().baseUrl("https://example.test");
+        MockRestServiceServer server = MockRestServiceServer.bindTo(builder).build();
+        server.expect(requestTo(RESPONSES_URL))
+                .andRespond(withSuccess(functionCallResponse(
+                                "search_places_near_reference", "call_1",
+                                "{\"reference\":\"경복궁\",\"category\":\"CAFE\","
+                                        + "\"radiusMeters\":1000,\"limit\":10}"),
+                        MediaType.APPLICATION_JSON));
+        server.expect(requestTo(RESPONSES_URL))
+                .andRespond(withSuccess(finalResponse("혼잡도까지 확인해 안내할게요.", "resp_2"),
+                        MediaType.APPLICATION_JSON));
+
+        var reply = client(properties(), mcpTools, builder.build())
+                .complete(new AiGuideRequest("경복궁 주변 카페 추천하고 혼잡도도 알려줘", List.of()));
+
+        assertThat(reply.answer()).isEqualTo("혼잡도까지 확인해 안내할게요.");
+        assertThat(reply.responseId()).isEqualTo("resp_2");
+        server.verify();
+    }
+
+    @Test
+    void referenceSearchCorrectsFinalBasisClaimEvenWhenModelArgumentWasAlreadyCorrect() {
+        DdemachimMcpTools mcpTools = mock(DdemachimMcpTools.class);
+        when(mcpTools.searchPlacesNearReference(any())).thenReturn(new DdemachimMcpTools.McpToolResponse<>(
+                true, "COMMON200", "성공", new AiPlaceReferenceSearchService.NearReferenceResult(
+                        new AiPlaceReferenceSearchService.ReferencePlace(
+                                "경복궁", "DDEMACHIM", "서울 종로구 사직로 161", 37.5796, 126.9770),
+                        new AiPlaceSearchService.NearbyResult(List.of()))));
+        RestClient.Builder builder = RestClient.builder().baseUrl("https://example.test");
+        MockRestServiceServer server = MockRestServiceServer.bindTo(builder).build();
+        server.expect(requestTo(RESPONSES_URL))
+                .andRespond(withSuccess(functionCallResponse(
+                                "search_places_near_reference", "call_1",
+                                "{\"reference\":\"경복궁\",\"category\":\"CAFE\","
+                                        + "\"radiusMeters\":1000,\"limit\":10}"),
+                        MediaType.APPLICATION_JSON));
+        server.expect(requestTo(RESPONSES_URL))
+                .andRespond(withSuccess(finalResponse(
+                                "검색 결과의 기준 장소는 경복궁 아닌 ‘천궁’으로 확인됐어요."
+                                        + " 천궁 주변 후보입니다.\\n거리 기준으로 가까운 순서입니다."
+                                        + "\\n기준 장소는 경복궁입니다. 카페가 아닌 식당도 추천해요.",
+                                "resp_2"),
+                        MediaType.APPLICATION_JSON));
+
+        var reply = client(properties(), mcpTools, builder.build())
+                .complete(new AiGuideRequest("경복궁 주변 카페 추천해줘", List.of()));
+
+        assertThat(reply.answer()).isEqualTo(
+                "경복궁 주변 기준으로 추천드릴게요.\n거리 기준으로 가까운 순서입니다."
+                        + "\n기준 장소는 **경복궁**입니다. 카페가 아닌 식당도 추천해요.");
+        server.verify();
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = {
+            "거기 주변 카페 추천해줘",
+            "그 카페 주변을 더 찾아줘",
+            "아까 말한 호텔 근처 카페를 찾아줘",
+            "우리 동네 주변 카페 추천해줘"
+    })
+    void referenceSearchKeepsHistoryResolvedReferenceForContextualFollowUp(String message) {
+        DdemachimMcpTools mcpTools = mock(DdemachimMcpTools.class);
+        when(mcpTools.searchPlacesNearReference(any())).thenReturn(new DdemachimMcpTools.McpToolResponse<>(
+                true,
+                "COMMON200",
+                "성공",
+                new AiPlaceReferenceSearchService.NearReferenceResult(
+                        new AiPlaceReferenceSearchService.ReferencePlace(
+                                "경복궁", "DDEMACHIM", "서울 종로구 사직로 161", 37.5796, 126.9770),
+                        new AiPlaceSearchService.NearbyResult(List.of()))));
+        RestClient.Builder builder = RestClient.builder().baseUrl("https://example.test");
+        MockRestServiceServer server = MockRestServiceServer.bindTo(builder).build();
+        server.expect(requestTo(RESPONSES_URL))
+                .andRespond(withSuccess(functionCallResponse(
+                                "search_places_near_reference", "call_1",
+                                "{\"reference\":\"경복궁\",\"category\":\"CAFE\","
+                                        + "\"radiusMeters\":1000,\"limit\":10}"),
+                        MediaType.APPLICATION_JSON));
+        server.expect(requestTo(RESPONSES_URL))
+                .andRespond(withSuccess(finalResponse("그 주변 카페를 확인했어요.", "resp_2"),
+                        MediaType.APPLICATION_JSON));
+
+        var reply = client(properties(), mcpTools, builder.build())
+                .complete(new AiGuideRequest(message, List.of()));
+
+        assertThat(reply.answer()).isEqualTo("그 주변 카페를 확인했어요.");
+        verify(mcpTools).searchPlacesNearReference(new DdemachimMcpTools.SearchPlacesNearReferenceRequest(
+                "경복궁", "CAFE", 1_000, null, null, 10, null));
+        server.verify();
+    }
+
+    @Test
+    void referenceSearchSkipsContextualPhraseAndUsesLaterNamedVicinity() {
+        DdemachimMcpTools mcpTools = mock(DdemachimMcpTools.class);
+        when(mcpTools.searchPlacesNearReference(any())).thenReturn(new DdemachimMcpTools.McpToolResponse<>(
+                true, "COMMON200", "성공", new AiPlaceReferenceSearchService.NearReferenceResult(
+                        new AiPlaceReferenceSearchService.ReferencePlace(
+                                "경복궁", "DDEMACHIM", "서울 종로구 사직로 161", 37.5796, 126.9770),
+                        new AiPlaceSearchService.NearbyResult(List.of()))));
+        RestClient.Builder builder = RestClient.builder().baseUrl("https://example.test");
+        MockRestServiceServer server = MockRestServiceServer.bindTo(builder).build();
+        server.expect(requestTo(RESPONSES_URL))
+                .andRespond(withSuccess(functionCallResponse(
+                                "search_places_near_reference", "call_1",
+                                "{\"reference\":\"천궁\",\"category\":\"CAFE\","
+                                        + "\"radiusMeters\":1000,\"limit\":10}"),
+                        MediaType.APPLICATION_JSON));
+        server.expect(requestTo(RESPONSES_URL))
+                .andRespond(withSuccess(finalResponse("경복궁 주변 카페를 확인했어요.", "resp_2"),
+                        MediaType.APPLICATION_JSON));
+
+        client(properties(), mcpTools, builder.build())
+                .complete(new AiGuideRequest("거기 주변 말고 경복궁 주변 카페를 찾아줘", List.of()));
+
+        verify(mcpTools).searchPlacesNearReference(new DdemachimMcpTools.SearchPlacesNearReferenceRequest(
+                "경복궁", "CAFE", 1_000, null, null, 10, null));
+        server.verify();
+    }
+
+    @Test
+    void nearReferenceOutputHandlesMissingModelReferenceWithoutNullPointerException() {
+        DdemachimMcpTools mcpTools = mock(DdemachimMcpTools.class);
+        when(mcpTools.searchPlacesNearReference(any())).thenReturn(new DdemachimMcpTools.McpToolResponse<>(
+                false, "AI_GUIDE_REFERENCE_REQUIRED", "기준 장소가 필요합니다.", null));
+        RestClient.Builder builder = RestClient.builder().baseUrl("https://example.test");
+        MockRestServiceServer server = MockRestServiceServer.bindTo(builder).build();
+        server.expect(requestTo(RESPONSES_URL))
+                .andRespond(withSuccess(functionCallResponse(
+                                "search_places_near_reference", "call_1",
+                                "{\"category\":\"CAFE\",\"radiusMeters\":1000,\"limit\":10}"),
+                        MediaType.APPLICATION_JSON));
+        server.expect(requestTo(RESPONSES_URL))
+                .andExpect(content().string(containsString("\\\"toolResponse\\\"")))
+                .andRespond(withSuccess(finalResponse("기준 장소를 알려주세요.", "resp_2"),
+                        MediaType.APPLICATION_JSON));
+
+        var reply = client(properties(), mcpTools, builder.build())
+                .complete(new AiGuideRequest("주변 카페를 찾아줘", List.of()));
+
+        assertThat(reply.answer()).isEqualTo("기준 장소를 알려주세요.");
+        server.verify();
+    }
+
+    @Test
+    void emptyGenericSearchWithoutReferenceReturnsClarificationWithoutAnotherToolRound() {
         DdemachimMcpTools mcpTools = mock(DdemachimMcpTools.class);
         when(mcpTools.searchPlaces(any())).thenReturn(new DdemachimMcpTools.McpToolResponse<>(
                 true, "COMMON200", "성공", new AiPlaceSearchService.SearchResult(List.of())));
@@ -289,10 +575,9 @@ class OpenAiResponsesClientTest {
                         MediaType.APPLICATION_JSON));
 
         var reply = client(properties(), mcpTools, builder.build())
-                .complete(new AiGuideRequest("종로3가역에서 3시간 코스", List.of()));
+                .complete(new AiGuideRequest("종로3가역에서 카페를 추천해줘", List.of()));
 
         assertThat(reply.answer()).contains("검색 결과", "기준 지역", "장소 유형");
-        verify(mcpTools, times(1)).searchPlaces(any());
         server.verify();
     }
 
@@ -369,6 +654,7 @@ class OpenAiResponsesClientTest {
                 .complete(new AiGuideRequest("종로3가역에서 오늘 3시간 코스", List.of()));
 
         assertThat(reply.answer()).contains("출발 위치 좌표");
+        assertThat(reply.responseId()).isNull();
         verify(mcpTools, times(0)).createAiCourse(any());
         server.verify();
     }
@@ -391,6 +677,39 @@ class OpenAiResponsesClientTest {
                         null, "resp_search_results"));
 
         assertThat(reply.responseId()).isEqualTo("resp_followup");
+        server.verify();
+    }
+
+    @Test
+    void incompletePreviousToolContextFallsBackToTextHistoryOnce() {
+        RestClient.Builder builder = RestClient.builder().baseUrl("https://example.test");
+        MockRestServiceServer server = MockRestServiceServer.bindTo(builder).build();
+        server.expect(requestTo(RESPONSES_URL))
+                .andExpect(content().string(allOf(
+                        containsString("\"previous_response_id\":\"resp_incomplete_tool\""),
+                        not(containsString("이전 코스 제안")))))
+                .andRespond(withStatus(HttpStatus.BAD_REQUEST)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .body("{\"error\":{\"type\":\"invalid_request_error\","
+                                + "\"message\":\"No tool output found for function call call_123.\"}}"));
+        server.expect(requestTo(RESPONSES_URL))
+                .andExpect(content().string(allOf(
+                        not(containsString("previous_response_id")),
+                        containsString("이전 코스 제안"),
+                        containsString("촬영지 코스 추천"))))
+                .andRespond(withSuccess(finalResponse("새 대화 이력으로 다시 추천할게요.", "resp_recovered"),
+                        MediaType.APPLICATION_JSON));
+
+        var reply = client(properties(), mock(DdemachimMcpTools.class), builder.build())
+                .complete(new AiGuideRequest(
+                        "촬영지 코스 추천",
+                        List.of(new AiGuideRequest.HistoryMessage(
+                                AiGuideRequest.Role.ASSISTANT, "이전 코스 제안")),
+                        null,
+                        "resp_incomplete_tool"));
+
+        assertThat(reply.answer()).isEqualTo("새 대화 이력으로 다시 추천할게요.");
+        assertThat(reply.responseId()).isEqualTo("resp_recovered");
         server.verify();
     }
 
@@ -552,7 +871,11 @@ class OpenAiResponsesClientTest {
     }
 
     private static String functionCallResponse(String name, String callId, String arguments) {
-        return "{\"id\":\"resp_1\",\"status\":\"completed\",\"output\":[{"
+        return functionCallResponse("resp_1", name, callId, arguments);
+    }
+
+    private static String functionCallResponse(String responseId, String name, String callId, String arguments) {
+        return "{\"id\":\"" + responseId + "\",\"status\":\"completed\",\"output\":[{"
                 + "\"type\":\"function_call\",\"call_id\":\"" + callId + "\",\"name\":\"" + name
                 + "\",\"arguments\":" + jsonString(arguments) + "}]}";
     }

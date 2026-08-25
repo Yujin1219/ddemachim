@@ -165,6 +165,31 @@ test('reset aborts a pending request and suppresses its late result', async () =
   }
 });
 
+test('adopt opens an already generated AI preview without another fetch', async () => {
+  let loadCount = 0;
+  const ref = createRef();
+  let renderer;
+  await act(async () => {
+    renderer = create(createElement(Harness, {
+      ref,
+      loadPreview: async () => { loadCount += 1; return response(); },
+    }));
+    await flushPromises();
+  });
+
+  try {
+    await act(async () => {
+      ref.current.adopt(response());
+      await flushPromises();
+    });
+    assert.equal(loadCount, 0);
+    assert.equal(ref.current.status, 'success');
+    assert.equal(ref.current.preview.stops[0].placeName, '서울공예박물관');
+  } finally {
+    await act(async () => renderer?.unmount());
+  }
+});
+
 test('stores only a request-matched sanitized COURSE4222 failure', async () => {
   const loadPreview = async () => { throw course4222Error(validFailureResult()); };
   const ref = createRef();
@@ -187,6 +212,12 @@ test('stores only a request-matched sanitized COURSE4222 failure', async () => {
         label: '출발 조건',
         action: 'conditions',
         messages: ['서울공예박물관: 선택한 날짜에는 운영하지 않아요.'],
+        items: [{
+          basketItemId: 11,
+          placeName: '서울공예박물관',
+          reason: 'PLACE_CLOSED',
+          adjustmentProposal: 'CHANGE_SERVICE_DATE',
+        }],
       }],
     });
   } finally {

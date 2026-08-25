@@ -56,7 +56,7 @@ function guidanceCopy(step, distance) {
   return description;
 }
 
-export default function CourseNavigationGuidance({ preview, destination, onArrival, onGuidanceChange, route = null, currentLocation = null }) {
+export default function CourseNavigationGuidance({ preview, destination, onArrival, onGuidanceChange, onLocationChange, route = null, currentLocation = null }) {
   const steps = collectCourseNavigationSteps(preview, route);
   const stepKey = steps.map((step) => `${step.latitude}:${step.longitude}:${step.description}`).join('|');
   const destinationCoordinate = coordinateOf(destination);
@@ -66,6 +66,7 @@ export default function CourseNavigationGuidance({ preview, destination, onArriv
   const destinationReachedRef = useRef(false);
   const onArrivalRef = useRef(onArrival);
   const onGuidanceChangeRef = useRef(onGuidanceChange);
+  const onLocationChangeRef = useRef(onLocationChange);
   const stepsRef = useRef(steps);
   const destinationRef = useRef(destinationCoordinate);
   const [guidance, setGuidance] = useState({ status: 'idle', distance: null, index: 0 });
@@ -79,6 +80,10 @@ export default function CourseNavigationGuidance({ preview, destination, onArriv
   }, [onGuidanceChange]);
 
   useEffect(() => {
+    onLocationChangeRef.current = onLocationChange;
+  }, [onLocationChange]);
+
+  useEffect(() => {
     stepsRef.current = steps;
     destinationRef.current = destinationCoordinate;
   }, [stepKey, destinationKey]);
@@ -86,13 +91,26 @@ export default function CourseNavigationGuidance({ preview, destination, onArriv
   const updateGuidance = useCallback((current) => {
     const currentSteps = stepsRef.current;
     const currentDestination = destinationRef.current;
-    if (!currentSteps.length) return;
     if (currentDestination && !destinationReachedRef.current
       && distanceMeters(current, currentDestination) <= ARRIVAL_DISTANCE_METERS) {
       destinationReachedRef.current = true;
       onArrivalRef.current?.(destination);
     }
+    if (!currentSteps.length) return;
     let index = currentIndexRef.current;
+    let nearbyIndex = index;
+    let nearbyDistance = Number.POSITIVE_INFINITY;
+    for (let candidateIndex = index; candidateIndex < currentSteps.length; candidateIndex += 1) {
+      const candidateDistance = distanceMeters(current, coordinateOf(currentSteps[candidateIndex]));
+      if (candidateDistance > REACHED_DISTANCE_METERS || candidateDistance > nearbyDistance) continue;
+      nearbyIndex = candidateIndex;
+      nearbyDistance = candidateDistance;
+    }
+    if (nearbyIndex > index) {
+      index = nearbyIndex;
+      currentIndexRef.current = index;
+      reachedCurrentRef.current = true;
+    }
     const step = currentSteps[index];
     if (!step) {
       setGuidance({ status: 'complete', distance: 0, index });
@@ -119,24 +137,31 @@ export default function CourseNavigationGuidance({ preview, destination, onArriv
     currentIndexRef.current = 0;
     reachedCurrentRef.current = false;
     destinationReachedRef.current = false;
-    if (steps.length === 0) {
-      setGuidance({ status: 'unavailable', distance: null, index: 0 });
-      return undefined;
-    }
+    const hasGuidanceSteps = steps.length > 0;
+    if (!hasGuidanceSteps) setGuidance({ status: 'unavailable', distance: null, index: 0 });
     if (currentLocation) return undefined;
     if (typeof navigator === 'undefined' || !navigator.geolocation) {
-      setGuidance({ status: 'unsupported', distance: null, index: 0 });
+      if (hasGuidanceSteps) setGuidance({ status: 'unsupported', distance: null, index: 0 });
       return undefined;
     }
 
-    setGuidance({ status: 'requesting', distance: null, index: 0 });
+    if (hasGuidanceSteps) setGuidance({ status: 'requesting', distance: null, index: 0 });
     const watchId = navigator.geolocation.watchPosition(
       (position) => {
         const current = { latitude: position.coords.latitude, longitude: position.coords.longitude };
+        onLocationChangeRef.current?.({
+          coordinate: [current.longitude, current.latitude],
+          heading: position.coords.heading,
+          speed: position.coords.speed,
+          accuracy: position.coords.accuracy,
+          timestamp: position.timestamp,
+        });
         updateGuidance(current);
       },
       (error) => {
-        setGuidance({ status: error?.code === 1 ? 'denied' : 'unavailable', distance: null, index: currentIndexRef.current });
+        if (hasGuidanceSteps) {
+          setGuidance({ status: error?.code === 1 ? 'denied' : 'unavailable', distance: null, index: currentIndexRef.current });
+        }
       },
       { enableHighAccuracy: true, maximumAge: 5_000, timeout: 12_000 },
     );

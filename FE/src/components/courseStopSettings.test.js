@@ -15,8 +15,8 @@ test('basket places become editable stops with a safe default dwell time', () =>
   ]);
 
   assert.deepEqual(settings, [
-    { basketItemId: 11, defaultDwellMinutes: 90, dwellMinutes: 90, hasArrivalDeadline: false, arrivalDeadline: '' },
-    { basketItemId: 12, defaultDwellMinutes: 60, dwellMinutes: 60, hasArrivalDeadline: false, arrivalDeadline: '' },
+    { basketItemId: 11, defaultDwellMinutes: 90, dwellMinutes: 90 },
+    { basketItemId: 12, defaultDwellMinutes: 60, dwellMinutes: 60 },
   ]);
 });
 
@@ -28,14 +28,14 @@ test('dwell time updates stay within the preview request limits', () => {
   assert.equal(updateCourseStopSetting(initial, 11, { dwellMinutes: 75 })[0].dwellMinutes, 75);
 });
 
-test('preview places include a deadline only when fixed arrival is enabled', () => {
+test('preview places omit deprecated fixed-arrival deadlines', () => {
   const settings = [
     { basketItemId: 11, defaultDwellMinutes: 60, dwellMinutes: 45, hasArrivalDeadline: true, arrivalDeadline: '15:00' },
     { basketItemId: 12, defaultDwellMinutes: 60, dwellMinutes: 60, hasArrivalDeadline: false, arrivalDeadline: '18:00' },
   ];
 
   assert.deepEqual(buildCoursePreviewPlaces(settings), [
-    { basketItemId: 11, dwellMinutes: 45, arrivalDeadline: '15:00' },
+    { basketItemId: 11, dwellMinutes: 45, arrivalDeadline: null },
     { basketItemId: 12, dwellMinutes: 60, arrivalDeadline: null },
   ]);
 });
@@ -51,6 +51,6 @@ test('basket refresh preserves matching edits and initializes only new stops', (
     { id: 12, defaultDwellMinutes: 90 },
   ], current), [
     { basketItemId: 11, defaultDwellMinutes: 60, dwellMinutes: 45, hasArrivalDeadline: true, arrivalDeadline: '15:00' },
-    { basketItemId: 12, defaultDwellMinutes: 90, dwellMinutes: 90, hasArrivalDeadline: false, arrivalDeadline: '' },
+    { basketItemId: 12, defaultDwellMinutes: 90, dwellMinutes: 90 },
   ]);
 });

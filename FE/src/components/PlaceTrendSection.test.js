@@ -104,7 +104,7 @@ test('delegates the trend section to the shared Explore section and card rendere
   assert.equal(nodesWithClass(renderer, 'shared-screen-section').length, 1);
   assert.equal(nodesWithClass(renderer, 'shared-horizontal-cards').length, 1);
   assert.equal(sectionProps.title, '요즘 이곳에서는');
-  assert.equal(sectionProps.subtitle, '상태가 확인된 장소를 모아봤어요.');
+  assert.equal(sectionProps.subtitle, '지금 주목받는 장소를 모았어요.');
   assert.equal(sectionProps.action, '전체보기');
   assert.equal(cardProps.places.length, 2);
   assert.equal(textContent(renderer.toJSON()).includes('요약'), false);

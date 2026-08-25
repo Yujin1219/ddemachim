@@ -38,4 +38,5 @@ public record AddKakaoPlaceRequest(
                 @DecimalMin("-90.0")
                 @DecimalMax("90.0")
                 Double latitude,
-        @Schema(description = "전화번호", example = "02-3700-3900") @Size(max = 50) String phone) {}
+        @Schema(description = "전화번호", example = "02-3700-3900") @Size(max = 50) String phone,
+        @Schema(description = "선택 맥락의 대표 이미지 URL") @Size(max = 2048) String imageUrl) {}
