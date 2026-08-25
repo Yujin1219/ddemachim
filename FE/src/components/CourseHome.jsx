@@ -20,7 +20,9 @@ import {
 } from '../api/client.js';
 import {
   publicCourses,
+  visiblePublicCourses,
 } from './courseHomeModel';
+import { importPublicCourseForCreation } from './publicCourseImport.js';
 
 const personalTabs = [
   { id: 'scheduled', label: '예정' },
@@ -169,19 +171,52 @@ async function addPublicCoursePlace(placeName, signal) {
   return addKakaoPlaceToCourseBasket(kakaoPlace, { signal });
 }
 
+function PublicCourseRoutePreview({ course }) {
+  const coordinates = Array.isArray(course.routeCoordinates) ? course.routeCoordinates : [];
+  const routeLegs = coordinates.slice(1).map((coordinate, index) => ({
+    mode: 'WALK',
+    geometry: { coordinates: [coordinates[index], coordinate] },
+  }));
+
+  return (
+    <div className="course-home-public-map" aria-label={`${course.title} 코스 동선 미리보기`}>
+      <VWorldMap
+        ariaLabel={`${course.title} 코스 동선 미리보기`}
+        interactive={false}
+        showCongestionAreas={false}
+        routeAppearance="focus"
+        routeLegs={routeLegs}
+        routeFitCoordinates={coordinates}
+        routeFitKey={`public-course-${course.id}`}
+        routeFitPadding={[30, 30, 30, 30]}
+        style={{ width: '100%', height: '100%' }}
+      />
+      <ol className="course-home-public-map-stops" aria-hidden="true">
+        {course.places.map((place, index) => <li key={`${course.id}-${place.name}`}><span>{index + 1}</span></li>)}
+      </ol>
+    </div>
+  );
+}
+
 function PublicCourseCard({ course, importStatus, onImport }) {
   const isImporting = importStatus === 'loading';
 
   return (
     <article className="course-home-public-item" role="listitem">
-      <div className="place-card-v3 course-home-public-card">
-        <div className="place-card-image">
-          <img src={course.image} alt={`${course.title} 대표 이미지`} />
-        </div>
-        <div className="place-card-copy">
-          <span className="place-card-kicker">{course.author}</span>
+      <div className="course-home-public-card">
+        <PublicCourseRoutePreview course={course} />
+        <div className="course-home-public-copy">
+          <span className="course-home-public-author">{course.author}님의 코스</span>
           <h3>{course.title}</h3>
-          <p>{course.placeCount}곳 · {course.duration}</p>
+          <p>{course.placeCount}곳 · {course.duration} · {course.distance}</p>
+          <ol className="course-home-public-places" aria-label={`${course.title} 장소 순서`}>
+            {course.places.map((place, index) => (
+              <li key={`${course.id}-${place.name}`}>
+                <span>{index + 1}</span>
+                <div><strong>{place.name}</strong><small>{place.category}</small></div>
+              </li>
+            ))}
+          </ol>
           <CourseActionButton
             disabled={isImporting || importStatus === 'blocked'}
             aria-busy={isImporting || undefined}
@@ -195,13 +230,14 @@ function PublicCourseCard({ course, importStatus, onImport }) {
   );
 }
 
-export function CourseHome({ go, onNavigate, onAuthRequired, basketState, onBasketAdded, onBasketRefresh }) {
+export function CourseHome({ go, onNavigate, onAuthRequired, onBasketAdded, onBasketRefresh, onCreateCourse }) {
   const [activeTab, setActiveTab] = useState('scheduled');
   const [courseState, setCourseState] = useState({ active: null, scheduled: [], completed: [], status: 'loading' });
   const [importState, setImportState] = useState({ courseId: null, status: 'idle', error: null });
   const importControllerRef = useRef(null);
   const tabRefs = useRef({});
   const courses = activeTab === 'scheduled' ? courseState.scheduled : courseState.completed;
+  const sharedCourses = visiblePublicCourses(publicCourses);
 
   const loadCourses = useCallback(() => {
     const controller = new AbortController();
@@ -242,14 +278,18 @@ export function CourseHome({ go, onNavigate, onAuthRequired, basketState, onBask
     importControllerRef.current = controller;
     setImportState({ courseId: course.id, status: 'loading', error: null });
     try {
-      for (const placeName of course.places) {
-        const basketItem = await addPublicCoursePlace(placeName, controller.signal);
-        onBasketAdded?.(basketItem);
-      }
-      if (controller.signal.aborted) return;
-      onBasketRefresh?.();
-      setImportState({ courseId: course.id, status: 'success', error: null });
-      go((basketState?.items?.length ?? 0) > 0 ? 'basket' : 'course-conditions');
+      await importPublicCourseForCreation({
+        course,
+        addPlace: addPublicCoursePlace,
+        onPlaceAdded: onBasketAdded,
+        onBasketRefresh,
+        onCreateCourse: (importedItems) => {
+          setImportState({ courseId: course.id, status: 'success', error: null });
+          if (onCreateCourse) onCreateCourse(importedItems);
+          else go('course-conditions');
+        },
+        signal: controller.signal,
+      });
     } catch (error) {
       if (error?.name === 'AbortError' || controller.signal.aborted) return;
       if (error?.status === 401) {
@@ -262,7 +302,7 @@ export function CourseHome({ go, onNavigate, onAuthRequired, basketState, onBask
     }
   };
   const selectPersonalCourse = (course) => {
-    go(course.status === 'completed' ? 'record-detail' : 'saved-course-preview', course.id);
+    go('saved-course-preview', course.id);
   };
 
   const selectTab = (tabId) => {
@@ -365,7 +405,7 @@ export function CourseHome({ go, onNavigate, onAuthRequired, basketState, onBask
               <h2 id="course-home-public-title">다른 사람의 코스</h2>
             </div>
             <div className="horizontal-cards course-home-public-list" role="list" aria-label="공개 코스 목록">
-              {publicCourses.map((course) => (
+              {sharedCourses.map((course) => (
                 <PublicCourseCard
                   key={course.id}
                   course={course}

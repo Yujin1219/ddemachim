@@ -1,6 +1,8 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
+import * as mapHomeInteraction from './mapHomeInteraction.js';
+
 import {
   createInitialMapHomeInteraction,
   initialMapHomeInteraction,
@@ -8,6 +10,51 @@ import {
   shouldCollapseMapSheet,
   subscribeToMapHomeViewport,
 } from './mapHomeInteraction.js';
+
+test('keeps route endpoints above the route sheet on regular and short phone viewports', () => {
+  assert.equal(typeof mapHomeInteraction.mapHomeRouteFitPadding, 'function');
+  const { mapHomeRouteFitPadding } = mapHomeInteraction;
+  assert.deepEqual(mapHomeRouteFitPadding(844), [120, 28, 448, 28]);
+  assert.deepEqual(mapHomeRouteFitPadding(568), [120, 28, 338, 28]);
+});
+
+test('refits the map when route loading finishes or the selected mode changes', () => {
+  assert.equal(typeof mapHomeInteraction.mapHomeRouteFitKey, 'function');
+  const { mapHomeRouteFitKey } = mapHomeInteraction;
+  assert.equal(mapHomeRouteFitKey({ routeSelectionKey: '', routeRequested: false }), '');
+  assert.equal(
+    mapHomeRouteFitKey({
+      routeSelectionKey: 'INTERNAL:17',
+      routeRequested: true,
+      routeStatus: 'loading',
+      routeMode: 'WALK',
+    }),
+    'INTERNAL:17|route:WALK|loading',
+  );
+  assert.equal(
+    mapHomeRouteFitKey({
+      routeSelectionKey: 'INTERNAL:17',
+      routeRequested: true,
+      routeStatus: 'ready',
+      routeMode: 'TRANSIT',
+    }),
+    'INTERNAL:17|route:TRANSIT|ready',
+  );
+});
+
+test('gives the route camera sole ownership while route comparison is open', () => {
+  assert.equal(typeof mapHomeInteraction.mapHomePlaceCameraState, 'function');
+  const { mapHomePlaceCameraState } = mapHomeInteraction;
+
+  assert.deepEqual(
+    mapHomePlaceCameraState({ routeRequested: true, selectedPlaceKey: 'INTERNAL:17' }),
+    { fitPlaceMarkers: false, focusedPlaceKey: '', followUserLocation: false },
+  );
+  assert.deepEqual(
+    mapHomePlaceCameraState({ routeRequested: false, selectedPlaceKey: 'INTERNAL:17' }),
+    { fitPlaceMarkers: true, focusedPlaceKey: 'INTERNAL:17', followUserLocation: true },
+  );
+});
 
 test('starts with the nearby sheet collapsed on short phone viewports', () => {
   assert.deepEqual(createInitialMapHomeInteraction(568), {

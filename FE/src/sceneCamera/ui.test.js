@@ -48,36 +48,34 @@ test('comparison divider changes the existing comparison state from direct point
   assert.deepEqual(changes, [25, 75]);
 });
 
-test('overlay controls provide labeled non-gesture position, scale, opacity, visibility, and reset actions', () => {
-  const tree = OverlayControls({ overlay: { x: 0, y: 0, scale: 1, opacity: 0.5, visible: true }, onPatch() {}, onReset() {} });
+test('overlay controls provide display modes, opacity, visibility, and reset actions', () => {
+  const tree = OverlayControls({ overlay: { x: 0, y: 0, scale: 1, opacity: 0.5, visible: true, mode: 'image' }, onPatch() {}, onReset() {} });
   const labels = findAll(tree, 'button').map((button) => button.props['aria-label']).filter(Boolean);
-  assert.deepEqual(labels.toSorted(), ['참고 장면 왼쪽으로', '참고 장면 위로', '참고 장면 아래로', '참고 장면 오른쪽으로', '참고 장면 표시', '참고 장면 위치와 크기 초기화'].toSorted());
+  assert.deepEqual(labels.toSorted(), ['장면 숨기기', '참고 장면 위치와 크기 초기화'].toSorted());
   const ranges = findAll(tree, 'input');
-  assert.deepEqual(ranges.map((input) => input.props['aria-label']), ['참고 장면 크기', '참고 장면 불투명도']);
-  assert.deepEqual(ranges.map((input) => input.props['aria-valuetext']), ['100%', '50%']);
-  const [directionGroup] = findAll(tree, 'div').filter((node) => node.props.role === 'group');
-  assert.equal(directionGroup.props['aria-label'], '참고 장면 위치 조절');
-  const visibility = findAll(tree, 'button').find((button) => button.props['aria-label'] === '참고 장면 표시');
+  assert.deepEqual(ranges.map((input) => input.props['aria-label']), ['참고 장면 불투명도']);
+  assert.deepEqual(ranges.map((input) => input.props['aria-valuetext']), ['50%']);
+  const tabs = findAll(tree, 'button').filter((button) => button.props.role === 'tab');
+  assert.deepEqual(tabs.map(textContent), ['전체 장면', '실루엣']);
+  const visibility = findAll(tree, 'button').find((button) => button.props['aria-label'] === '장면 숨기기');
   assert.equal(visibility.props['aria-pressed'], true);
 });
 
-test('overlay controls send directional, range, visibility, and reset changes through their public callbacks', () => {
+test('overlay controls send mode, opacity, visibility, and reset changes through their public callbacks', () => {
   const patches = [];
   let resetCalls = 0;
   const tree = OverlayControls({
-    overlay: { x: 0.2, y: -0.1, scale: 1, opacity: 0.5, visible: true },
+    overlay: { x: 0.2, y: -0.1, scale: 1, opacity: 0.5, visible: true, mode: 'image' },
     onPatch: (patch) => patches.push(patch),
     onReset: () => { resetCalls += 1; },
   });
   const buttons = findAll(tree, 'button');
-  buttons.find((button) => button.props['aria-label'] === '참고 장면 왼쪽으로').props.onClick();
+  buttons.find((button) => textContent(button) === '실루엣').props.onClick();
   const ranges = findAll(tree, 'input');
-  ranges[0].props.onChange({ target: { value: '1.25' } });
-  ranges[1].props.onChange({ target: { value: '0.65' } });
-  buttons.find((button) => button.props['aria-label'] === '참고 장면 표시').props.onClick();
+  ranges[0].props.onChange({ target: { value: '0.65' } });
+  buttons.find((button) => button.props['aria-label'] === '장면 숨기기').props.onClick();
   buttons.find((button) => button.props['aria-label'] === '참고 장면 위치와 크기 초기화').props.onClick();
-  assert.ok(Math.abs(patches[0].x - 0.175) < Number.EPSILON);
-  assert.deepEqual(patches.slice(1), [{ scale: 1.25 }, { opacity: 0.65 }, { visible: false }]);
+  assert.deepEqual(patches, [{ mode: 'outline' }, { opacity: 0.65 }, { visible: false }]);
   assert.equal(resetCalls, 1);
 });
 

@@ -13,6 +13,7 @@ public class AiGuideService {
 
     public AiGuideResponse chat(AiGuideRequest request) {
         AiGuideLlmClient.LlmReply reply = llmClient.complete(request);
-        return new AiGuideResponse(reply.answer(), reply.responseId(), reply.recommendedPlaceIds());
+        return new AiGuideResponse(
+                reply.answer(), reply.responseId(), reply.recommendedPlaceIds(), reply.courseProposal());
     }
 }

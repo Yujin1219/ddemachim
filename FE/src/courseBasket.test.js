@@ -35,6 +35,22 @@ test('duplicate basket errors include HTTP conflicts and already-added API codes
   assert.equal(basket.isDuplicateBasketError({ status: 500, code: 'SERVER_ERROR' }), false);
 });
 
+test('course creation selection follows the selected course order instead of basket recency order', async () => {
+  const basket = await import('./courseBasket.js').catch(() => ({}));
+  assert.equal(typeof basket.selectCourseBasketItems, 'function', 'course selection helper must exist');
+
+  const recentFirstItems = [
+    { id: 32, placeName: '북촌한옥마을' },
+    { id: 99, placeName: '기존 장바구니 장소' },
+    { id: 31, placeName: '창덕궁' },
+  ];
+
+  assert.deepEqual(
+    basket.selectCourseBasketItems(recentFirstItems, ['31', '32']).map((item) => item.placeName),
+    ['창덕궁', '북촌한옥마을'],
+  );
+});
+
 test('auth return storage is consumed once and preserves the place id', async () => {
   const basket = await import('./courseBasket.js').catch(() => ({}));
   assert.equal(typeof basket.storeAuthReturnRoute, 'function', 'auth return writer must exist');
@@ -65,4 +81,54 @@ test('Kakao external links reject non-Kakao URLs and fall back to the provider p
     basket.getKakaoPlaceUrl({ providerPlaceId: '18612586', placeUrl: 'javascript:alert(1)' }),
     'https://place.map.kakao.com/18612586',
   );
+});
+
+test('event basket items open the event detail instead of a Kakao place page', async () => {
+  const basket = await import('./courseBasket.js').catch(() => ({}));
+  assert.equal(typeof basket.getBasketItemNavigation, 'function', 'basket navigation helper must exist');
+
+  assert.deepEqual(
+    basket.getBasketItemNavigation({
+      source: 'KAKAO',
+      providerPlaceId: '1',
+      categoryGroupCode: 'EVENT',
+      categoryName: '전시·행사',
+    }),
+    { type: 'route', screen: 'event-detail', id: '1' },
+  );
+  assert.deepEqual(
+    basket.getBasketItemNavigation({ source: 'KAKAO', providerPlaceId: '18612586', categoryName: '카페' }),
+    { type: 'external', href: 'https://place.map.kakao.com/18612586' },
+  );
+});
+
+test('Kakao search basket items use the generic place visual and Kakao source label', async () => {
+  const basket = await import('./courseBasket.js').catch(() => ({}));
+  assert.equal(typeof basket.getBasketItemPresentation, 'function', 'basket presentation helper must exist');
+
+  assert.deepEqual(basket.getBasketItemPresentation({
+    source: 'KAKAO',
+    providerPlaceId: '18612586',
+    categoryName: '여행 > 관광,명소',
+    imageUrl: null,
+  }), {
+    label: '카카오 장소',
+    tone: 'kakao',
+    imageUrl: '/assets/place-default.svg',
+  });
+});
+
+test('event basket items prefer their persisted representative image', async () => {
+  const basket = await import('./courseBasket.js').catch(() => ({}));
+  assert.equal(typeof basket.getBasketItemPresentation, 'function', 'basket presentation helper must exist');
+
+  const presentation = basket.getBasketItemPresentation({
+    source: 'KAKAO',
+    categoryGroupCode: 'EVENT',
+    categoryName: '전시·행사',
+    imageUrl: 'https://example.com/exhibition.jpg',
+  });
+
+  assert.equal(presentation.label, '전시·행사');
+  assert.equal(presentation.imageUrl, 'https://example.com/exhibition.jpg');
 });

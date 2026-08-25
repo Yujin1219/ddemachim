@@ -17,6 +17,8 @@ import com.ddemachim.server.domain.place.repository.PlaceOperatingHoursRepositor
 import com.ddemachim.server.domain.place.repository.PlaceRepository;
 import java.time.LocalTime;
 import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.Comparator;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.LinkedHashSet;
@@ -32,7 +34,6 @@ import org.springframework.transaction.annotation.Transactional;
 @Service
 public class AiCourseService {
 
-    private static final int MAX_PLANNED_STOPS = 5;
     private static final LocalTime FALLBACK_OPEN = LocalTime.of(9, 0);
     private static final LocalTime FALLBACK_CLOSE = LocalTime.of(22, 0);
     private final PlaceRepository placeRepository;
@@ -80,28 +81,36 @@ public class AiCourseService {
                 stop.travelDistanceMeters(), stop.congestionScore(), stop.ascentMeters(), stop.selectedMode())).toList();
         return new AiCourseResponse(request.date(), request.startTime(), option.scheduledEnd(),
                 option.totalDurationMinutes(), option.totalTravelMinutes(), option.strategy(),
-                requiredIds, excluded, stops);
+                requiredIds, excluded, stops, preview);
     }
 
     private List<Long> selectPlaces(
             AiCourseRequest request, List<Long> requiredIds, List<Long> candidateIds,
             Map<Long, Place> places, Map<Long, PlaceOperatingHours> hours) {
-        if (requiredIds.size() > MAX_PLANNED_STOPS) {
-            throw new CourseException(CourseErrorStatus.INVALID_PREVIEW_INPUT);
-        }
-        int maxStops = request.schedulePreference() == AiCourseRequest.SchedulePreference.RELAXED ? 4 : 5;
         List<Long> selected = new ArrayList<>(requiredIds);
         int usedMinutes = requiredIds.stream().map(places::get).mapToInt(Place::getDefaultDwellMinutes).sum();
         double latitude = request.startLocation().latitude();
         double longitude = request.startLocation().longitude();
         List<Long> remaining = new ArrayList<>(candidateIds);
-        while (!remaining.isEmpty() && selected.size() < Math.min(MAX_PLANNED_STOPS, maxStops)) {
+        boolean filmingCourse = isFilmingCourse(candidateIds, places);
+        while (!remaining.isEmpty()) {
             double currentLatitude = latitude;
             double currentLongitude = longitude;
+            Map<String, Long> selectedCategoryCounts = selected.stream()
+                    .map(places::get)
+                    .filter(Objects::nonNull)
+                    .collect(java.util.stream.Collectors.groupingBy(
+                            AiCourseService::categoryCode, java.util.stream.Collectors.counting()));
+            Comparator<Long> selectionOrder = filmingCourse
+                    ? Comparator
+                            .comparingLong((Long id) -> selectedCategoryCounts.getOrDefault(
+                                    categoryCode(places.get(id)), 0L))
+                            .thenComparingInt(id -> filmingCategoryPriority(categoryCode(places.get(id))))
+                            .thenComparingDouble(id -> distance(currentLatitude, currentLongitude, places.get(id)))
+                    : Comparator.comparingDouble(
+                            id -> distance(currentLatitude, currentLongitude, places.get(id)));
             Long next = remaining.stream().filter(id -> !isClosed(hours.get(id)))
-                    .min((left, right) -> Double.compare(
-                            distance(currentLatitude, currentLongitude, places.get(left)),
-                            distance(currentLatitude, currentLongitude, places.get(right))))
+                    .min(selectionOrder)
                     .orElse(null);
             if (next == null) break;
             Place place = places.get(next);
@@ -117,6 +126,32 @@ public class AiCourseService {
         }
         if (selected.isEmpty()) throw new CourseException(CourseErrorStatus.INVALID_PREVIEW_INPUT);
         return List.copyOf(selected);
+    }
+
+    private static boolean isFilmingCourse(List<Long> candidateIds, Map<Long, Place> places) {
+        return candidateIds.size() > 1 && candidateIds.stream()
+                .map(places::get)
+                .filter(Objects::nonNull)
+                .allMatch(AiCourseService::hasFilmingTag);
+    }
+
+    private static boolean hasFilmingTag(Place place) {
+        return place.getTags() != null && Arrays.asList(place.getTags()).contains("FILMING_LOCATION");
+    }
+
+    private static String categoryCode(Place place) {
+        return place != null && place.getCategory() != null && place.getCategory().getCode() != null
+                ? place.getCategory().getCode() : "ETC";
+    }
+
+    private static int filmingCategoryPriority(String category) {
+        return switch (category) {
+            case "ETC", "ATTRACTION", "CULTURE", "PHOTO_SPOT" -> 0;
+            case "SHOPPING" -> 1;
+            case "CAFE" -> 2;
+            case "RESTAURANT" -> 3;
+            default -> 1;
+        };
     }
 
     private Map<Long, Place> loadPlaces(Set<Long> ids) {

@@ -39,7 +39,7 @@ class CrowdingConfigurationTest {
 
     @Test
     void applicationYamlShipsRedisAndCrowdingMockDefaults() {
-        FileSystemResource resource = new FileSystemResource("src/main/resources/application.yml");
+        FileSystemResource resource = new FileSystemResource("src/main/resources/application.yaml");
         assertThat(resource.exists()).isTrue();
 
         YamlPropertiesFactoryBean factory = new YamlPropertiesFactoryBean();

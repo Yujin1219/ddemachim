@@ -69,10 +69,10 @@ class CourseBasketControllerTest {
     @Test
     void addPlace_returnsCreatedForNewBasketItem() {
         CourseBasketItemResponse item = item();
-        when(courseBasketService.addPlace(3L, 40L))
+        when(courseBasketService.addPlace(3L, 40L, null))
                 .thenReturn(new CourseBasketService.AddResult(item, true));
 
-        var response = courseBasketController.addPlace(3L, 40L);
+        var response = courseBasketController.addPlace(3L, 40L, null);
 
         assertThat(response.getStatusCode()).isEqualTo(HttpStatus.CREATED);
         assertThat(response.getBody().getResult()).isEqualTo(item);
@@ -81,10 +81,10 @@ class CourseBasketControllerTest {
     @Test
     void addPlace_returnsOkForExistingBasketItem() {
         CourseBasketItemResponse item = item();
-        when(courseBasketService.addPlace(3L, 40L))
+        when(courseBasketService.addPlace(3L, 40L, null))
                 .thenReturn(new CourseBasketService.AddResult(item, false));
 
-        var response = courseBasketController.addPlace(3L, 40L);
+        var response = courseBasketController.addPlace(3L, 40L, null);
 
         assertThat(response.getStatusCode()).isEqualTo(HttpStatus.OK);
         assertThat(response.getBody().getResult()).isEqualTo(item);

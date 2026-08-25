@@ -6,6 +6,7 @@ import com.ddemachim.server.domain.aiguide.exception.AiGuideException;
 import com.ddemachim.server.domain.course.enums.CourseRouteStrategy;
 import com.ddemachim.server.domain.course.enums.CourseStartType;
 import com.ddemachim.server.domain.course.dto.AiCourseRequest;
+import com.ddemachim.server.domain.place.service.AiPlaceReferenceSearchService;
 import com.ddemachim.server.domain.place.service.AiPlaceSearchService;
 import com.ddemachim.server.domain.route.enums.RouteMode;
 import com.ddemachim.server.global.mcp.DdemachimMcpTools;
@@ -21,8 +22,11 @@ import java.time.format.DateTimeParseException;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
+import java.util.regex.Pattern;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.HttpHeaders;
@@ -47,6 +51,15 @@ public class OpenAiResponsesClient implements AiGuideLlmClient {
 
     private static final String RESPONSES_PATH = "/v1/responses";
     private static final ZoneId SEOUL = ZoneId.of("Asia/Seoul");
+    private static final Pattern NAMED_VICINITY_PATTERN = Pattern.compile(
+            "(?<![가-힣A-Za-z0-9])[가-힣A-Za-z0-9]{2,}(?=\\s*(?:주변|근처))");
+    private static final Pattern CONTEXTUAL_REFERENCE_PREFIX_PATTERN = Pattern.compile(
+            "(?:^|.*\\s)(?:그|이|저|해당|우리|아까\\s+말한)\\s*$");
+    private static final Set<String> CONTEXTUAL_VICINITY_REFERENCES = Set.of(
+            "여기", "거기", "저기", "이곳", "그곳", "저곳", "이쪽", "그쪽", "저쪽",
+            "현재", "위치", "현위치", "숙소", "장소", "목적지", "출발지",
+            "카페", "호텔", "동네", "식당", "음식점", "가게", "매장",
+            "공원", "미술관", "박물관", "건물", "회사");
     private static final String SYSTEM_INSTRUCTION = """
             당신은 서울 도보 여행 서비스 때마침의 AI 가이드입니다.
             장소, 혼잡도, 이동시간, 코스에 관한 사실은 제공된 때마침 함수 도구를 우선 사용하세요.
@@ -54,10 +67,12 @@ public class OpenAiResponsesClient implements AiGuideLlmClient {
             답변은 친절하고 간결한 한국어로 작성하고, 장소를 추천할 때는 근거와 주의사항을 함께 알려주세요.
             사용자가 단순히 장소를 추천해 달라고 하면 날짜, 시작 시간, 혼잡도 정보를 추가로 요구하지 말고 search_places만 호출해 결과를 추천하세요.
             사용자가 “경복궁 주변 카페”처럼 명시한 기준 장소 주변을 요청하면 search_places_near_reference를 호출하세요. 이 도구는 기준 장소를 먼저 해석해 좌표를 얻고, 그 반경 안의 때마침 저장 장소만 반환합니다. 기준 장소 자체를 추천 결과에 섞지 마세요.
+            search_places_near_reference 출력의 authoritativeReference는 서버가 사용자 원문을 기준으로 확정한 기준 장소입니다. 최초 도구 호출 인자와 다르더라도 authoritativeReference만 답변에 사용하세요.
+            search_places가 빈 결과를 반환했고 사용자가 명시한 기준 장소 주변이나 근처를 요청했다면 search_places_near_reference로 다시 검색하세요. 기준 장소가 없는 일반 검색이라면 도구를 반복 호출하지 말고 검색 결과가 없다고 안내하세요.
             혼잡도, 이동시간 또는 코스 생성은 사용자가 해당 조건을 명시적으로 요청했을 때만 관련 도구를 호출하세요.
             search_places의 visitDate는 선택 사항이며 장소의 등록일이 아니라 방문 예정일에 운영시간을 확인하기 위한 값입니다. 날짜가 없다는 이유로 장소 추천을 미루지 말고, 등록일 기준으로 검색했다는 표현도 사용하지 마세요.
             주변 검색 좌표는 오직 client_context에 제공된 현재 위치 또는 사용자가 명시한 기준 장소를 검색해 얻은 좌표만 사용하세요. 좌표가 없으면 현재 위치 허용 또는 기준 지역/역을 질문하고 임의 좌표를 만들지 마세요.
-            AI 추천 코스에는 create_ai_course를 사용하세요. search_places/search_nearby_places가 반환한 실제 placeId만 사용하고 ID를 만들지 마세요.
+            AI 추천 코스에는 create_ai_course를 사용하세요. search_places/search_nearby_places/search_places_near_reference가 반환한 실제 placeId만 사용하고 ID를 만들지 마세요.
             사용자가 반드시 가겠다고 한 장소는 requiredPlaceIds, 나머지 검색 후보는 candidatePlaceIds로 구분하세요. 최종 순서는 직접 정하지 말고 create_ai_course 결과를 설명하세요.
             create_ai_course에 날짜, 시작 시각, 출발 좌표, 사용 가능 시간이 하나라도 없으면 호출하지 말고 빠진 정보만 질문하세요. 이전 대화의 지역·날짜·선택 장소와 현재 답변을 합쳐 판단하세요.
             단, 사용자가 “지금”, “지금부터”, “바로 시작” 또는 “당장”이라고 하면 client_context.currentTime을 시작 시각, client_context.currentDate를 날짜로 사용하세요. client_context.currentLocation이 제공된 경우에는 그 좌표를 출발 위치로 사용하고 위치를 다시 묻지 마세요.
@@ -138,15 +153,33 @@ public class OpenAiResponsesClient implements AiGuideLlmClient {
         int toolCalls = 0;
         Map<String, Object> failedToolResults = new LinkedHashMap<>();
         List<Long> recommendedPlaceIds = new ArrayList<>();
+        List<ReferenceCorrection> referenceCorrections = new ArrayList<>();
 
         for (int round = 0; round < properties.getMaxToolRounds(); round++) {
-            JsonNode response = requestResponse(input, previousResponseId);
+            JsonNode response;
+            try {
+                response = requestResponse(input, previousResponseId);
+            } catch (AiGuideException exception) {
+                if (round != 0
+                        || !StringUtils.hasText(previousResponseId)
+                        || !isIncompletePreviousToolContext(exception)) {
+                    throw exception;
+                }
+                log.info("Discarding incomplete OpenAI tool context and retrying with text history");
+                previousResponseId = null;
+                input = initialInput(new AiGuideRequest(
+                        request.message(), request.history(), request.currentLocation(), null));
+                response = requestResponse(input, null);
+            }
             String responseId = textValue(response.path("id"));
             List<JsonNode> functionCalls = functionCalls(response);
             String answer = extractAnswer(response);
             if (functionCalls.isEmpty()) {
                 if (StringUtils.hasText(answer)) {
-                    return new LlmReply(answer, responseId, List.copyOf(recommendedPlaceIds));
+                    return new LlmReply(
+                            correctReferenceMentions(answer, referenceCorrections),
+                            responseId,
+                            List.copyOf(recommendedPlaceIds));
                 }
                 throw new AiGuideException(AiGuideErrorStatus.INVALID_UPSTREAM_RESPONSE);
             }
@@ -157,6 +190,10 @@ public class OpenAiResponsesClient implements AiGuideLlmClient {
             if (clarification != null) {
                 return clarification;
             }
+            LlmReply courseProposal = courseProposal(functionCalls, responseId, request);
+            if (courseProposal != null) {
+                return courseProposal;
+            }
             if (toolCalls + functionCalls.size() > properties.getMaxToolCalls()) {
                 throw new AiGuideException(AiGuideErrorStatus.TOOL_LIMIT_EXCEEDED);
             }
@@ -166,9 +203,21 @@ public class OpenAiResponsesClient implements AiGuideLlmClient {
                 toolCalls++;
                 FunctionResult functionResult = functionResult(functionCall, failedToolResults, request);
                 if (functionResult.clarification() != null) {
-                    return new LlmReply(functionResult.clarification(), responseId);
+                    return new LlmReply(functionResult.clarification(), null);
                 }
                 appendRecommendedPlaceIds(recommendedPlaceIds, functionResult.result());
+                if (functionResult.referenceCorrection() != null) {
+                    referenceCorrections.add(functionResult.referenceCorrection());
+                }
+                LlmReply deterministicReply = deterministicNamedVicinityReply(
+                        textValue(functionCall.path("name")),
+                        functionResult.result(),
+                        responseId,
+                        request,
+                        recommendedPlaceIds);
+                if (deterministicReply != null) {
+                    return deterministicReply;
+                }
                 input.add(functionResult.input());
             }
             previousResponseId = responseId;
@@ -244,6 +293,15 @@ public class OpenAiResponsesClient implements AiGuideLlmClient {
         } catch (JacksonException ignored) {
             return "unparseable";
         }
+    }
+
+    private boolean isIncompletePreviousToolContext(AiGuideException exception) {
+        if (!(exception.getCause() instanceof RestClientResponseException responseException)
+                || responseException.getStatusCode().value() != 400) {
+            return false;
+        }
+        return responseException.getResponseBodyAsString()
+                .contains("No tool output found for function call");
     }
 
     private static String abbreviate(String value, int maxLength) {
@@ -352,7 +410,7 @@ public class OpenAiResponsesClient implements AiGuideLlmClient {
             NormalizedToolArguments normalized = normalizeToolArguments(
                     name, functionCall.path("arguments"), request);
             if (normalized.clarification() != null) {
-                return new FunctionResult(null, normalized.clarification(), null);
+                return new FunctionResult(null, normalized.clarification(), null, null);
             }
             String toolCallKey = canonicalToolCallKey(name, normalized.arguments());
             Object result;
@@ -364,15 +422,25 @@ public class OpenAiResponsesClient implements AiGuideLlmClient {
                     failedToolResults.put(toolCallKey, result);
                 }
             }
-            String clarification = emptyPlaceSearchClarification(name, result);
+            String clarification = emptyPlaceSearchClarification(name, result, normalized.arguments(), request);
             if (clarification == null) {
                 clarification = createCourseFailureClarification(name, result);
+            }
+            Object output = result;
+            if ("search_places_near_reference".equals(name)) {
+                Map<String, Object> referenceOutput = new LinkedHashMap<>();
+                String authoritativeReference = textValue(normalized.arguments().path("reference"));
+                if (StringUtils.hasText(authoritativeReference)) {
+                    referenceOutput.put("authoritativeReference", authoritativeReference);
+                }
+                referenceOutput.put("toolResponse", result);
+                output = referenceOutput;
             }
             Map<String, Object> input = Map.of(
                     "type", "function_call_output",
                     "call_id", callId,
-                    "output", objectMapper.writeValueAsString(result));
-            return new FunctionResult(input, clarification, result);
+                    "output", objectMapper.writeValueAsString(output));
+            return new FunctionResult(input, clarification, result, normalized.referenceCorrection());
         } catch (AiGuideException exception) {
             throw exception;
         } catch (JacksonException | IllegalArgumentException exception) {
@@ -390,6 +458,15 @@ public class OpenAiResponsesClient implements AiGuideLlmClient {
         if (argumentObject == null || !argumentObject.isObject()) {
             throw new AiGuideException(AiGuideErrorStatus.INVALID_TOOL_CALL);
         }
+        ReferenceCorrection referenceCorrection = null;
+        if ("search_places_near_reference".equals(name)) {
+            String originalReference = textValue(argumentObject.path("reference"));
+            String namedReference = namedVicinityReference(request.message());
+            if (StringUtils.hasText(namedReference)) {
+                ((ObjectNode) argumentObject).put("reference", namedReference);
+                referenceCorrection = new ReferenceCorrection(originalReference, namedReference);
+            }
+        }
         if ("create_ai_course".equals(name)) {
             enrichImmediateAiCourseArguments((ObjectNode) argumentObject, request);
         }
@@ -399,21 +476,22 @@ public class OpenAiResponsesClient implements AiGuideLlmClient {
             default -> null;
         };
         if (dateField == null || !argumentObject.path(dateField).isTextual()) {
-            return new NormalizedToolArguments(argumentObject, null);
+            return new NormalizedToolArguments(argumentObject, null, referenceCorrection);
         }
         String rawDate = argumentObject.path(dateField).asText().trim();
         if (!StringUtils.hasText(rawDate)) {
-            return new NormalizedToolArguments(argumentObject, null);
+            return new NormalizedToolArguments(argumentObject, null, referenceCorrection);
         }
         LocalDate resolvedDate = resolveVisitDate(rawDate);
         if (resolvedDate == null) {
             log.warn("AI tool date argument could not be normalized: tool={}, field={}", name, dateField);
             return new NormalizedToolArguments(null,
-                    "방문 날짜를 확인하기 어려워요. 오늘, 내일, 모레 또는 YYYY-MM-DD 형식으로 알려주세요.");
+                    "방문 날짜를 확인하기 어려워요. 오늘, 내일, 모레 또는 YYYY-MM-DD 형식으로 알려주세요.",
+                    referenceCorrection);
         }
         ObjectNode normalized = (ObjectNode) argumentObject;
         normalized.put(dateField, resolvedDate.toString());
-        return new NormalizedToolArguments(normalized, null);
+        return new NormalizedToolArguments(normalized, null, referenceCorrection);
     }
 
     private void enrichImmediateAiCourseArguments(ObjectNode arguments, AiGuideRequest request) {
@@ -490,7 +568,7 @@ public class OpenAiResponsesClient implements AiGuideLlmClient {
                 List<String> missing = missingAiCourseInputs(functionCall.path("arguments"), request);
                 if (!missing.isEmpty()) {
                     return new LlmReply("AI 코스를 만들려면 " + String.join(", ", missing)
-                            + " 정보가 필요해요. 확인해서 알려주시면 추천해드릴게요.", interactionId);
+                            + " 정보가 필요해요. 확인해서 알려주시면 추천해드릴게요.", null);
                 }
                 continue;
             }
@@ -502,7 +580,37 @@ public class OpenAiResponsesClient implements AiGuideLlmClient {
                 missing.add("로그인");
             }
             if (!missing.isEmpty()) {
-                return new LlmReply(courseClarificationMessage(missing), interactionId);
+                return new LlmReply(courseClarificationMessage(missing), null);
+            }
+        }
+        return null;
+    }
+
+    private LlmReply courseProposal(
+            List<JsonNode> functionCalls, String interactionId, AiGuideRequest request) {
+        for (JsonNode functionCall : functionCalls) {
+            if (!"create_ai_course".equals(textValue(functionCall.path("name")))) {
+                continue;
+            }
+            try {
+                NormalizedToolArguments normalized = normalizeToolArguments(
+                        "create_ai_course", functionCall.path("arguments"), request);
+                if (normalized.clarification() != null) {
+                    return new LlmReply(normalized.clarification(), null);
+                }
+                AiCourseRequest proposal = objectMapper.treeToValue(
+                        normalized.arguments(), AiCourseRequest.class);
+                LinkedHashSet<Long> placeIds = new LinkedHashSet<>();
+                if (proposal.requiredPlaceIds() != null) placeIds.addAll(proposal.requiredPlaceIds());
+                if (proposal.candidatePlaceIds() != null) placeIds.addAll(proposal.candidatePlaceIds());
+                placeIds.removeIf(id -> id == null || id <= 0);
+                return new LlmReply(
+                        "추천 장소를 확인해 주세요. 이대로 코스를 생성할까요?",
+                        null,
+                        List.copyOf(placeIds),
+                        proposal);
+            } catch (JacksonException | IllegalArgumentException exception) {
+                throw new AiGuideException(AiGuideErrorStatus.INVALID_TOOL_CALL, exception);
             }
         }
         return null;
@@ -636,7 +744,8 @@ public class OpenAiResponsesClient implements AiGuideLlmClient {
         };
     }
 
-    private static String emptyPlaceSearchClarification(String name, Object result) {
+    private static String emptyPlaceSearchClarification(
+            String name, Object result, JsonNode arguments, AiGuideRequest request) {
         if (!"search_places".equals(name)
                 || !(result instanceof DdemachimMcpTools.McpToolResponse<?> response)
                 || !response.isSuccess()
@@ -644,7 +753,206 @@ public class OpenAiResponsesClient implements AiGuideLlmClient {
                 || !searchResult.places().isEmpty()) {
             return null;
         }
+        String area = textValue(arguments.path("area"));
+        String query = textValue(arguments.path("query"));
+        if (containsVicinityKeyword(area)
+                || containsVicinityKeyword(query)
+                || requestsNamedVicinity(request.message())) {
+            return null;
+        }
         return "검색 결과가 없어요. 기준 지역 또는 원하는 장소 유형을 조금 더 구체적으로 알려주세요.";
+    }
+
+    private static boolean containsVicinityKeyword(String value) {
+        return StringUtils.hasText(value) && (value.contains("주변") || value.contains("근처"));
+    }
+
+    private static boolean requestsNamedVicinity(String message) {
+        return namedVicinityReference(message) != null;
+    }
+
+    private static String namedVicinityReference(String message) {
+        if (!StringUtils.hasText(message)) {
+            return null;
+        }
+        java.util.regex.Matcher matcher = NAMED_VICINITY_PATTERN.matcher(message);
+        while (matcher.find()) {
+            String reference = matcher.group();
+            String prefix = message.substring(0, matcher.start());
+            if (!CONTEXTUAL_VICINITY_REFERENCES.contains(reference)
+                    && !CONTEXTUAL_REFERENCE_PREFIX_PATTERN.matcher(prefix).matches()) {
+                return reference;
+            }
+        }
+        return null;
+    }
+
+    private static String correctReferenceMentions(
+            String answer, List<ReferenceCorrection> referenceCorrections) {
+        String corrected = answer;
+        for (ReferenceCorrection correction : referenceCorrections) {
+            if (!StringUtils.hasText(correction.authoritative())) {
+                continue;
+            }
+            String claimedReference = claimedReference(corrected);
+            String[] lines = corrected.split("\\R", -1);
+            for (int index = 0; index < lines.length; index++) {
+                lines[index] = correctAuthoritativeReferenceClaims(
+                        lines[index], correction.authoritative(), claimedReference);
+                if (StringUtils.hasText(correction.original())
+                        && !correction.original().equals(correction.authoritative())) {
+                    lines[index] = correctReferenceLine(lines[index], correction);
+                }
+            }
+            corrected = String.join("\n", lines);
+        }
+        return corrected;
+    }
+
+    private static LlmReply deterministicNamedVicinityReply(
+            String toolName,
+            Object result,
+            String responseId,
+            AiGuideRequest request,
+            List<Long> recommendedPlaceIds) {
+        if (!"search_places_near_reference".equals(toolName)
+                || !isSimpleNamedVicinityRecommendation(request.message())
+                || !(result instanceof DdemachimMcpTools.McpToolResponse<?> response)
+                || !response.isSuccess()
+                || !(response.result() instanceof AiPlaceReferenceSearchService.NearReferenceResult near)
+                || near.reference() == null
+                || near.places() == null
+                || near.places().places() == null
+                || near.places().places().isEmpty()) {
+            return null;
+        }
+        String requestedReference = namedVicinityReference(request.message());
+        String referenceLabel = StringUtils.hasText(requestedReference)
+                ? requestedReference
+                : near.reference().name();
+        StringBuilder answer = new StringBuilder(referenceLabel)
+                .append(" 주변에서 가까운 장소를 찾았어요.\n\n");
+        int appended = 0;
+        for (AiPlaceSearchService.NearbyPlace place : near.places().places()) {
+            if (place == null || !StringUtils.hasText(place.name())) {
+                continue;
+            }
+            if (appended > 0) {
+                answer.append('\n');
+            }
+            answer.append("- **").append(place.name()).append("**");
+            if (place.walkingMinutes() != null && place.distanceMeters() != null) {
+                answer.append(" — 도보 약 ").append(place.walkingMinutes())
+                        .append("분, ").append(place.distanceMeters()).append('m');
+            } else if (place.distanceMeters() != null) {
+                answer.append(" — ").append(place.distanceMeters()).append('m');
+            }
+            appended++;
+            if (appended >= 5) {
+                break;
+            }
+        }
+        answer.append("\n\n영업 여부는 방문 전에 확인해 주세요.");
+        return new LlmReply(answer.toString(), null, List.copyOf(recommendedPlaceIds));
+    }
+
+    private static boolean isSimpleNamedVicinityRecommendation(String message) {
+        if (namedVicinityReference(message) == null) {
+            return false;
+        }
+        for (String additionalIntent : List.of(
+                "코스", "일정", "루트", "동선",
+                "혼잡", "붐비", "이동시간", "이동 시간", "도보시간", "도보 시간",
+                "상세", "정보", "운영", "영업", "오픈", "열려", "지금", "현재")) {
+            if (message.contains(additionalIntent)) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    private static String claimedReference(String answer) {
+        Pattern namedAsReference = Pattern.compile(
+                "기준\\s*장소(?:는|가|을|를)?\\s*(?:\\*\\*|__)?[‘'\"“]?"
+                        + "([가-힣A-Za-z0-9]+?)[’'\"”]?(?:\\*\\*|__)?"
+                        + "(?=(?:으로|입니다|이에요|라고|[\\s,.!?]|$))");
+        java.util.regex.Matcher matcher = namedAsReference.matcher(answer);
+        return matcher.find() ? matcher.group(1) : null;
+    }
+
+    private static String correctAuthoritativeReferenceClaims(
+            String line, String authoritativeReference, String claimedReference) {
+        Pattern namedAsReference = Pattern.compile(
+                "기준\\s*장소(?:는|가|을|를)?\\s*(?:\\*\\*|__)?[‘'\"“]?"
+                        + "[가-힣A-Za-z0-9]+?[’'\"”]?(?:\\*\\*|__)?"
+                        + "(?=(?:으로|입니다|이에요|라고|[\\s,.!?]|$))");
+        Pattern referenceAsBasis = StringUtils.hasText(claimedReference)
+                && !claimedReference.equals(authoritativeReference)
+                ? Pattern.compile(
+                        "(?<![가-힣A-Za-z0-9])(?:\\*\\*|__)?[‘'\"“]?"
+                                + Pattern.quote(claimedReference)
+                                + "[’'\"”]?(?:\\*\\*|__)?(?=\\s*기준(?:으로|입니다|이에요))")
+                : null;
+        java.util.regex.Matcher namedReferenceMatcher = namedAsReference.matcher(line);
+        boolean hasNamedReferenceClaim = namedReferenceMatcher.find();
+        int nearbyNegation = hasNamedReferenceClaim ? line.indexOf("아닌", namedReferenceMatcher.end()) : -1;
+        boolean negatesNamedReference = nearbyNegation >= 0
+                && nearbyNegation - namedReferenceMatcher.end() <= 8;
+        boolean containsReferenceClaim = hasNamedReferenceClaim
+                || (referenceAsBasis != null && referenceAsBasis.matcher(line).find());
+        if (!containsReferenceClaim) {
+            return line;
+        }
+        String corrected = namedAsReference.matcher(line)
+                .replaceAll(java.util.regex.Matcher.quoteReplacement(
+                        "기준 장소는 **" + authoritativeReference + "**"));
+        if (referenceAsBasis != null) {
+            corrected = referenceAsBasis.matcher(corrected)
+                    .replaceAll(java.util.regex.Matcher.quoteReplacement(authoritativeReference));
+        }
+        if (negatesNamedReference
+                || corrected.contains("잘못")
+                || corrected.contains("정확하지")
+                || corrected.contains("오해")
+                || corrected.contains("다시 검색")) {
+            return authoritativeReference + " 주변 기준으로 추천드릴게요.";
+        }
+        return corrected;
+    }
+
+    private static String correctReferenceLine(String line, ReferenceCorrection correction) {
+        if (!line.contains(correction.original())) {
+            return line;
+        }
+        boolean contradictsReference = line.contains("아닌")
+                || line.contains("잘못")
+                || line.contains("정확하지")
+                || line.contains("오해")
+                || line.contains("해석");
+        if (contradictsReference) {
+            int separatorEnd = referenceCorrectionSeparatorEnd(line, correction.original());
+            if (separatorEnd >= 0 && separatorEnd < line.length()) {
+                return correction.authoritative() + " 주변 기준으로 " + line.substring(separatorEnd).trim();
+            }
+            return correction.authoritative() + " 주변 기준으로 추천드릴게요.";
+        }
+        Pattern vicinityMention = Pattern.compile(
+                "(?<![가-힣A-Za-z0-9])" + Pattern.quote(correction.original())
+                        + "(?=\\s*(?:주변|근처|기준(?:으로|입니다|이에요)))");
+        return vicinityMention.matcher(line)
+                .replaceAll(java.util.regex.Matcher.quoteReplacement(correction.authoritative()));
+    }
+
+    private static int referenceCorrectionSeparatorEnd(String line, String originalReference) {
+        int searchFrom = line.indexOf(originalReference) + originalReference.length();
+        int earliestEnd = -1;
+        for (String separator : List.of("지만", "으나", "하나", ",")) {
+            int position = line.indexOf(separator, searchFrom);
+            if (position >= 0 && (earliestEnd < 0 || position + separator.length() < earliestEnd)) {
+                earliestEnd = position + separator.length();
+            }
+        }
+        return earliestEnd;
     }
 
     private static void appendRecommendedPlaceIds(List<Long> target, Object result) {
@@ -659,6 +967,10 @@ public class OpenAiResponsesClient implements AiGuideLlmClient {
             ids = search.places().stream().map(AiPlaceSearchService.SearchPlace::placeId).toList();
         } else if (response.result() instanceof AiPlaceSearchService.NearbyResult nearby) {
             ids = nearby.places().stream().map(AiPlaceSearchService.NearbyPlace::placeId).toList();
+        } else if (response.result() instanceof AiPlaceReferenceSearchService.NearReferenceResult nearReference) {
+            ids = nearReference.places().places().stream()
+                    .map(AiPlaceSearchService.NearbyPlace::placeId)
+                    .toList();
         } else {
             ids = List.of();
         }
@@ -820,7 +1132,7 @@ public class OpenAiResponsesClient implements AiGuideLlmClient {
                                         List.of("basketItemId", "dwellMinutes")))),
                                 new Schema("strategy", enumSchema(CourseRouteStrategy.values()))),
                         List.of("serviceDate", "desiredStartTime", "start", "places")),
-                functionTool("create_ai_course", "AI 추천 코스 생성 전용입니다. 장바구니/basketItemId를 사용하지 않습니다. 검색 Tool에서 받은 실제 placeId만 사용하고 임의 ID를 만들지 마세요. 날짜, 시작 시간, 출발 위치 좌표, 사용 가능 시간이 부족하면 호출하지 말고 질문하세요. 이전 대화의 정보를 결합하세요. requiredPlaceIds는 사용자가 꼭 가겠다고 한 장소, candidatePlaceIds는 일반 후보입니다. 최종 방문 순서는 서버 CoursePlanner가 결정합니다.",
+                functionTool("create_ai_course", "AI 추천 코스 생성 전용입니다. 장바구니/basketItemId를 사용하지 않습니다. search_places, search_nearby_places, search_places_near_reference에서 받은 실제 placeId만 사용하고 임의 ID를 만들지 마세요. 날짜, 시작 시간, 출발 위치 좌표, 사용 가능 시간이 부족하면 호출하지 말고 질문하세요. 이전 대화의 정보를 결합하세요. requiredPlaceIds는 사용자가 꼭 가겠다고 한 장소, candidatePlaceIds는 일반 후보입니다. 최종 방문 순서는 서버 CoursePlanner가 결정합니다.",
                         properties(new Schema("date", date()), new Schema("startTime", string()),
                                 new Schema("startLocation", objectSchema(properties(
                                         new Schema("latitude", number()), new Schema("longitude", number()),
@@ -894,10 +1206,18 @@ public class OpenAiResponsesClient implements AiGuideLlmClient {
         return node != null && node.isTextual() ? node.asText() : null;
     }
 
-    private record FunctionResult(Map<String, Object> input, String clarification, Object result) {
+    private record FunctionResult(
+            Map<String, Object> input,
+            String clarification,
+            Object result,
+            ReferenceCorrection referenceCorrection) {
     }
 
-    private record NormalizedToolArguments(JsonNode arguments, String clarification) {
+    private record NormalizedToolArguments(
+            JsonNode arguments, String clarification, ReferenceCorrection referenceCorrection) {
+    }
+
+    private record ReferenceCorrection(String original, String authoritative) {
     }
 
     private static String callId(JsonNode functionCall) {

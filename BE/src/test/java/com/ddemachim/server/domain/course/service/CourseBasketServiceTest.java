@@ -86,6 +86,26 @@ class CourseBasketServiceTest {
     }
 
     @Test
+    void addPlace_preservesTheEventRepresentativeImageAsBasketContext() {
+        Place place = place(40L, "서울공예박물관");
+        Member member = member(3L);
+        when(memberRepository.findByIdForUpdate(3L)).thenReturn(Optional.of(member));
+        when(courseBasketItemRepository.findByMemberIdAndPlaceId(3L, 40L)).thenReturn(Optional.empty());
+        when(placeRepository.findById(40L)).thenReturn(Optional.of(place));
+        when(courseBasketItemRepository.save(any(CourseBasketItem.class))).thenAnswer(invocation -> {
+            CourseBasketItem saved = invocation.getArgument(0);
+            ReflectionTestUtils.setField(saved, "id", 7L);
+            ReflectionTestUtils.setField(saved, "createdAt", OffsetDateTime.parse("2026-08-12T12:00:00+09:00"));
+            return saved;
+        });
+
+        CourseBasketService.AddResult result = courseBasketService.addPlace(
+                3L, 40L, "https://example.com/exhibition.jpg");
+
+        assertThat(result.item().imageUrl()).isEqualTo("https://example.com/exhibition.jpg");
+    }
+
+    @Test
     void addKakaoPlace_createsCanonicalMemberOwnedPlaceAndBasketItem() {
         Member member = member(3L);
         when(memberRepository.findByIdForUpdate(3L)).thenReturn(Optional.of(member));
@@ -230,7 +250,8 @@ class CourseBasketServiceTest {
                 "서울 종로구 세종로 1-1",
                 126.976896737645,
                 37.5776087830657,
-                "02-3700-3900");
+                "02-3700-3900",
+                "https://example.com/kakao-place.jpg");
     }
 
     private static class TestPlace extends Place {}

@@ -26,6 +26,8 @@ const STRATEGY_OPTIONS = [
   { strategy: 'QUIET', label: '한적한 길', name: '한적한', description: '혼잡도를 낮춰요' },
 ];
 
+const COURSE_PREVIEW_COMPLETION_DURATION = 250;
+
 function finiteNumber(value) {
   return Number.isFinite(Number(value)) ? Number(value) : null;
 }
@@ -66,6 +68,17 @@ function routePointAtProgress(coordinates, progress) {
   return coordinates.at(-1);
 }
 
+export function routeSimulationProgress(elapsedMilliseconds, durationMilliseconds) {
+  const elapsed = Number(elapsedMilliseconds);
+  const duration = Number(durationMilliseconds);
+  if (!Number.isFinite(elapsed) || !Number.isFinite(duration) || duration <= 0) return 0;
+  return Math.max(0, Math.min(1, elapsed / duration));
+}
+
+export function shouldStartRouteSimulation(navigationMode, development, routeReady) {
+  return Boolean(navigationMode && development && routeReady);
+}
+
 function useRoutePositionSimulation(coordinates, enabled) {
   const routeKey = coordinates.map(([longitude, latitude]) => `${longitude.toFixed(5)},${latitude.toFixed(5)}`).join('|');
   const [position, setPosition] = useState(null);
@@ -77,13 +90,20 @@ function useRoutePositionSimulation(coordinates, enabled) {
     }
     const startedAt = Date.now();
     const duration = 36000;
+    let timer = null;
     const update = () => {
-      const progress = 0.12 + ((((Date.now() - startedAt) % duration) / duration) * 0.68);
+      const progress = routeSimulationProgress(Date.now() - startedAt, duration);
       setPosition(routePointAtProgress(coordinates, progress));
+      if (progress >= 1 && timer !== null) {
+        window.clearInterval(timer);
+        timer = null;
+      }
     };
     update();
-    const timer = window.setInterval(update, 320);
-    return () => window.clearInterval(timer);
+    timer = window.setInterval(update, 320);
+    return () => {
+      if (timer !== null) window.clearInterval(timer);
+    };
   }, [enabled, routeKey]);
 
   return position;
@@ -567,12 +587,12 @@ function RouteSelector({ stop, selection, onChange }) {
 }
 
 function CoursePlaceOrbitSlider({ stops, selectedIndex, onSelect }) {
-  const [position, setPosition] = useState(selectedIndex);
+  const [position, setPosition] = useState(Number.isInteger(selectedIndex) ? selectedIndex : 0);
   const [dragging, setDragging] = useState(false);
   const dragRef = useRef(null);
   const count = stops.length;
 
-  useEffect(() => setPosition(selectedIndex), [selectedIndex]);
+  useEffect(() => setPosition(Number.isInteger(selectedIndex) ? selectedIndex : 0), [selectedIndex]);
 
   const updatePosition = (clientX) => {
     const drag = dragRef.current;
@@ -632,7 +652,7 @@ function CoursePlaceOrbitSlider({ stops, selectedIndex, onSelect }) {
     const distance = index - position;
     const absoluteDistance = Math.abs(distance);
     if (absoluteDistance > 2.7) return null;
-    const isSelected = absoluteDistance < .45;
+    const isSelected = Number.isInteger(selectedIndex) && absoluteDistance < .45;
     const imageUrl = typeof stop.imageUrl === 'string' ? stop.imageUrl.trim() : '';
     return h('button', {
       key: `${stop.basketItemId ?? index}-${stop.placeName}`,
@@ -652,6 +672,38 @@ function CoursePlaceOrbitSlider({ stops, selectedIndex, onSelect }) {
     h('i', null, index + 1),
     h('small', null, stop.placeName || '장소'));
   }));
+}
+
+function CourseOverviewOrder({ stops, onSelect, timelineRef }) {
+  return h('ol', {
+    className: 'course-preview-overview-order',
+    'aria-label': '전체 코스 방문 순서',
+    ref: timelineRef,
+  },
+    stops.map((stop, index) => {
+      const nextStop = stops[index + 1] || null;
+      const nextRoute = nextStop?.selectedRoute || nextStop?.incomingRoute || null;
+      const routeCopy = nextRoute?.status === 'AVAILABLE'
+        ? `${MODE_LABELS[nextRoute.mode] || nextRoute.mode || '이동'} ${routeDurationLabel(nextRoute)}`
+        : '다음 장소로 이동';
+      return h('li', { key: stop.basketItemId ?? `${stop.sequenceNo ?? index}-${stop.placeName ?? 'place'}` },
+        h('button', {
+          'aria-label': `${index + 1}번 ${stop.placeName || '장소'} 구간 상세 보기`,
+          className: 'course-preview-overview-stop',
+          onClick: () => onSelect(index),
+          type: 'button',
+        },
+        h('span', { 'aria-hidden': true }, index + 1),
+        h('div', null,
+          h('strong', null, stop.placeName || '장소 정보 없음'),
+          stop.scheduledArrival && h('small', null, `${stop.scheduledArrival} 도착`),
+        ),
+        h('b', { 'aria-hidden': true }, '›')),
+        nextStop && h('p', { className: 'course-preview-overview-leg' },
+          h('i', { 'aria-hidden': true }),
+          h('small', null, routeCopy)),
+      );
+    }));
 }
 
 function CongestionBadge({ prefix, score }) {
@@ -771,6 +823,7 @@ export default function CoursePreviewResults({
   onStart = null,
   onConfirm = null,
   confirmLabel = '이 코스로 시작하기',
+  editLabel = '조건 수정',
   confirmBusy = false,
   confirmError = null,
   readOnly = false,
@@ -784,6 +837,9 @@ export default function CoursePreviewResults({
   const [arrivalStartedAt, setArrivalStartedAt] = useState(null);
   const [navigationInstruction, setNavigationInstruction] = useState('');
   const [navigationPanelExpanded, setNavigationPanelExpanded] = useState(false);
+  const [navigationObservation, setNavigationObservation] = useState(null);
+  const [readyNavigationRouteKey, setReadyNavigationRouteKey] = useState('');
+  const [showPreviewLoader, setShowPreviewLoader] = useState(status === 'loading');
   const [sheetOffset, setSheetOffset] = useState(0);
   const [sheetSnapIndex, setSheetSnapIndex] = useState(1);
   const [sheetDragging, setSheetDragging] = useState(false);
@@ -796,6 +852,7 @@ export default function CoursePreviewResults({
   const sheetRafRef = useRef(null);
   const sheetTimelineRef = useRef(null);
   const stopRefs = useRef(new Map());
+  const pendingScrollStopIdRef = useRef(null);
 
   const updateSheetSnapPoints = () => {
     const frame = sheetFrameRef.current;
@@ -804,9 +861,11 @@ export default function CoursePreviewResults({
     const orbitClearance = Math.min(108, Math.max(0, height - 220));
     const collapsedReveal = Math.min(132, Math.max(92, height * 0.28));
     const timeline = sheetTimelineRef.current;
-    const timelineContentHeight = timeline
-      ? [...timeline.children].reduce((total, child) => total + child.getBoundingClientRect().height, 0)
-      : 0;
+    const timelineChildren = timeline?.children ? Array.from(timeline.children) : [];
+    const timelineContentHeight = timelineChildren.reduce(
+      (total, child) => total + (Number(child?.getBoundingClientRect?.().height) || 0),
+      0,
+    );
     const detailReveal = Math.min(
       height - orbitClearance,
       Math.max(collapsedReveal, 36 + 58 + timelineContentHeight + 18),
@@ -833,7 +892,7 @@ export default function CoursePreviewResults({
     observer.observe(frame);
     if (sheetTimelineRef.current) observer.observe(sheetTimelineRef.current);
     return () => observer.disconnect();
-  }, [preview]);
+  }, [preview, showPreviewLoader]);
 
   useEffect(() => () => {
     if (sheetRafRef.current !== null) globalThis.cancelAnimationFrame?.(sheetRafRef.current);
@@ -902,6 +961,13 @@ export default function CoursePreviewResults({
     target.scrollIntoView({ behavior: reduceMotion ? 'auto' : 'smooth', block: 'nearest' });
   };
 
+  useLayoutEffect(() => {
+    const pendingStopId = pendingScrollStopIdRef.current;
+    if (pendingStopId === null || String(selectedStopId) !== pendingStopId) return;
+    pendingScrollStopIdRef.current = null;
+    scrollStopIntoView(pendingStopId);
+  }, [selectedStopId]);
+
   const finishSheetDrag = (event) => {
     const drag = sheetDragRef.current;
     if (!drag || drag.pointerId !== event.pointerId) return;
@@ -967,21 +1033,61 @@ export default function CoursePreviewResults({
   const simulatedRouteCoordinates = navigationMode
     ? navigationRouteCoordinatesForPreview(preview, selection, selectedStopId, origin)
     : [];
+  const navigationRouteKey = simulatedRouteCoordinates
+    .map(([longitude, latitude]) => `${longitude.toFixed(5)},${latitude.toFixed(5)}`)
+    .join('|');
+  const navigationRouteReady = Boolean(
+    navigationRouteKey && readyNavigationRouteKey === navigationRouteKey,
+  );
   const simulatedUserLocation = useRoutePositionSimulation(
     simulatedRouteCoordinates,
-    navigationMode && Boolean(import.meta.env.DEV),
+    shouldStartRouteSimulation(navigationMode, Boolean(import.meta.env?.DEV), navigationRouteReady),
   );
 
+  const publishNavigationLocation = (observation) => {
+    if (!Array.isArray(observation?.coordinate)) return;
+    setNavigationObservation(observation);
+    onNavigationLocationChange?.(observation.coordinate);
+  };
+
   useEffect(() => {
-    if (!navigationMode) return;
-    onNavigationLocationChange?.(simulatedUserLocation);
+    if (!navigationMode || !simulatedUserLocation) return;
+    publishNavigationLocation({
+      coordinate: simulatedUserLocation,
+      heading: null,
+      speed: null,
+      accuracy: null,
+      timestamp: Date.now(),
+    });
   }, [navigationMode, onNavigationLocationChange, simulatedUserLocation?.[0], simulatedUserLocation?.[1]]);
-  if (status === 'loading') {
+
+  useEffect(() => {
+    if (!navigationMode) setNavigationObservation(null);
+  }, [navigationMode]);
+
+  useEffect(() => {
+    if (status === 'loading') {
+      setShowPreviewLoader(true);
+      return undefined;
+    }
+    if (status === 'success' && showPreviewLoader) {
+      const timer = globalThis.setTimeout(
+        () => setShowPreviewLoader(false),
+        COURSE_PREVIEW_COMPLETION_DURATION,
+      );
+      return () => globalThis.clearTimeout(timer);
+    }
+    setShowPreviewLoader(false);
+    return undefined;
+  }, [status, showPreviewLoader]);
+
+  const previewLoaderCompleting = status === 'success' && showPreviewLoader;
+  if (status === 'loading' || previewLoaderCompleting) {
     return h(
       'section',
-      { className: 'phone standard-screen course-preview-screen course-preview-loading', 'aria-busy': true },
+      { className: 'phone standard-screen course-preview-screen course-preview-loading', 'aria-busy': !previewLoaderCompleting },
       h('main', { className: 'page-scroll course-preview-state' },
-        h(CoursePreviewLoader),
+        h(CoursePreviewLoader, { complete: previewLoaderCompleting }),
       ),
     );
   }
@@ -1057,6 +1163,7 @@ export default function CoursePreviewResults({
     ? selection.routeSelections[selectedPreview.strategy] || {}
     : {};
   const effectivePreview = applyRouteSelections(selectedPreview, routeSelections);
+  const overviewMode = !navigationMode && selectedStopId === null;
   const availableStrategyOptions = STRATEGY_OPTIONS.filter((item) => (
     options.some((option) => option?.strategy === item.strategy)
   ));
@@ -1126,23 +1233,34 @@ export default function CoursePreviewResults({
       geometry: { type: 'LineString', coordinates: fallbackCoordinates },
     });
   }
-  const hasDrawableRoute = selectedRouteLegs.some((leg) => (
+  const wholeCourseRouteLegs = flattenRouteLegs(effectivePreview.stops).filter((leg) => (
     leg?.geometry?.type === 'LineString'
     && Array.isArray(leg.geometry.coordinates)
     && leg.geometry.coordinates.length >= 2
   ));
+  const displayedRouteLegs = overviewMode ? wholeCourseRouteLegs : selectedRouteLegs;
+  const hasDrawableRoute = displayedRouteLegs.some((leg) => (
+    leg?.geometry?.type === 'LineString'
+    && Array.isArray(leg.geometry.coordinates)
+    && leg.geometry.coordinates.length >= 2
+  ));
+  const wholeCourseFitCoordinates = [
+    mapCoordinate(origin),
+    ...wholeCourseRouteLegs.flatMap((leg) => leg.geometry.coordinates),
+    ...mapStops.map((stop) => mapCoordinate(stop)),
+  ].filter(Boolean);
   const activeRouteSummary = activeRoute?.status === 'AVAILABLE'
     ? `${MODE_LABELS[activeRoute.mode] || activeRoute.mode || '이동'} ${routeDurationLabel(activeRoute)} · ${formatPreviewDistance(activeRoute.distanceMeters)}`
     : [previousStop?.placeName, nextStop?.placeName].filter(Boolean).join(' → ') || '코스 장소 정보';
-  const selectedPlaceKey = activeStop
+  const selectedPlaceKey = !overviewMode && activeStop
     ? `INTERNAL:${activeStop.basketItemId ?? `${activeStop.sequenceNo ?? selectedStopIndex}-${activeStop.placeName ?? 'place'}`}`
     : '';
   const selectStopAtIndex = (index, shouldRevealSheet = false) => {
     const stop = effectivePreview.stops[index];
     if (!stop) return;
     const id = stop.basketItemId ?? `${stop.sequenceNo ?? index}-${stop.placeName ?? 'place'}`;
+    if (shouldRevealSheet) pendingScrollStopIdRef.current = String(id);
     setSelectedStopId(id);
-    if (shouldRevealSheet) scrollStopIntoView(id);
   };
   const handleMapPlaceClick = (place) => {
     const id = place?.id ?? null;
@@ -1171,7 +1289,7 @@ export default function CoursePreviewResults({
   };
   return h(
     'section',
-    { className: `phone standard-screen course-preview-screen course-preview-result${sheetSnapIndex === 0 ? ' is-sheet-expanded' : ''}${navigationMode ? ' course-preview-navigation' : ''}`, 'aria-busy': false },
+    { className: `phone standard-screen course-preview-screen course-preview-result${sheetSnapIndex === 0 ? ' is-sheet-expanded' : ''}${readOnly ? ' is-read-only' : ''}${navigationMode ? ' course-preview-navigation' : ''}`, 'aria-busy': false },
     navigationMode
       ? h('header', { className: 'navigation-top-card course-navigation-top-card' },
         h('button', { className: 'icon-button', type: 'button', onClick: onBack, 'aria-label': '이전' }, '‹'),
@@ -1187,7 +1305,6 @@ export default function CoursePreviewResults({
           'aria-busy': completeBusy || undefined,
         }, completeBusy ? '종료 중…' : '종료'),
         h('b', null, `${effectivePreview.stops.length}곳`),
-        completeError && h('p', { className: 'course-navigation-finish-error', role: 'alert' }, completeError),
       )
       : h('header', { className: 'course-preview-header course-preview-map-header' },
       h('button', { type: 'button', onClick: onBack, 'aria-label': '이전' }, '‹'),
@@ -1202,6 +1319,7 @@ export default function CoursePreviewResults({
               strategy: item.strategy,
               routeSelections: current.preview === preview ? current.routeSelections : {},
             }));
+            setSelectedStopId(null);
             const nextPreview = options.find((option) => option?.strategy === item.strategy) || fastPreview;
             setStrategyFeedback(routeStrategyFeedback(fastPreview, nextPreview));
           } }, item.label,
@@ -1209,7 +1327,7 @@ export default function CoursePreviewResults({
       ),
     ),
     h('div', { className: `course-preview-stage${routeDrawn ? ' is-drawn' : ''}` },
-      !navigationMode && h('div', { className: 'course-preview-floating', 'aria-hidden': 'true' },
+      !navigationMode && h('div', { className: 'course-preview-floating', style: { top: '116px' }, 'aria-hidden': 'true' },
         h('span', null, `${formatPreviewDuration(effectivePreview.totalDurationMinutes)} · ${formatPreviewDistance(effectivePreview.totalDistanceMeters)}`),
         insight && h('span', { className: `course-preview-insight-chip is-${insight.kind}` }, insight.chip),
       ),
@@ -1226,14 +1344,23 @@ export default function CoursePreviewResults({
             ? `빠른 길보다 ${Math.abs(strategyFeedback.extraMinutes)}분 빨라요`
             : '빠른 길과 같은 시간이에요'),
       ),
-      navigationMode && h(CourseNavigationGuidance, { preview: effectivePreview, route: activeRoute, destination: navigationStop, currentLocation: simulatedUserLocation, onArrival: (stop) => {
+      navigationMode && completeError && h('p', { className: 'course-navigation-finish-error', role: 'alert' }, completeError),
+      navigationMode && h(CourseNavigationGuidance, { preview: effectivePreview, route: activeRoute, destination: navigationStop, currentLocation: simulatedUserLocation, onLocationChange: publishNavigationLocation, onArrival: (stop) => {
         setArrivalStop(stop);
         setArrivalStartedAt(Date.now());
       }, onGuidanceChange: setNavigationInstruction }),
+      !navigationMode && effectivePreview.stops.length > 1 && h('button', {
+        'aria-pressed': overviewMode,
+        className: `course-preview-overview-button${overviewMode ? ' is-active' : ''}`,
+        onClick: () => setSelectedStopId(null),
+        type: 'button',
+      }, overviewMode ? '전체 코스' : '전체 코스 보기'),
       MapComponent && h(MapComponent, {
         ariaLabel: `${strategyName} 코스 추천 경로 지도`,
         interactive: true,
-        center: hasDrawableRoute ? undefined : fallbackCenter,
+        center: navigationMode && !navigationRouteReady
+          ? sourceCoordinate || fallbackCenter
+          : hasDrawableRoute ? undefined : fallbackCenter,
         loadPlacesInBounds: loadMapStops,
         placeMarkerLabel: (place) => place.sequenceNo,
         placeMarkerEntrance: isQuiet ? 'renumber' : 'pop',
@@ -1246,28 +1373,41 @@ export default function CoursePreviewResults({
         placeRequestKey: effectivePreview.routeFitKey,
         showCongestionAreas: false,
         mapDimmed: Boolean(navigationMode && filmingNotice),
-        routeLegs: selectedRouteLegs,
-        ghostRouteLegs: [],
+        routeLegs: displayedRouteLegs,
+        ghostRouteLegs: overviewMode || navigationMode ? [] : wholeCourseRouteLegs,
         ghostHighlightLegs: [],
         routeHighlightLegs: navigationMode ? selectedRouteLegs : [],
         routeMode: 'TRANSIT',
         routeAppearance: 'focus',
-        routeFitKey: `${effectivePreview.routeFitKey}|stop:${selectedStopIndex}`,
-        routeDrawKey: `${effectivePreview.routeFitKey}|stop:${selectedStopIndex}`,
+        navigationMode,
+        routeFitKey: navigationMode ? '' : overviewMode
+          ? `${effectivePreview.routeFitKey}|overview`
+          : `${effectivePreview.routeFitKey}|stop:${selectedStopIndex}`,
+        routeDrawKey: navigationMode
+          ? ''
+          : overviewMode
+            ? `${effectivePreview.routeFitKey}|overview`
+            : `${effectivePreview.routeFitKey}|stop:${selectedStopIndex}`,
         routeDrawDelay: isQuiet ? 560 : 260,
-        routeFitCoordinates: [sourceCoordinate, destinationCoordinate].filter(Boolean),
-        routeFitPadding: [96, 22, 164, 22],
+        routeFitCoordinates: overviewMode
+          ? wholeCourseFitCoordinates
+          : [sourceCoordinate, destinationCoordinate].filter(Boolean),
+        routeFitPadding: [156, 32, 176, 32],
         style: { width: '100%', height: '100%' },
-        userLocation: simulatedUserLocation,
+        userLocation: navigationObservation?.coordinate || simulatedUserLocation,
+        userHeading: navigationObservation?.heading,
+        userSpeed: navigationObservation?.speed,
+        userLocationAccuracy: navigationObservation?.accuracy,
         followUserLocation: false,
         onRouteDrawEnd: () => {
           setRouteDrawn(true);
           globalThis.setTimeout(() => setRouteDrawn(false), 2000);
         },
+        onRouteReady: () => setReadyNavigationRouteKey(navigationRouteKey),
       }),
       !navigationMode && h(CoursePlaceOrbitSlider, {
         stops: effectivePreview.stops,
-        selectedIndex: selectedStopIndex,
+        selectedIndex: overviewMode ? null : selectedStopIndex,
         onSelect: (index) => selectStopAtIndex(index),
       }),
       !navigationMode && routeDrawn && h('div', { className: 'course-preview-done', role: 'status' }, '오늘의 코스 완성 ✦'),
@@ -1294,7 +1434,9 @@ export default function CoursePreviewResults({
           h('button', {
             className: 'course-navigation-destination-toggle',
             type: 'button',
-            onClick: () => {
+            'aria-expanded': navigationPanelExpanded && index === selectedStopIndex,
+            onClick: (event) => {
+              event.stopPropagation();
               if (index !== selectedStopIndex) {
                 selectStopAtIndex(index);
                 setNavigationPanelExpanded(true);
@@ -1330,7 +1472,10 @@ export default function CoursePreviewResults({
         className: `course-preview-sheet${sheetDragging ? ' is-dragging' : ''}`,
         ref: sheetRef,
         id: 'course-preview-sheet-content',
-        style: { transform: `translateY(${sheetOffset}px)` },
+        style: {
+          transform: `translateY(${sheetOffset}px)`,
+          height: `calc(100% - ${sheetOffset}px)`,
+        },
       },
         h('button', {
         className: 'course-preview-sheet-grip',
@@ -1353,12 +1498,21 @@ export default function CoursePreviewResults({
           onPointerMove: handleSheetPointerMove,
           onPointerUp: finishSheetDrag,
           onPointerCancel: finishSheetDrag,
-        },
+          },
           h('div', null,
-            h('strong', null, `${selectedStopIndex + 1}. ${activeStop?.placeName || '장소 정보 없음'}`),
-            h('small', null, activeRouteSummary),
+            h('strong', null, overviewMode
+              ? '전체 코스'
+              : `${selectedStopIndex + 1}. ${activeStop?.placeName || '장소 정보 없음'}`),
+            h('small', null, overviewMode
+              ? `${effectivePreview.stops.length}곳 · ${formatPreviewDuration(effectivePreview.totalDurationMinutes)} · ${formatPreviewDistance(effectivePreview.totalDistanceMeters)}`
+              : activeRouteSummary),
           ),
-          h('button', { type: 'button', onClick: () => snapSheetTo(0) }, '상세 보기'),
+          h('button', {
+            type: 'button',
+            'aria-expanded': sheetSnapIndex === 0,
+            'aria-controls': 'course-preview-sheet-content',
+            onClick: () => snapSheetTo(sheetSnapIndex === 0 ? 1 : 0),
+          }, sheetSnapIndex === 0 ? '상세 닫기' : '상세 보기'),
         ),
         h('section', {
           className: 'course-preview-itinerary',
@@ -1371,7 +1525,13 @@ export default function CoursePreviewResults({
           onPointerUp: finishSheetDrag,
           onPointerCancel: finishSheetDrag,
         },
-        h('ol', { className: 'course-preview-timeline', ref: sheetTimelineRef }, [
+        overviewMode
+          ? h(CourseOverviewOrder, {
+            stops: effectivePreview.stops,
+            onSelect: selectStopAtIndex,
+            timelineRef: sheetTimelineRef,
+          })
+          : h('ol', { className: 'course-preview-timeline', ref: sheetTimelineRef }, [
           h(CoursePreviewSegmentStart, {
             origin,
             previousStop,
@@ -1394,7 +1554,7 @@ export default function CoursePreviewResults({
           })),
           h(StopCard, {
             stop: activeStop,
-            showAscent: isEasy && isTerrainEligibleRoute(activeStop?.incomingRoute),
+            showAscent: isEasy && isTerrainEligibleRoute(activeRoute),
             showCongestion: isQuiet,
             key: `course-preview-segment-stop-${activeStop?.basketItemId ?? selectedStopIndex}`,
             selected: true,
@@ -1417,13 +1577,20 @@ export default function CoursePreviewResults({
       ),
     ),
     !navigationMode && h('div', { className: `sticky-actions course-preview-actions${readOnly ? ' is-read-only' : ''}` },
+      confirmBusy && h('div', { className: 'course-preview-save-status', role: 'status', 'aria-live': 'polite' },
+        h('span', { 'aria-hidden': 'true' }),
+        h('p', null,
+          h('strong', null, confirmLabel.includes('저장') ? '코스를 저장하고 있어요' : '코스를 시작할 준비 중이에요'),
+          h('small', null, '선택한 경로를 다시 확인하고 있어요. 최대 30초 정도 걸릴 수 있어요.'),
+        ),
+      ),
       onConfirm && h(CourseActionButton, {
         'aria-busy': confirmBusy || undefined,
         disabled: confirmBusy,
         onClick: () => onConfirm({ strategy: effectivePreview.strategy, routeSelections }),
-      }, confirmBusy ? '처리 중' : confirmLabel),
+      }, confirmBusy ? (confirmLabel.includes('저장') ? '저장 중…' : '준비 중…') : confirmLabel),
       onStart && !onConfirm && h(CourseActionButton, { onClick: onStart }, '이 코스로 시작하기'),
-      !readOnly && onEditConditions && h('button', { className: 'ui-button secondary', type: 'button', onClick: onEditConditions }, '조건 수정'),
+      !readOnly && onEditConditions && h('button', { className: 'ui-button secondary', type: 'button', onClick: onEditConditions }, editLabel),
       confirmError && h('p', { className: 'course-preview-confirm-error', role: 'alert' }, confirmError),
     ),
   );

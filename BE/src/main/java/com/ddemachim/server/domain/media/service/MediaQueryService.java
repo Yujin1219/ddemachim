@@ -56,10 +56,13 @@ public class MediaQueryService {
         return MediaContentDetailResponse.from(mediaContent, credits);
     }
 
-    public Page<FilmingWorkSummaryResponse> getFilmingWorks(String contentType, Pageable pageable) {
+    public Page<FilmingWorkSummaryResponse> getFilmingWorks(String contentType, String keyword, Pageable pageable) {
         String normalizedContentType = normalizeContentType(contentType);
-        Page<MediaContent> mediaPage = mediaContentRepository.findFilmingWorks(
-                PUBLIC_MATCH_STATUS, normalizedContentType, pageable);
+        String normalizedKeyword = normalizeKeyword(keyword);
+        Page<MediaContent> mediaPage = normalizedKeyword == null
+                ? mediaContentRepository.findFilmingWorks(PUBLIC_MATCH_STATUS, normalizedContentType, pageable)
+                : mediaContentRepository.searchFilmingWorks(
+                        PUBLIC_MATCH_STATUS, normalizedContentType, normalizedKeyword, pageable);
         if (mediaPage.isEmpty()) {
             return mediaPage.map(mediaContent -> FilmingWorkSummaryResponse.of(mediaContent, List.of(), 0, List.of()));
         }
@@ -84,6 +87,13 @@ public class MediaQueryService {
                 .stream()
                 .map(FilmingLocationResponse::from)
                 .toList();
+    }
+
+    public FilmingLocationResponse getFilmingLocation(Long filmingLocationId) {
+        FilmingLocation filmingLocation = filmingLocationRepository
+                .findByIdAndMatchStatus(filmingLocationId, PUBLIC_MATCH_STATUS)
+                .orElseThrow(MediaContentNotFoundException::new);
+        return FilmingLocationResponse.from(filmingLocation);
     }
 
     public List<FilmingLocationResponse> getFilmingLocationsByMediaContent(Long mediaContentId) {
@@ -127,5 +137,12 @@ public class MediaQueryService {
             throw new InvalidMediaContentTypeException();
         }
         return normalized;
+    }
+
+    private String normalizeKeyword(String keyword) {
+        if (keyword == null || keyword.isBlank()) {
+            return null;
+        }
+        return keyword.trim();
     }
 }

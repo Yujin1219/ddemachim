@@ -47,7 +47,7 @@ ddemachim:
   data-pipeline:
     scheduler:
       enabled: true
-      working-directory: /Users /yujin/Project/ddemachim/data-pipeline
+      working-directory: /Users/yujin/Project/ddemachim/data-pipeline
       timeout: 30m
       zone: Asia/Seoul
 

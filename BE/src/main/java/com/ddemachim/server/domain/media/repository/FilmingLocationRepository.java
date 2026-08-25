@@ -2,12 +2,15 @@ package com.ddemachim.server.domain.media.repository;
 
 import com.ddemachim.server.domain.media.entity.FilmingLocation;
 import java.util.List;
+import java.util.Optional;
 import org.springframework.data.jpa.repository.EntityGraph;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 
 public interface FilmingLocationRepository extends JpaRepository<FilmingLocation, Long> {
+
+    Optional<FilmingLocation> findByIdAndMatchStatus(Long id, String matchStatus);
 
     /** 특정 장소의 촬영지 매칭 목록 (matchStatus 무관 전체). */
     List<FilmingLocation> findByPlaceId(Long placeId);

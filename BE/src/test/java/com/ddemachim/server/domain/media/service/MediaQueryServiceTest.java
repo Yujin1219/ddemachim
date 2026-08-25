@@ -95,12 +95,35 @@ class MediaQueryServiceTest {
     }
 
     @Test
+    void getFilmingLocation_returnsTheRequestedPublicSceneWithItsWorkAndPlace() {
+        Long filmingLocationId = 834L;
+        FilmingLocation filmingLocation = filmingLocation(
+                filmingLocationId,
+                place(970L, "경희궁3길"),
+                mediaContent(274L, "키스 식스 센스"),
+                "두 주인공이 데이트를 마치고 골목을 함께 걷는 장면",
+                "AUTO_MATCH");
+
+        when(filmingLocationRepository.findByIdAndMatchStatus(filmingLocationId, "AUTO_MATCH"))
+                .thenReturn(java.util.Optional.of(filmingLocation));
+
+        FilmingLocationResponse response = mediaQueryService.getFilmingLocation(filmingLocationId);
+
+        assertThat(response.id()).isEqualTo(834L);
+        assertThat(response.placeName()).isEqualTo("경희궁3길");
+        assertThat(response.mediaContent().id()).isEqualTo(274L);
+        assertThat(response.mediaContent().title()).isEqualTo("키스 식스 센스");
+        assertThat(response.sceneDescription()).isEqualTo("두 주인공이 데이트를 마치고 골목을 함께 걷는 장면");
+        verify(filmingLocationRepository).findByIdAndMatchStatus(filmingLocationId, "AUTO_MATCH");
+    }
+
+    @Test
     void getFilmingWorks_returnsEmptyPageWithoutSecondaryQueries() {
         PageRequest pageable = PageRequest.of(0, 12);
         when(mediaContentRepository.findFilmingWorks("AUTO_MATCH", "DRAMA", pageable))
                 .thenReturn(Page.empty(pageable));
 
-        Page<FilmingWorkSummaryResponse> result = mediaQueryService.getFilmingWorks("drama", pageable);
+        Page<FilmingWorkSummaryResponse> result = mediaQueryService.getFilmingWorks("drama", null, pageable);
 
         assertThat(result).isEmpty();
         verify(mediaContentRepository).findFilmingWorks("AUTO_MATCH", "DRAMA", pageable);
@@ -124,7 +147,7 @@ class MediaQueryServiceTest {
         when(filmingLocationRepository.findPublicRowsForWorks(List.of(10L), "AUTO_MATCH", "DRAMA"))
                 .thenReturn(List.of(filmingLocation));
 
-        Page<FilmingWorkSummaryResponse> result = mediaQueryService.getFilmingWorks("drama", pageable);
+        Page<FilmingWorkSummaryResponse> result = mediaQueryService.getFilmingWorks("drama", null, pageable);
 
         assertThat(result.getContent().getFirst().representativePlaces().getFirst().imageUrl())
                 .isEqualTo("https://example.com/place.jpg");
@@ -132,8 +155,20 @@ class MediaQueryServiceTest {
 
     @Test
     void getFilmingWorks_rejectsUnsupportedContentType() {
-        assertThatThrownBy(() -> mediaQueryService.getFilmingWorks("DOCUMENTARY", PageRequest.of(0, 12)))
+        assertThatThrownBy(() -> mediaQueryService.getFilmingWorks("DOCUMENTARY", null, PageRequest.of(0, 12)))
                 .isInstanceOf(InvalidMediaContentTypeException.class);
+    }
+
+    @Test
+    void getFilmingWorks_filtersTheFullCatalogByTrimmedTitleKeyword() {
+        PageRequest pageable = PageRequest.of(0, 50);
+        when(mediaContentRepository.searchFilmingWorks("AUTO_MATCH", null, "오수재", pageable))
+                .thenReturn(Page.empty(pageable));
+
+        Page<FilmingWorkSummaryResponse> result = mediaQueryService.getFilmingWorks(null, "  오수재  ", pageable);
+
+        assertThat(result).isEmpty();
+        verify(mediaContentRepository).searchFilmingWorks("AUTO_MATCH", null, "오수재", pageable);
     }
 
     private static FilmingLocation filmingLocation(

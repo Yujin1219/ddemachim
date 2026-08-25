@@ -503,11 +503,14 @@ test('normalizes every approved COURSE4222 reason into exact safe group copy', (
   ];
 
   cases.forEach(({ reason, proposal, group }) => {
-    assert.deepEqual(
-      normalizeFailure(failureResult([diagnostic(11, reason, proposal)]), failurePayload(11)),
-      { groups: [group] },
+    const normalized = normalizeFailure(failureResult([diagnostic(11, reason, proposal)]), failurePayload(11));
+    assert.deepEqual(normalized.groups.map(({ items, ...safeGroup }) => safeGroup), [group], reason);
+    assert.deepEqual(normalized.groups[0].items, [{
+      basketItemId: 11,
+      placeName: '서울공예박물관',
       reason,
-    );
+      adjustmentProposal: proposal,
+    }], reason);
   });
 });
 
@@ -522,8 +525,8 @@ test('keeps every diagnostic in stable semantic group order without retaining ra
   ], { message: '서버 원문', code: 'COURSE4222', extra: { secret: true } });
   const before = structuredClone(result);
 
-  assert.deepEqual(normalizeFailure(result, failurePayload(11, 12, 13, 14, 15)), {
-    groups: [
+  const normalized = normalizeFailure(result, failurePayload(11, 12, 13, 14, 15));
+  assert.deepEqual(normalized.groups.map(({ items, ...safeGroup }) => safeGroup), [
       {
         id: 'conditions',
         label: '출발 조건',
@@ -548,8 +551,8 @@ test('keeps every diagnostic in stable semantic group order without retaining ra
           '다섯째 장소: 이용 가능한 이동 경로를 찾지 못했어요.',
         ],
       },
-    ],
-  });
+    ]);
+  assert.deepEqual(normalized.groups.flatMap((group) => group.items).map((item) => item.basketItemId), [13, 14, 12, 11, 15]);
   assert.deepEqual(result, before, 'normalization must not mutate the server result');
 });
 
@@ -558,16 +561,16 @@ test('sanitizes control text, whitespace, bidi overrides, and limits names to 60
   const longName = `  서울\u0000\u0085  \u202E공예   ${'😀'.repeat(70)}  `;
   const sanitizedName = `서울 공예 ${'😀'.repeat(54)}`;
 
-  assert.deepEqual(normalizeFailure(failureResult([
+  const normalized = normalizeFailure(failureResult([
     diagnostic(11, 'PLACE_CLOSED', 'CHANGE_SERVICE_DATE', longName),
-  ]), failurePayload(11)), {
-    groups: [{
+  ]), failurePayload(11));
+  assert.deepEqual(normalized.groups.map(({ items, ...safeGroup }) => safeGroup), [{
       id: 'conditions',
       label: '출발 조건',
       action: 'conditions',
       messages: [`${sanitizedName}: 선택한 날짜에는 운영하지 않아요.`],
-    }],
-  });
+    }]);
+  assert.equal(normalized.groups[0].items[0].placeName, sanitizedName);
 });
 
 test('rejects malformed, partial, mismatched, duplicate, and request-divergent diagnostics as a whole', () => {

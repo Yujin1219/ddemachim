@@ -44,6 +44,21 @@ test('starts with no marker categories and toggles multiple categories in servic
   assert.deepEqual(selected, ['FILMING']);
 });
 
+test('moves selected categories to the front while keeping both groups in service order', () => {
+  const ordered = mapHomeFilters.prioritizeSelectedMapFilters?.(
+    MAP_HOME_FILTERS.filter((filter) => filter.key !== 'ALL'),
+    ['EVENT', 'CAFE_DESSERT'],
+  );
+
+  assert.deepEqual(ordered?.map((filter) => filter.key), [
+    'EVENT',
+    'CAFE_DESSERT',
+    'FILMING',
+    'HOT',
+    'RESTAURANT',
+  ]);
+});
+
 test('uses the all chip to select or clear every marker category', () => {
   const allSelected = mapHomeFilters.toggleMapFilterSelection([], 'ALL');
 
@@ -96,6 +111,32 @@ test('keeps one category color for uniform clusters and marks mixed clusters sep
   ]), 'mixed');
 });
 
+test('keeps exactly the clicked cluster members visible after a viewport reload', () => {
+  const clickedCluster = [
+    { id: 11, name: '첫 번째 장소' },
+    { id: 12, name: '두 번째 장소' },
+    { id: 13, name: '세 번째 장소' },
+  ];
+  const reloadedViewport = [
+    { id: 1, name: '새로 조회된 장소' },
+    { id: 11, name: '갱신된 첫 번째 장소' },
+    { id: 12, name: '갱신된 두 번째 장소' },
+    { id: 13, name: '갱신된 세 번째 장소' },
+    { id: 99, name: '또 다른 새 장소' },
+  ];
+  const resolvePlaces = mapHomeFilters.resolveExpandedClusterPlaces;
+
+  const visible = typeof resolvePlaces === 'function'
+    ? resolvePlaces(reloadedViewport, clickedCluster)
+    : [];
+
+  assert.deepEqual(visible.map(({ id, name }) => [id, name]), [
+    [11, '갱신된 첫 번째 장소'],
+    [12, '갱신된 두 번째 장소'],
+    [13, '갱신된 세 번째 장소'],
+  ]);
+});
+
 test('keeps congestion off on first visit and restores only an explicit on preference', () => {
   assert.equal(resolveCongestionPreference(null), false);
   assert.equal(resolveCongestionPreference('off'), false);
@@ -125,6 +166,7 @@ test('converts an event to a namespaced map marker with detail navigation metada
   }), {
     id: 'event:7',
     eventId: 7,
+    placeId: null,
     externalSource: 'EVENT',
     name: '여름의 색',
     categoryCode: 'EXHIBITION',
@@ -134,5 +176,57 @@ test('converts an event to a namespaced map marker with detail navigation metada
     longitude: 126.983,
     imageUrl: 'https://example.com/event.jpg',
     tags: [],
+  });
+});
+
+test('resolves an event detail course target for both linked and unlinked venues', () => {
+  assert.equal(typeof mapHomeFilters.eventToCourseBasketTarget, 'function');
+
+  assert.deepEqual(mapHomeFilters.eventToCourseBasketTarget({
+    id: 7,
+    title: '[전시] 여름의 색',
+    placeId: 42,
+    mainImage: 'https://example.com/exhibition.jpg',
+    venueName: '서울공예박물관',
+    latitude: 37.576,
+    longitude: 126.983,
+  }), {
+    type: 'PLACE',
+    placeId: 42,
+    imageUrl: 'https://example.com/exhibition.jpg',
+  });
+
+  assert.deepEqual(mapHomeFilters.eventToCourseBasketTarget({
+    id: 8,
+    title: '[행사] 여름 음악회',
+    placeId: null,
+    venueName: '세종문화회관 대극장',
+    mainImage: 'https://example.com/concert.jpg',
+    latitude: 37.572,
+    longitude: 126.976,
+  }), {
+    type: 'EXTERNAL',
+    place: {
+      providerPlaceId: '8',
+      name: '여름 음악회',
+      categoryName: '전시·행사',
+      categoryGroupCode: 'EVENT',
+      roadAddress: '세종문화회관 대극장',
+      longitude: 126.976,
+      latitude: 37.572,
+      imageUrl: 'https://example.com/concert.jpg',
+    },
+  });
+});
+
+test('puts event review writing inside the review tab instead of the sticky action bar', () => {
+  assert.equal(typeof mapHomeFilters.eventDetailActionState, 'function');
+  assert.deepEqual(mapHomeFilters.eventDetailActionState('info'), {
+    showInlineReviewWrite: false,
+    showStickyReviewWrite: false,
+  });
+  assert.deepEqual(mapHomeFilters.eventDetailActionState('review'), {
+    showInlineReviewWrite: true,
+    showStickyReviewWrite: false,
   });
 });

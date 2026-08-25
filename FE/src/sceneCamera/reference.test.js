@@ -11,10 +11,11 @@ test('resolves filming location 1 to its bundled same-origin reference still', a
 
   assert.deepEqual(reference, {
     url: '/assets/scenes/filming-location-1.jpg',
-    altText: '촬영지 1의 장면 구도 참고 이미지',
-    attribution: '테스트용 임시 이미지 · 원본 제공: 경향신문(images.khan.co.kr)',
-    width: 600,
-    height: 399,
+    outlineUrl: '/assets/scenes/filming-location-1-outline.svg',
+    altText: '바닷가에서 꽃을 든 두 인물의 촬영 장면',
+    attribution: '사용자 제공 이미지 · 출처: 스타뉴스(daumcdn.net)',
+    width: 658,
+    height: 986,
   });
   assert.equal(Object.isFrozen(LOCAL_REFERENCE_STILLS), true);
 
@@ -23,8 +24,38 @@ test('resolves filming location 1 to its bundled same-origin reference still', a
   assert.deepEqual([...asset.subarray(0, 3)], [0xff, 0xd8, 0xff]);
 });
 
+test('resolves any numeric filming location to the same stable demo still used by its card', () => {
+  assert.deepEqual(resolveReferenceStill('834', LOCAL_REFERENCE_STILLS, { origin: 'https://example.test' }), {
+    url: '/assets/scenes/demo/scene-01.jpg',
+    outlineUrl: null,
+    altText: '촬영 장면 참고 이미지',
+    attribution: '사용자 제공 데모 장면',
+    width: 960,
+    height: 467,
+  });
+
+  assert.equal(resolveReferenceStill('834', {}, { origin: 'https://example.test' }), null);
+});
+
+test('camera 78 resolves a left-shifted reference with a bundled people outline', async () => {
+  const reference = resolveReferenceStill('78', LOCAL_REFERENCE_STILLS, { origin: 'https://example.test' });
+
+  assert.deepEqual(reference, {
+    url: '/assets/scenes/demo/scene-01.jpg',
+    outlineUrl: '/assets/scenes/demo/scene-01-outline.svg',
+    altText: '촬영 장면 참고 이미지',
+    attribution: '사용자 제공 데모 장면',
+    width: 960,
+    height: 467,
+    defaultOverlay: { x: -0.08, y: 0, scale: 1 },
+  });
+
+  const outline = await readFile(new URL(`../../public${reference.outlineUrl}`, import.meta.url), 'utf8');
+  assert.match(outline, /^<svg[^>]+viewBox="0 0 960 467"/);
+});
+
 test('normalizes only complete same-origin reference metadata', () => {
-  assert.deepEqual(normalizeReferenceStill(valid, { origin: 'https://example.test' }), valid);
+  assert.deepEqual(normalizeReferenceStill(valid, { origin: 'https://example.test' }), { ...valid, outlineUrl: null });
   assert.equal(normalizeReferenceStill({ ...valid, url: 'https://cdn.test/42.png' }, { origin: 'https://example.test' }), null);
   assert.equal(normalizeReferenceStill({ ...valid, width: 0 }, { origin: 'https://example.test' }), null);
   assert.equal(normalizeReferenceStill({ ...valid, attribution: '' }, { origin: 'https://example.test' }), null);

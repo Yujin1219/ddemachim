@@ -42,7 +42,7 @@ test('searched place is normalized to the preview request start contract', () =>
 });
 
 test('course date and time values are formatted for compact summary rows', () => {
-  assert.equal(formatCourseDateLabel('2026-08-18'), '8월 18일 화요일');
+  assert.equal(formatCourseDateLabel('2026-08-18'), '8월 18일 · 화요일');
   assert.equal(formatCourseTimeLabel('09:00'), '오전 9:00');
   assert.equal(formatCourseTimeLabel('17:30'), '오후 5:30');
   assert.equal(formatCourseTimeLabel(''), '선택 필요');

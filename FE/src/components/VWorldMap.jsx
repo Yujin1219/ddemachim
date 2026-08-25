@@ -30,8 +30,17 @@ import { __iconNode as treesIcon } from 'lucide-react/dist/esm/icons/trees.mjs'
 import { __iconNode as utensilsIcon } from 'lucide-react/dist/esm/icons/utensils.mjs'
 import 'ol/ol.css'
 import '../vworld-map.css'
-import VWorldMapRegion from './VWorldMapRegion.js'
-import { resolveMapClusterTone, resolveMapMarkerTone } from '../utils/mapHomeFilters.js'
+import VWorldMapRegion, { NavigationLocationButton } from './VWorldMapRegion.js'
+import {
+  resolveExpandedClusterPlaces,
+  resolveMapClusterTone,
+  resolveMapMarkerTone,
+} from '../utils/mapHomeFilters.js'
+import {
+  navigationViewCenter,
+  resolveNavigationHeading,
+  rotationForHeading,
+} from '../utils/navigationCamera.js'
 import {
   createLatestViewportRequest,
   createViewportLoadGate,
@@ -45,7 +54,9 @@ import {
 import {
   chevronAnchors,
   lineStringLength,
+  orderRouteFeaturesBySequence,
   partialLineString,
+  routeDrawTransition,
   routeFitPointCoordinates,
   routeLegFeatureSpecs,
 } from '../utils/routeGeometry.js'
@@ -64,6 +75,8 @@ const ROUTE_GLOW_DURATION = 620
 const MARKER_ARRIVAL_RADIUS_PX = 26
 const MARKER_ARRIVAL_DURATION = 640
 const GHOST_ROUTE_FADED_OPACITY = 0.45
+const NAVIGATION_CAMERA_DURATION = 360
+const NAVIGATION_CAMERA_ZOOM = 17
 const SVG_NAMESPACE = 'http://www.w3.org/2000/svg'
 const MAP_MARKER_ICONS = Object.freeze({
   restaurant: utensilsIcon,
@@ -219,6 +232,10 @@ export default function VWorldMap({
   ariaLabel = 'Map',
   userLocation = null,
   followUserLocation = true,
+  navigationMode = false,
+  userHeading = null,
+  userSpeed = null,
+  userLocationAccuracy = null,
   loadPlacesInBounds = null,
   placeMarkerFilter = null,
   placeMarkerFilterKey = '',
@@ -238,6 +255,7 @@ export default function VWorldMap({
   selectedCongestionGridCode = null,
   onMapClick = null,
   onPlaceClick = null,
+  onPlaceClusterClick = null,
   onCongestionAreaClick = null,
   onPlacesChange = null,
   routeLegs = [],
@@ -253,6 +271,7 @@ export default function VWorldMap({
   ghostHighlightLegs = [],
   routeHighlightLegs = [],
   onRouteDrawEnd = null,
+  onRouteReady = null,
 }) {
   const targetRef = useRef(null)
   const mapRef = useRef(null)
@@ -267,6 +286,8 @@ export default function VWorldMap({
   const sparkOverlayRef = useRef(null)
   const placeOverlaysRef = useRef([])
   const rawPlacesRef = useRef([])
+  const expandedClusterPlacesRef = useRef([])
+  const preserveClusterExpansionOnNextLoadRef = useRef(false)
   const placeAbortRef = useRef(null)
   const crowdingRequestRef = useRef(null)
   const fittedPlaceKeyRef = useRef('')
@@ -275,8 +296,10 @@ export default function VWorldMap({
   const pendingMarkerEntranceRef = useRef(true)
   const appliedRouteShapeRef = useRef('')
   const appliedGhostShapeRef = useRef('')
+  const readyRouteShapeRef = useRef('')
   const routeDrawRef = useRef({ key: '', frame: 0, timer: null, arrivalTimers: [] })
   const onRouteDrawEndRef = useRef(onRouteDrawEnd)
+  const onRouteReadyRef = useRef(onRouteReady)
   const selectedPlaceKeyRef = useRef(selectedPlaceKey)
   const focusedPlaceKeyRef = useRef(focusedPlaceKey)
   const focusedPlacePaddingRef = useRef(focusedPlacePadding)
@@ -289,17 +312,78 @@ export default function VWorldMap({
   const placeMarkerOffsetRef = useRef(placeMarkerOffset)
   const onMapClickRef = useRef(onMapClick)
   const onPlaceClickRef = useRef(onPlaceClick)
+  const onPlaceClusterClickRef = useRef(onPlaceClusterClick)
   const onCongestionAreaClickRef = useRef(onCongestionAreaClick)
   const selectedCongestionGridCodeRef = useRef(selectedCongestionGridCode)
   const showCongestionAreasRef = useRef(showCongestionAreas)
   const onPlacesChangeRef = useRef(onPlacesChange)
+  const navigationModeRef = useRef(navigationMode)
+  const followCameraRef = useRef(navigationMode)
+  const navigationFixRef = useRef(null)
+  const navigationHeadingRef = useRef(null)
+  const navigationObservationRef = useRef(null)
   const [liveUserLocation, setLiveUserLocation] = useState(userLocation)
+  const [followCameraActive, setFollowCameraActive] = useState(navigationMode)
+  const [mapVersion, setMapVersion] = useState(0)
   const [tileError, setTileError] = useState(false)
   const apiKey = import.meta.env?.VITE_VWORLD_API_KEY?.trim()
   const hasExplicitCenter = Array.isArray(center) && center.length >= 2
   const [longitude, latitude] = normalizeCenter(center)
   const safeZoom = Number.isFinite(Number(zoom)) ? Number(zoom) : 15
   if (!crowdingRequestRef.current) crowdingRequestRef.current = createLatestViewportRequest()
+  navigationModeRef.current = navigationMode
+  followCameraRef.current = followCameraActive
+
+  function animateNavigationCamera({ force = false } = {}) {
+    const map = mapRef.current
+    const observation = navigationObservationRef.current
+    if (!map || !navigationModeRef.current || (!force && !followCameraRef.current)) return
+    if (!Array.isArray(observation?.coordinate) || observation.coordinate.length < 2) return
+
+    const [longitude, latitude] = normalizeCenter(observation.coordinate)
+    const currentFix = {
+      longitude,
+      latitude,
+      heading: observation.heading,
+      speed: observation.speed,
+      accuracy: observation.accuracy,
+    }
+    const direction = resolveNavigationHeading({
+      previousFix: navigationFixRef.current,
+      currentFix,
+      previousHeading: navigationHeadingRef.current,
+    })
+    if (!navigationFixRef.current || direction.movedMeters >= 3) navigationFixRef.current = currentFix
+    if (Number.isFinite(direction.heading)) navigationHeadingRef.current = direction.heading
+
+    const view = map.getView()
+    const currentRotation = view.getRotation() || 0
+    const rotation = Number.isFinite(navigationHeadingRef.current)
+      ? rotationForHeading(navigationHeadingRef.current, currentRotation)
+      : currentRotation
+    const coordinate = fromLonLat([longitude, latitude])
+    const size = map.getSize()
+    const resolution = view.getResolutionForZoom(NAVIGATION_CAMERA_ZOOM) ?? view.getResolution()
+    const center = size?.[0] && size?.[1] && Number.isFinite(resolution)
+      ? navigationViewCenter({ coordinate, size, resolution, rotation })
+      : coordinate
+
+    view.cancelAnimations()
+    view.animate({
+      center,
+      rotation,
+      zoom: NAVIGATION_CAMERA_ZOOM,
+      duration: motionDuration(NAVIGATION_CAMERA_DURATION),
+      easing: easeOut,
+    })
+  }
+
+  function resumeNavigationCamera() {
+    if (!navigationModeRef.current) return
+    followCameraRef.current = true
+    setFollowCameraActive(true)
+    animateNavigationCamera({ force: true })
+  }
 
   useEffect(() => {
     loadPlacesRef.current = loadPlacesInBounds
@@ -309,15 +393,17 @@ export default function VWorldMap({
     placeMarkerOffsetRef.current = placeMarkerOffset
     onMapClickRef.current = onMapClick
     onPlaceClickRef.current = onPlaceClick
+    onPlaceClusterClickRef.current = onPlaceClusterClick
     onCongestionAreaClickRef.current = onCongestionAreaClick
     selectedCongestionGridCodeRef.current = selectedCongestionGridCode
     showCongestionAreasRef.current = showCongestionAreas
     onPlacesChangeRef.current = onPlacesChange
     onRouteDrawEndRef.current = onRouteDrawEnd
+    onRouteReadyRef.current = onRouteReady
     selectedPlaceKeyRef.current = selectedPlaceKey
     focusedPlaceKeyRef.current = focusedPlaceKey
     focusedPlacePaddingRef.current = focusedPlacePadding
-  }, [loadPlacesInBounds, loadCongestionInBounds, placeMarkerFilter, placeMarkerLabel, placeMarkerOffset, onMapClick, onPlaceClick, onCongestionAreaClick, onPlacesChange, selectedCongestionGridCode, showCongestionAreas, onRouteDrawEnd, selectedPlaceKey, focusedPlaceKey, focusedPlacePadding])
+  }, [loadPlacesInBounds, loadCongestionInBounds, placeMarkerFilter, placeMarkerLabel, placeMarkerOffset, onMapClick, onPlaceClick, onPlaceClusterClick, onCongestionAreaClick, onPlacesChange, selectedCongestionGridCode, showCongestionAreas, onRouteDrawEnd, onRouteReady, selectedPlaceKey, focusedPlaceKey, focusedPlacePadding])
 
   function clearPlaceOverlays(map) {
     placeOverlaysRef.current.forEach((overlay) => map.removeOverlay(overlay))
@@ -381,7 +467,7 @@ export default function VWorldMap({
     })
   }
 
-  function addPlaceOverlay(map, place, order = -1) {
+  function addPlaceOverlay(map, place, order = -1, expandedPosition = null) {
     const coordinate = getPlaceCoordinate(place)
     if (!coordinate) return
 
@@ -406,6 +492,13 @@ export default function VWorldMap({
     ].filter(Boolean).join(' ')
     marker.type = 'button'
     if (order >= 0) marker.style.setProperty('--marker-delay', `${markerStaggerDelay(order)}ms`)
+    if (expandedPosition && expandedPosition.total > 1) {
+      const radius = expandedPosition.total <= 4 ? 24 : 30
+      const angle = ((Math.PI * 2) * expandedPosition.index / expandedPosition.total) - (Math.PI / 2)
+      marker.style.setProperty('--marker-offset-x', `${Math.round(Math.cos(angle) * radius)}px`)
+      marker.style.setProperty('--marker-offset-y', `${Math.round(Math.sin(angle) * radius)}px`)
+      marker.classList.add('is-cluster-expanded')
+    }
     if (hasMarkerLabel) {
       marker.classList.add('is-numbered')
       const markerNumber = Number(markerLabel)
@@ -432,7 +525,11 @@ export default function VWorldMap({
       crowdingStatus.textContent = crowdingPresentation.statusLabel
       marker.appendChild(crowdingStatus)
     }
-    marker.addEventListener('click', () => onPlaceClickRef.current?.(place))
+    marker.addEventListener('click', () => {
+      expandedClusterPlacesRef.current = []
+      preserveClusterExpansionOnNextLoadRef.current = false
+      onPlaceClickRef.current?.(place)
+    })
 
     const overlay = new Overlay({
       element: marker,
@@ -486,14 +583,30 @@ export default function VWorldMap({
     marker.title = `${cluster.places.length}개 장소`
     marker.textContent = cluster.places.length
     marker.addEventListener('click', () => {
+      focusedPlaceKeyRef.current = ''
+      selectedPlaceKeyRef.current = ''
+      expandedClusterPlacesRef.current = cluster.places
+      preserveClusterExpansionOnNextLoadRef.current = true
+      onPlaceClusterClickRef.current?.(cluster.places)
       const view = map.getView()
-      const currentZoom = view.getZoom() ?? CLUSTER_ZOOM_MAX
-      view.animate({
-        center: fromLonLat(cluster.coordinate),
-        zoom: Math.min(currentZoom + 2, 19),
-        duration: motionDuration(380),
-        easing: easeOut,
-      })
+      const coordinates = cluster.places.map(getPlaceCoordinate).filter(Boolean).map((coordinate) => fromLonLat(coordinate))
+      const extent = boundingExtent(coordinates)
+      const hasArea = coordinates.length > 1 && (extent[0] !== extent[2] || extent[1] !== extent[3])
+      if (hasArea && map.getSize()) {
+        view.fit(extent, {
+          padding: [96, 64, 164, 64],
+          maxZoom: 18.5,
+          duration: motionDuration(380),
+          easing: easeOut,
+        })
+      } else {
+        view.animate({
+          center: fromLonLat(cluster.coordinate),
+          zoom: 18.5,
+          duration: motionDuration(380),
+          easing: easeOut,
+        })
+      }
     })
 
     const overlay = new Overlay({
@@ -510,7 +623,21 @@ export default function VWorldMap({
     clearPlaceOverlays(map)
     const filterPlace = placeMarkerFilterRef.current
     const visiblePlaces = typeof filterPlace === 'function' ? places.filter(filterPlace) : places
+    const expandedPlaces = resolveExpandedClusterPlaces(visiblePlaces, expandedClusterPlacesRef.current)
     const zoomLevel = map.getView().getZoom() ?? safeZoom
+
+    if (expandedClusterPlacesRef.current.length) {
+      const entering = pendingMarkerEntranceRef.current
+      pendingMarkerEntranceRef.current = false
+      expandedPlaces.forEach((place, index) => addPlaceOverlay(
+        map,
+        place,
+        entering ? index : -1,
+        { index, total: expandedPlaces.length },
+      ))
+      fitVisiblePlaces(map, expandedPlaces)
+      return
+    }
 
     if (clusterPlaces && zoomLevel <= CLUSTER_ZOOM_MAX) {
       const entering = pendingMarkerEntranceRef.current
@@ -674,8 +801,12 @@ export default function VWorldMap({
     map.addOverlay(sparkOverlay)
     sparkOverlayRef.current = sparkOverlay
     mapRef.current = map
+    setMapVersion((current) => current + 1)
 
     const handleCongestionAreaClick = (event) => {
+      expandedClusterPlacesRef.current = []
+      preserveClusterExpansionOnNextLoadRef.current = false
+      renderPlaceOverlays(map, rawPlacesRef.current)
       const feature = map.forEachFeatureAtPixel(
         event.pixel,
         (candidate) => candidate,
@@ -706,6 +837,12 @@ export default function VWorldMap({
       const bounds = providedBounds ?? getViewportBounds()
       if (!loader || !bounds) return
 
+      if (preserveClusterExpansionOnNextLoadRef.current) {
+        preserveClusterExpansionOnNextLoadRef.current = false
+      } else {
+        expandedClusterPlacesRef.current = []
+      }
+
       placeAbortRef.current?.abort()
       const controller = new AbortController()
       placeAbortRef.current = controller
@@ -713,7 +850,12 @@ export default function VWorldMap({
       loader({ ...bounds, limit: visiblePlaceLimit(map, placeLimit), signal: controller.signal })
         .then((places = []) => {
           if (controller.signal.aborted) return
-          rawPlacesRef.current = Array.isArray(places) ? places : []
+          const loadedPlaces = Array.isArray(places) ? places : []
+          const loadedKeys = new Set(loadedPlaces.map((place) => `${place.externalSource || 'INTERNAL'}:${place.id}`))
+          rawPlacesRef.current = [
+            ...loadedPlaces,
+            ...expandedClusterPlacesRef.current.filter((place) => !loadedKeys.has(`${place.externalSource || 'INTERNAL'}:${place.id}`)),
+          ]
           onPlacesChangeRef.current?.(rawPlacesRef.current)
           renderPlaceOverlays(map, rawPlacesRef.current)
           focusPlace(map, focusedPlaceKeyRef.current)
@@ -791,13 +933,19 @@ export default function VWorldMap({
     map.on('moveend', loadViewportData)
     document.addEventListener('visibilitychange', handleCrowdingVisibility)
     const resizeObserver = typeof ResizeObserver !== 'undefined' && targetRef.current
-      ? new ResizeObserver(() => { map.updateSize(); map.render(); if (pendingPlaceFitRef.current) renderPlaceOverlays(map, rawPlacesRef.current) })
+      ? new ResizeObserver(() => {
+        map.updateSize()
+        map.render()
+        if (pendingPlaceFitRef.current) renderPlaceOverlays(map, rawPlacesRef.current)
+        if (navigationModeRef.current && followCameraRef.current) animateNavigationCamera({ force: true })
+      })
       : null
     resizeObserver?.observe(targetRef.current)
     const firstFrame = requestAnimationFrame(() => { map.updateSize(); map.render() })
 
     return () => {
       cancelRouteDraw()
+      map.getView().cancelAnimations()
       map.un('postrender', loadViewportData)
       map.un('moveend', loadViewportData)
       if (interactive) map.un('singleclick', handleCongestionAreaClick)
@@ -833,8 +981,75 @@ export default function VWorldMap({
       routeDrawRef.current.key = ''
       appliedRouteShapeRef.current = ''
       appliedGhostShapeRef.current = ''
+      readyRouteShapeRef.current = ''
     }
   }, [apiKey, interactive, Boolean(loadPlacesInBounds), Boolean(loadCongestionInBounds), placeLimit, clusterPlaces, fitPlaceMarkers])
+
+  useEffect(() => {
+    navigationObservationRef.current = {
+      coordinate: userLocation,
+      heading: userHeading,
+      speed: userSpeed,
+      accuracy: userLocationAccuracy,
+    }
+    if (navigationMode && followCameraRef.current) animateNavigationCamera()
+  }, [
+    mapVersion,
+    navigationMode,
+    userLocation?.[0],
+    userLocation?.[1],
+    userHeading,
+    userSpeed,
+    userLocationAccuracy,
+  ])
+
+  useEffect(() => {
+    navigationModeRef.current = navigationMode
+    if (navigationMode) {
+      followCameraRef.current = true
+      setFollowCameraActive(true)
+      animateNavigationCamera({ force: true })
+      return
+    }
+
+    followCameraRef.current = false
+    setFollowCameraActive(false)
+    navigationFixRef.current = null
+    navigationHeadingRef.current = null
+    const view = mapRef.current?.getView()
+    if (!view) return
+    view.cancelAnimations()
+    view.animate({
+      rotation: 0,
+      duration: motionDuration(NAVIGATION_CAMERA_DURATION),
+      easing: easeOut,
+    })
+  }, [mapVersion, navigationMode])
+
+  useEffect(() => {
+    const map = mapRef.current
+    if (!map || !interactive) return undefined
+    const viewport = map.getViewport()
+    const suspendFollowCamera = () => {
+      if (!navigationModeRef.current || !followCameraRef.current) return
+      map.getView().cancelAnimations()
+      followCameraRef.current = false
+      setFollowCameraActive(false)
+    }
+    const suspendForPinch = (event) => {
+      if (event.touches?.length > 1) suspendFollowCamera()
+    }
+    map.on('pointerdrag', suspendFollowCamera)
+    viewport.addEventListener('wheel', suspendFollowCamera, { passive: true })
+    viewport.addEventListener('dblclick', suspendFollowCamera)
+    viewport.addEventListener('touchstart', suspendForPinch, { passive: true })
+    return () => {
+      map.un('pointerdrag', suspendFollowCamera)
+      viewport.removeEventListener('wheel', suspendFollowCamera)
+      viewport.removeEventListener('dblclick', suspendFollowCamera)
+      viewport.removeEventListener('touchstart', suspendForPinch)
+    }
+  }, [mapVersion, interactive])
 
   function cancelRouteDraw() {
     const state = routeDrawRef.current
@@ -958,21 +1173,33 @@ export default function VWorldMap({
     if (!layer) return
     const shapeKey = JSON.stringify([routeMode, (routeLegs || []).map((leg) => [leg?.mode, leg?.geometry?.coordinates || null])])
     const source = layer.getSource()
-    if (appliedRouteShapeRef.current !== shapeKey) {
+    const shapeChanged = appliedRouteShapeRef.current !== shapeKey
+    if (shapeChanged) {
       appliedRouteShapeRef.current = shapeKey
       source.clear()
-      const features = routeLegFeatureSpecs(routeLegs, fromLonLat).map((spec) => {
+      const features = routeLegFeatureSpecs(routeLegs, fromLonLat).map((spec, routeSequence) => {
         const feature = new Feature({ geometry: new LineString(spec.coordinates) })
-        feature.setProperties({ mode: spec.mode || routeMode, routeName: spec.routeName }, false)
+        feature.setProperties({ mode: spec.mode || routeMode, routeName: spec.routeName, routeSequence }, false)
         return feature
       })
       source.addFeatures(features)
       layer.changed()
     }
-    const features = source.getFeatures()
+    const features = orderRouteFeaturesBySequence(source.getFeatures())
+    if (features.length > 0 && readyRouteShapeRef.current !== shapeKey) {
+      mapRef.current?.renderSync()
+      readyRouteShapeRef.current = shapeKey
+      onRouteReadyRef.current?.()
+    }
     const key = routeDrawKey || routeFitKey
-    if (!key || routeDrawRef.current.key === key) {
-      if (!key) routeDrawRef.current.key = ''
+    const transition = routeDrawTransition(routeDrawRef.current.key, key, shapeChanged)
+    if (transition === 'cancel') {
+      routeDrawRef.current.key = ''
+      cancelRouteDraw()
+      return
+    }
+    if (transition === 'keep') return
+    if (transition === 'replace') {
       cancelRouteDraw()
       return
     }
@@ -1067,6 +1294,8 @@ export default function VWorldMap({
   useEffect(() => {
     if (lastPlaceRequestKeyRef.current === placeRequestKey) return
     lastPlaceRequestKeyRef.current = placeRequestKey
+    expandedClusterPlacesRef.current = []
+    preserveClusterExpansionOnNextLoadRef.current = false
     pendingPlaceFitRef.current = true
     pendingMarkerEntranceRef.current = true
     loadVisiblePlacesRef.current?.()
@@ -1171,6 +1400,13 @@ export default function VWorldMap({
       style={style}
     >
       <div ref={targetRef} className="vworld-map__canvas" />
+      {navigationMode && (
+        <NavigationLocationButton
+          following={followCameraActive}
+          disabled={!Array.isArray(liveUserLocation) || liveUserLocation.length < 2}
+          onClick={resumeNavigationCamera}
+        />
+      )}
       {statusMessage && (
         <div className="vworld-map__fallback" role="status">
           <span>{statusMessage}</span>

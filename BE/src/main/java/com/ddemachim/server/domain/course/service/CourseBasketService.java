@@ -32,17 +32,23 @@ public class CourseBasketService {
 
     @Transactional
     public AddResult addPlace(Long memberId, Long placeId) {
+        return addPlace(memberId, placeId, null);
+    }
+
+    @Transactional
+    public AddResult addPlace(Long memberId, Long placeId, String imageUrl) {
         Member member = memberRepository.findByIdForUpdate(memberId)
                 .orElseThrow(() -> new AuthException(AuthErrorStatus.INVALID_ACCESS_TOKEN));
         CourseBasketItem existing = courseBasketItemRepository
                 .findByMemberIdAndPlaceId(memberId, placeId)
                 .orElse(null);
         if (existing != null) {
+            existing.updateImageUrl(imageUrl);
             return new AddResult(CourseBasketItemResponse.from(existing), false);
         }
 
         Place place = placeRepository.findById(placeId).orElseThrow(PlaceNotFoundException::new);
-        CourseBasketItem saved = courseBasketItemRepository.save(CourseBasketItem.forPlace(member, place));
+        CourseBasketItem saved = courseBasketItemRepository.save(CourseBasketItem.forPlace(member, place, imageUrl));
         return new AddResult(CourseBasketItemResponse.from(saved), true);
     }
 
@@ -68,10 +74,11 @@ public class CourseBasketService {
                 .findByMemberIdAndUserPlaceId(memberId, userPlace.getId())
                 .orElse(null);
         if (existing != null) {
+            existing.updateImageUrl(request.imageUrl());
             return new AddResult(CourseBasketItemResponse.from(existing), false);
         }
 
-        CourseBasketItem saved = courseBasketItemRepository.save(CourseBasketItem.forUserPlace(member, userPlace));
+        CourseBasketItem saved = courseBasketItemRepository.save(CourseBasketItem.forUserPlace(member, userPlace, request.imageUrl()));
         return new AddResult(CourseBasketItemResponse.from(saved), true);
     }
 

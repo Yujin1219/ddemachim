@@ -4,6 +4,8 @@ import React, { createElement } from 'react';
 import { act, create } from 'react-test-renderer';
 
 import CoursePreviewResults from './CoursePreviewResults.js';
+import * as coursePreviewResultsModule from './CoursePreviewResults.js';
+import CourseNavigationGuidance from './CourseNavigationGuidance.js';
 
 const previousActEnvironment = globalThis.IS_REACT_ACT_ENVIRONMENT;
 globalThis.IS_REACT_ACT_ENVIRONMENT = true;
@@ -24,6 +26,21 @@ function textContent(node) {
 function FakeMap(props) {
   return createElement('div', { role: 'img', 'aria-label': props.ariaLabel });
 }
+
+test('development route simulation advances once from departure to destination', () => {
+  assert.equal(typeof coursePreviewResultsModule.routeSimulationProgress, 'function');
+  assert.equal(coursePreviewResultsModule.routeSimulationProgress(0, 36_000), 0);
+  assert.equal(coursePreviewResultsModule.routeSimulationProgress(18_000, 36_000), 0.5);
+  assert.equal(coursePreviewResultsModule.routeSimulationProgress(36_000, 36_000), 1);
+  assert.equal(coursePreviewResultsModule.routeSimulationProgress(72_000, 36_000), 1);
+});
+
+test('starts route movement only after the navigation route layer is ready', () => {
+  assert.equal(typeof coursePreviewResultsModule.shouldStartRouteSimulation, 'function');
+  assert.equal(coursePreviewResultsModule.shouldStartRouteSimulation(true, true, false), false);
+  assert.equal(coursePreviewResultsModule.shouldStartRouteSimulation(true, true, true), true);
+  assert.equal(coursePreviewResultsModule.shouldStartRouteSimulation(false, true, true), false);
+});
 
 const walkStep = {
   streetName: '율곡로',
@@ -144,7 +161,51 @@ test('confirms the currently selected single course and hides editing in saved m
   assert.deepEqual(confirmations[0].routeSelections, {});
 });
 
-test('links marker selection to its itinerary stop and itinerary selection to the focused map place', async () => {
+test('uses the AI-specific edit label in the preview action bar', async () => {
+  let renderer;
+  await act(async () => {
+    renderer = create(createElement(CoursePreviewResults, {
+      preview,
+      status: 'success',
+      MapComponent: FakeMap,
+      onBack: () => {},
+      onConfirm: () => {},
+      onEditConditions: () => {},
+      editLabel: '수정하기',
+      confirmLabel: '이 코스로 생성하기',
+    }));
+  });
+
+  const labels = renderer.root.findAllByType('button').map((button) => textContent(button.props.children));
+  assert.equal(labels.includes('수정하기'), true);
+  assert.equal(labels.includes('이 코스로 생성하기'), true);
+  assert.equal(labels.includes('조건 수정'), false);
+});
+
+test('shows explicit progress while a scheduled course is being saved', async () => {
+  let renderer;
+  await act(async () => {
+    renderer = create(createElement(CoursePreviewResults, {
+      preview,
+      status: 'success',
+      MapComponent: FakeMap,
+      onBack: () => {},
+      onConfirm: () => {},
+      confirmLabel: '예정 코스로 저장',
+      confirmBusy: true,
+    }));
+  });
+
+  const copy = textContent(renderer.toJSON());
+  const saveButton = renderer.root.findAllByType('button')
+    .find((button) => textContent(button.props.children) === '저장 중…');
+  assert.ok(saveButton);
+  assert.equal(saveButton.props.disabled, true);
+  assert.equal(copy.includes('코스를 저장하고 있어요'), true);
+  assert.equal(copy.includes('최대 30초 정도 걸릴 수 있어요.'), true);
+});
+
+test('links marker selection to its itinerary stop without overriding the full segment map fit', async () => {
   const scrollCalls = [];
   let renderer;
   await act(async () => {
@@ -164,12 +225,121 @@ test('links marker selection to its itinerary stop and itinerary selection to th
 
   const map = () => renderer.root.findByType(FakeMap);
   await act(async () => map().props.onPlaceClick({ id: '1-서울공예박물관' }));
-  assert.equal(map().props.focusedPlaceKey, 'INTERNAL:1-서울공예박물관');
+  assert.equal(map().props.selectedPlaceKey, 'INTERNAL:1-서울공예박물관');
+  assert.equal(map().props.focusedPlaceKey, '');
   assert.deepEqual(scrollCalls, [{ behavior: 'smooth', block: 'nearest' }]);
 
-  const secondStop = renderer.root.findAllByProps({ className: 'course-preview-stop-button' })[1];
+  const secondStop = renderer.root.findByProps({ 'data-course-orbit-index': 1 });
   await act(async () => secondStop.props.onClick());
-  assert.equal(map().props.focusedPlaceKey, 'INTERNAL:2-도토리가든');
+  assert.equal(map().props.selectedPlaceKey, 'INTERNAL:2-도토리가든');
+  assert.equal(map().props.focusedPlaceKey, '');
+  assert.equal(map().props.routeFitKey, 'generated-1|stop:1');
+});
+
+test('starts with the whole course and keeps it visible while focusing a selected place segment', async () => {
+  const firstGeometry = { type: 'LineString', coordinates: [[126.97, 37.56], [126.98, 37.57]] };
+  const secondGeometry = { type: 'LineString', coordinates: [[126.98, 37.57], [126.99, 37.58]] };
+  const wholeCoursePreview = {
+    ...preview,
+    routeFitKey: 'whole-course',
+    stops: [
+      {
+        ...preview.stops[0],
+        basketItemId: 11,
+        selectedRoute: {
+          ...preview.stops[0].incomingRoute,
+          legs: [{ mode: 'WALK', routeName: '첫 번째 구간', geometry: firstGeometry, steps: [] }],
+        },
+      },
+      {
+        ...preview.stops[1],
+        basketItemId: 12,
+        selectedRoute: {
+          mode: 'WALK',
+          status: 'AVAILABLE',
+          durationSeconds: 600,
+          distanceMeters: 900,
+          legs: [{ mode: 'WALK', routeName: '두 번째 구간', geometry: secondGeometry, steps: [] }],
+        },
+      },
+    ],
+  };
+  let renderer;
+  await act(async () => {
+    renderer = create(createElement(CoursePreviewResults, {
+      preview: wholeCoursePreview,
+      status: 'success',
+      MapComponent: FakeMap,
+      origin: { longitude: 126.96, latitude: 37.55 },
+    }));
+  });
+
+  const map = () => renderer.root.findByType(FakeMap);
+  const routeNames = (legs) => legs.map((leg) => leg.routeName).filter(Boolean);
+  const overviewButton = () => renderer.root.findAllByType('button').find((button) => (
+    button.props.className?.includes('course-preview-overview-button')
+  ));
+
+  assert.deepEqual(routeNames(map().props.routeLegs), ['첫 번째 구간', '두 번째 구간']);
+  assert.deepEqual(map().props.ghostRouteLegs, []);
+  assert.equal(map().props.routeFitKey, 'whole-course|overview');
+  assert.equal(overviewButton().props['aria-pressed'], true);
+
+  await act(async () => renderer.root.findByProps({ 'data-course-orbit-index': 1 }).props.onClick());
+
+  assert.equal(routeNames(map().props.routeLegs).includes('첫 번째 구간'), false);
+  assert.equal(routeNames(map().props.routeLegs).includes('두 번째 구간'), true);
+  assert.deepEqual(routeNames(map().props.ghostRouteLegs), ['첫 번째 구간', '두 번째 구간']);
+  assert.equal(map().props.routeFitKey, 'whole-course|stop:1');
+  assert.equal(overviewButton().props['aria-pressed'], false);
+
+  await act(async () => overviewButton().props.onClick());
+
+  assert.deepEqual(routeNames(map().props.routeLegs), ['첫 번째 구간', '두 번째 구간']);
+  assert.equal(map().props.routeFitKey, 'whole-course|overview');
+  assert.equal(overviewButton().props['aria-pressed'], true);
+});
+
+test('summarizes the whole itinerary before a place segment is selected', async () => {
+  let renderer;
+  await act(async () => {
+    renderer = create(createElement(CoursePreviewResults, {
+      preview,
+      status: 'success',
+      MapComponent: FakeMap,
+    }));
+  });
+
+  const summary = () => renderer.root.findByProps({ className: 'course-preview-sheet-summary' });
+  assert.equal(textContent(summary()).includes('전체 코스'), true);
+  assert.equal(textContent(summary()).includes('2곳 · 4시간 20분 · 7.8km'), true);
+
+  await act(async () => renderer.root.findByProps({ 'data-course-orbit-index': 1 }).props.onClick());
+  assert.equal(textContent(summary()).includes('2. 도토리가든'), true);
+});
+
+test('shows only the ordered stops in the whole-course detail and opens a stop on selection', async () => {
+  let renderer;
+  await act(async () => {
+    renderer = create(createElement(CoursePreviewResults, {
+      preview,
+      status: 'success',
+      MapComponent: FakeMap,
+    }));
+  });
+
+  const itinerary = renderer.root.findByProps({ className: 'course-preview-itinerary' });
+  const orderedStops = itinerary.findAllByProps({ className: 'course-preview-overview-stop' });
+  assert.equal(orderedStops.length, 2);
+  assert.equal(textContent(orderedStops[0]).includes('1서울공예박물관'), true);
+  assert.equal(textContent(orderedStops[1]).includes('2도토리가든'), true);
+  assert.equal(textContent(itinerary).includes('종로02'), false);
+  assert.equal(textContent(itinerary).includes('횡단보도를 건너세요'), false);
+
+  await act(async () => orderedStops[1].props.onClick());
+
+  assert.equal(renderer.root.findAllByProps({ className: 'course-preview-overview-stop' }).length, 0);
+  assert.equal(textContent(renderer.root.findByProps({ className: 'course-preview-sheet-summary' })).includes('2. 도토리가든'), true);
 });
 
 test('keeps the resizable itinerary sheet over the map stage', async () => {
@@ -187,6 +357,198 @@ test('keeps the resizable itinerary sheet over the map stage', async () => {
   assert.ok(stage.findByProps({ className: 'course-preview-sheet-frame' }));
 });
 
+test('toggles the detail action between expanding and collapsing the itinerary sheet', async () => {
+  let renderer;
+  await act(async () => {
+    renderer = create(createElement(CoursePreviewResults, {
+      preview,
+      status: 'success',
+      MapComponent: FakeMap,
+      onBack: () => {},
+    }), {
+      createNodeMock: (element) => {
+        if (element.props.className === 'course-preview-sheet-frame') return { clientHeight: 600 };
+        if (element.props.className === 'course-preview-timeline') return { children: [] };
+        if (element.props.className === 'course-preview-overview-order') {
+          return {
+            children: [
+              { getBoundingClientRect: () => ({ height: 88 }) },
+              { getBoundingClientRect: () => ({ height: 88 }) },
+            ],
+          };
+        }
+        return {};
+      },
+    });
+  });
+
+  const detailButton = () => renderer.root.findAllByType('button')
+    .find((button) => ['상세 보기', '상세 닫기'].includes(textContent(button.props.children)));
+  const sheetOffset = () => Number.parseFloat(
+    renderer.root.findByProps({ className: 'course-preview-sheet' }).props.style.transform.match(/[-\d.]+/)[0],
+  );
+
+  assert.equal(textContent(detailButton().props.children), '상세 보기');
+  assert.equal(detailButton().props['aria-expanded'], false);
+  const collapsedOffset = sheetOffset();
+
+  await act(async () => detailButton().props.onClick());
+  assert.equal(textContent(detailButton().props.children), '상세 닫기');
+  assert.equal(detailButton().props['aria-expanded'], true);
+  assert.equal(sheetOffset() < collapsedOffset, true, 'opening the overview detail must visibly raise the sheet');
+
+  await act(async () => detailButton().props.onClick());
+  assert.equal(textContent(detailButton().props.children), '상세 보기');
+  assert.equal(detailButton().props['aria-expanded'], false);
+  assert.equal(sheetOffset(), collapsedOffset);
+});
+
+test('starts the itinerary sheet collapsed while keeping its bottom edge above the actions', async () => {
+  let renderer;
+  await act(async () => {
+    renderer = create(createElement(CoursePreviewResults, {
+      preview,
+      status: 'success',
+      MapComponent: FakeMap,
+      onBack: () => {},
+    }), {
+      createNodeMock: (element) => {
+        if (element.props.className === 'course-preview-sheet-frame') return { clientHeight: 600 };
+        if (element.props.className === 'course-preview-timeline') {
+          return {
+            children: [
+              { getBoundingClientRect: () => ({ height: 180 }) },
+              { getBoundingClientRect: () => ({ height: 220 }) },
+            ],
+          };
+        }
+        return {};
+      },
+    });
+  });
+
+  const sheet = renderer.root.findByProps({ className: 'course-preview-sheet' });
+  assert.deepEqual(sheet.props.style, {
+    transform: 'translateY(468px)',
+    height: 'calc(100% - 468px)',
+  });
+});
+
+test('positions the route summary below the place orbit controls', async () => {
+  let renderer;
+  await act(async () => {
+    renderer = create(createElement(CoursePreviewResults, {
+      preview,
+      status: 'success',
+      MapComponent: FakeMap,
+      onBack: () => {},
+    }));
+  });
+
+  const summary = renderer.root.findByProps({ className: 'course-preview-floating' });
+  assert.deepEqual(summary.props.style, { top: '116px' });
+});
+
+test('enables navigation camera only while a saved course is actively progressing', async () => {
+  let renderer;
+  await act(async () => {
+    renderer = create(createElement(CoursePreviewResults, {
+      preview,
+      status: 'success',
+      MapComponent: FakeMap,
+      navigationMode: true,
+      readOnly: true,
+      onBack: () => {},
+    }));
+  });
+
+  const map = renderer.root.findByType(FakeMap);
+  assert.equal(map.props.navigationMode, true);
+  assert.equal(map.props.routeFitKey, '');
+  assert.equal(map.props.routeDrawKey, '');
+  assert.equal(map.props.focusedPlaceKey, '');
+});
+
+test('keeps the navigation map at the departure point until its route layer reports ready', async () => {
+  const origin = { longitude: 126.977, latitude: 37.565 };
+  let renderer;
+  await act(async () => {
+    renderer = create(createElement(CoursePreviewResults, {
+      preview,
+      origin,
+      status: 'success',
+      MapComponent: FakeMap,
+      navigationMode: true,
+      readOnly: true,
+      onBack: () => {},
+    }));
+  });
+
+  let map = renderer.root.findByType(FakeMap);
+  assert.deepEqual(map.props.center, [origin.longitude, origin.latitude]);
+  assert.equal(typeof map.props.onRouteReady, 'function');
+
+  await act(async () => map.props.onRouteReady());
+  map = renderer.root.findByType(FakeMap);
+  assert.equal(map.props.center, undefined);
+});
+
+test('places a course finish error in the map stage instead of behind the navigation guidance', async () => {
+  let renderer;
+  await act(async () => {
+    renderer = create(createElement(CoursePreviewResults, {
+      preview,
+      status: 'success',
+      MapComponent: FakeMap,
+      navigationMode: true,
+      readOnly: true,
+      completeError: '코스를 종료하지 못했어요. 다시 시도해주세요.',
+      onBack: () => {},
+      onCompleteCourse: () => {},
+    }));
+  });
+
+  const stage = renderer.root.findByProps({ className: 'course-preview-stage' });
+  const alert = stage.findByProps({ role: 'alert' });
+  assert.equal(alert.props.className, 'course-navigation-finish-error');
+  assert.equal(
+    renderer.root.findByProps({ className: 'navigation-top-card course-navigation-top-card' })
+      .findAllByProps({ role: 'alert' }).length,
+    0,
+  );
+});
+
+test('passes GPS coordinates and heading metadata from guidance into the navigation map', async () => {
+  const reportedLocations = [];
+  let renderer;
+  await act(async () => {
+    renderer = create(createElement(CoursePreviewResults, {
+      preview,
+      status: 'success',
+      MapComponent: FakeMap,
+      navigationMode: true,
+      onBack: () => {},
+      onNavigationLocationChange: (location) => reportedLocations.push(location),
+    }));
+  });
+  const observation = {
+    coordinate: [126.978, 37.5665],
+    heading: 47,
+    speed: 1.2,
+    accuracy: 9,
+    timestamp: 1234,
+  };
+
+  await act(async () => renderer.root.findByType(CourseNavigationGuidance).props.onLocationChange(observation));
+
+  const map = renderer.root.findByType(FakeMap);
+  assert.deepEqual(map.props.userLocation, observation.coordinate);
+  assert.equal(map.props.userHeading, 47);
+  assert.equal(map.props.userSpeed, 1.2);
+  assert.equal(map.props.userLocationAccuracy, 9);
+  assert.deepEqual(reportedLocations, [observation.coordinate]);
+});
+
 test('renders FAST schedule, authoritative hours, incoming legs, WALK steps, and map geometry', async () => {
   let renderer;
   await act(async () => {
@@ -199,31 +561,30 @@ test('renders FAST schedule, authoritative hours, incoming legs, WALK steps, and
       onEditStops: () => {},
     }));
   });
+  await act(async () => renderer.root.findAllByProps({ className: 'course-preview-overview-stop' })[0].props.onClick());
 
   const copy = textContent(renderer.toJSON());
   const map = renderer.root.findByType(FakeMap);
-  assert.equal(copy.includes('빠른 코스'), true);
+  assert.equal(map.props.ariaLabel, '빠른 코스 추천 경로 지도');
   assert.equal(copy.includes('4시간 20분'), true);
-  assert.equal(copy.includes('이동 52분'), true);
   assert.equal(copy.includes('7.8km'), true);
-  assert.equal(copy.includes('11:00 도착 · 11:45 출발'), true);
-  assert.equal(copy.includes('실제 운영시간 · 09:00-18:00'), true);
-  assert.equal(copy.includes('데모 기본 운영시간 · 09:00-21:00'), true);
+  assert.equal(copy.includes('10:00 출발'), true);
+  assert.equal(copy.includes('11:00 도착'), true);
   assert.equal(copy.includes('종로02'), true);
   assert.equal(copy.includes('횡단보도를 건너세요'), true);
-  assert.equal(copy.includes('경로 정보 없음'), true);
-  assert.equal(map.props.routeLegs, preview.routeLegs);
-  assert.equal(map.props.routeFitKey, 'generated-1');
+  assert.equal(copy.includes('도토리가든'), true);
+  assert.equal(map.props.routeLegs.some((leg) => leg.description === '횡단보도를 건너세요'), true);
+  assert.equal(map.props.routeFitKey, 'generated-1|stop:0');
   assert.equal(map.props.center, undefined);
   assert.equal(map.props.interactive, true);
   assert.equal(map.props.clusterPlaces, false);
   assert.equal(map.props.showCongestionAreas, false);
   assert.equal(map.props.fitPlaceMarkers, false);
   assert.equal(map.props.placeRequestKey, 'generated-1');
-  assert.deepEqual(map.props.routeFitPadding, [20, 20, 20, 20]);
+  assert.deepEqual(map.props.routeFitPadding, [156, 32, 176, 32]);
   assert.deepEqual(await map.props.loadPlacesInBounds(), [
-    { id: '1-서울공예박물관', name: '서울공예박물관', latitude: 37.576, longitude: 126.983, sequenceNo: 1 },
-    { id: '2-도토리가든', name: '도토리가든', latitude: 37.58, longitude: 126.986, sequenceNo: 2 },
+    { id: '1-서울공예박물관', name: '서울공예박물관', latitude: 37.576, longitude: 126.983, sequenceNo: 1, imageUrl: '' },
+    { id: '2-도토리가든', name: '도토리가든', latitude: 37.58, longitude: 126.986, sequenceNo: 2, imageUrl: '' },
   ]);
   assert.equal(map.props.placeMarkerLabel({ sequenceNo: 2 }), 2);
 });
@@ -266,36 +627,30 @@ test('switches every displayed and mapped value between FAST and QUIET by strate
     }));
   });
 
-  const radios = renderer.root.findAllByType('input');
-  const fastRadio = radios.find((input) => input.props.value === 'FAST');
-  const quietRadio = radios.find((input) => input.props.value === 'QUIET');
-  assert.equal(fastRadio.props.type, 'radio');
-  assert.equal(fastRadio.props.name, quietRadio.props.name);
-  assert.equal(fastRadio.props.checked, true);
-  assert.equal(quietRadio.props.checked, false);
+  const tabs = renderer.root.findAllByProps({ role: 'tab' });
+  const fastTab = tabs.find((button) => textContent(button.props.children) === '빠른 길');
+  const quietTab = tabs.find((button) => textContent(button.props.children) === '한적한 길');
+  assert.equal(fastTab.props['aria-selected'], true);
+  assert.equal(quietTab.props['aria-selected'], false);
 
-  await act(async () => quietRadio.props.onChange({ target: { value: 'QUIET' } }));
+  await act(async () => quietTab.props.onClick());
+  await act(async () => renderer.root.findByProps({ className: 'course-preview-overview-stop' }).props.onClick());
 
   const copy = textContent(renderer.toJSON());
-  const selectedRadios = renderer.root.findAllByType('input');
+  const selectedTabs = renderer.root.findAllByProps({ role: 'tab' });
   const map = renderer.root.findByType(FakeMap);
-  assert.equal(selectedRadios.find((input) => input.props.value === 'QUIET').props.checked, true);
-  assert.equal(copy.includes('한적한 코스'), true);
-  assert.equal(copy.includes('10:20-15:30 · 1곳'), true);
+  assert.equal(selectedTabs.find((button) => textContent(button.props.children) === '한적한 길').props['aria-selected'], true);
   assert.equal(copy.includes('5시간 10분'), true);
-  assert.equal(copy.includes('이동 1시간 10분'), true);
   assert.equal(copy.includes('9.1km'), true);
   assert.equal(copy.includes('한적한 북촌 정원'), true);
-  assert.equal(copy.includes('10:40 도착 · 11:40 출발'), true);
-  assert.equal(copy.includes('평균 혼잡도 보통'), true);
+  assert.equal(copy.includes('10:40 도착'), true);
   assert.equal(copy.includes('예상 혼잡도 약간 붐빔'), true);
-  assert.equal(copy.includes('서울공예박물관'), true);
-  assert.equal(map.props.routeLegs, quiet.routeLegs);
-  assert.equal(map.props.routeFitKey, quiet.routeFitKey);
+  assert.equal(map.props.routeLegs.length, 0);
+  assert.equal(map.props.routeFitKey, `${quiet.routeFitKey}|stop:0`);
   assert.equal(map.props.placeRequestKey, quiet.routeFitKey);
   assert.equal(map.props.fitPlaceMarkers, true);
   assert.deepEqual(await map.props.loadPlacesInBounds(), [
-    { id: '1-한적한 북촌 정원', name: '한적한 북촌 정원', latitude: 35.18, longitude: 129.07, sequenceNo: 1 },
+    { id: '1-한적한 북촌 정원', name: '한적한 북촌 정원', latitude: 35.18, longitude: 129.07, sequenceNo: 1, imageUrl: '' },
   ]);
   assert.deepEqual(map.props.center, [129.07, 35.18]);
   assert.equal(map.props.ariaLabel, '한적한 코스 추천 경로 지도');
@@ -311,8 +666,8 @@ test('resets a prior QUIET choice to FAST when a new response arrives', async ()
       MapComponent: FakeMap,
     }));
   });
-  const quietRadio = renderer.root.findAllByType('input').find((input) => input.props.value === 'QUIET');
-  await act(async () => quietRadio.props.onChange({ target: { value: 'QUIET' } }));
+  const quietTab = renderer.root.findAllByProps({ role: 'tab' }).find((button) => textContent(button.props.children) === '한적한 길');
+  await act(async () => quietTab.props.onClick());
 
   const nextFastOption = { ...preview, routeFitKey: 'next-fast-route', totalDurationMinutes: 120 };
   const nextQuietOption = { ...quiet, routeFitKey: 'next-quiet-route', totalDurationMinutes: 360 };
@@ -325,11 +680,11 @@ test('resets a prior QUIET choice to FAST when a new response arrives', async ()
     }));
   });
 
-  const nextRadios = renderer.root.findAllByType('input');
-  assert.equal(nextRadios.find((input) => input.props.value === 'FAST').props.checked, true);
-  assert.equal(nextRadios.find((input) => input.props.value === 'QUIET').props.checked, false);
+  const nextTabs = renderer.root.findAllByProps({ role: 'tab' });
+  assert.equal(nextTabs.find((button) => textContent(button.props.children) === '빠른 길').props['aria-selected'], true);
+  assert.equal(nextTabs.find((button) => textContent(button.props.children) === '한적한 길').props['aria-selected'], false);
   assert.equal(textContent(renderer.toJSON()).includes('2시간'), true);
-  assert.equal(renderer.root.findByType(FakeMap).props.routeFitKey, 'next-fast-route');
+  assert.equal(renderer.root.findByType(FakeMap).props.routeFitKey, 'next-fast-route|overview');
 });
 
 test('switches an individual leg locally and propagates a longer route to its map and downstream schedule', async () => {
@@ -365,29 +720,28 @@ test('switches an individual leg locally and propagates a longer route to its ma
   await act(async () => {
     renderer = create(createElement(CoursePreviewResults, { preview: selectable, status: 'success', MapComponent: FakeMap }));
   });
+  await act(async () => renderer.root.findAllByProps({ className: 'course-preview-overview-stop' })[0].props.onClick());
 
   const alternative = renderer.root.findAllByType('input').find((input) => input.props.value === 'alternative');
   assert.ok(alternative);
-  assert.equal(textContent(renderer.toJSON()).includes('대안 · 도보 20분'), true);
+  assert.equal(textContent(renderer.toJSON()).includes('도보20분900m'), true);
   await act(async () => alternative.props.onChange());
 
   const copy = textContent(renderer.toJSON());
   const map = renderer.root.findByType(FakeMap);
-  assert.equal(copy.includes('대체 경로를 반영해 예상 일정이 다시 계산되었어요.'), true);
-  assert.equal(copy.includes('10:20 도착 · 11:05 출발'), true);
-  assert.equal(copy.includes('11:20 도착 · 12:20 출발'), true);
+  assert.equal(copy.includes('10:20 도착'), true);
   assert.equal(copy.includes('4시간 25분'), true);
-  assert.equal(copy.includes('이동 57분'), true);
-  assert.deepEqual(map.props.routeLegs, [alternativeRoute.legs[0]]);
-  assert.match(map.props.routeFitKey, /101:alternative/);
-  assert.equal(map.props.placeRequestKey, map.props.routeFitKey);
+  assert.equal(map.props.routeLegs[0], alternativeRoute.legs[0]);
+  assert.equal(map.props.routeLegs.at(-1).routeName, '도착지 연결');
+  assert.match(map.props.routeFitKey, /101:alternative.*stop:0/);
+  assert.equal(map.props.placeRequestKey, 'generated-1|legs:101:alternative');
   assert.deepEqual(await map.props.loadPlacesInBounds(), [
-    { id: 101, name: '서울공예박물관', latitude: 37.576, longitude: 126.983, sequenceNo: 1 },
-    { id: 102, name: '도토리가든', latitude: 37.58, longitude: 126.986, sequenceNo: 2 },
+    { id: 101, name: '서울공예박물관', latitude: 37.576, longitude: 126.983, sequenceNo: 1, imageUrl: '' },
+    { id: 102, name: '도토리가든', latitude: 37.58, longitude: 126.986, sequenceNo: 2, imageUrl: '' },
   ]);
 });
 
-test('hides EASY terrain metrics for transit and reveals them only for a short selected walk', async () => {
+test('hides EASY terrain metrics for transit and reveals ascent for a short selected walk', async () => {
   const easyPreview = {
     ...preview,
     strategy: 'EASY',
@@ -420,11 +774,11 @@ test('hides EASY terrain metrics for transit and reveals them only for a short s
     renderer = create(createElement(CoursePreviewResults, { preview: easyPreview, status: 'success', MapComponent: FakeMap }));
   });
   assert.equal(textContent(renderer.toJSON()).includes('상승 고도'), false);
+  await act(async () => renderer.root.findByProps({ className: 'course-preview-overview-stop' }).props.onClick());
 
   const alternative = renderer.root.findAllByType('input').find((input) => input.props.value === 'alternative');
   await act(async () => alternative.props.onChange());
   assert.equal(textContent(renderer.toJSON()).includes('상승 고도 18m'), true);
-  assert.equal(textContent(renderer.toJSON()).includes('도보 경사 비교'), true);
 });
 
 test('shows EASY feedback from elevation comparisons when FAST has no aggregate ascent', async () => {
@@ -485,12 +839,103 @@ test('renders the animated course builder as a busy status while the preview is 
   assert.equal(copy.includes('편한 길'), true);
   assert.equal(copy.includes('한적한 길'), true);
   assert.equal(copy.includes('세 가지 코스를 차례대로 확인하고 있어요'), true);
-  assert.equal(/완료|완성/.test(copy), false);
+  const announcement = renderer.root.findByProps({ className: 'course-preview-loader-announcement' });
+  assert.equal(/완료|완성/.test(textContent(announcement)), false);
   assert.equal(illustration.props.viewBox, '0 0 390 560');
   assert.equal(illustration.props['aria-hidden'], true);
   assert.equal(illustration.props.focusable, false);
   assert.equal(renderer.root.findAllByProps({ className: 'course-preview-spinner' }).length, 0);
   assert.equal(renderer.root.findAllByType(FakeMap).length, 0);
+});
+
+test('spaces every course builder progress step at an equal interval', async () => {
+  let renderer;
+  await act(async () => {
+    renderer = create(createElement(CoursePreviewResults, {
+      preview: null,
+      status: 'loading',
+      MapComponent: FakeMap,
+    }));
+  });
+
+  const stepX = ['one', 'two', 'three', 'four'].map((step) => (
+    renderer.root.findAllByProps({ className: `course-preview-loader-step-${step}` })
+      .find((node) => node.type === 'circle').props.cx
+  ));
+
+  assert.deepEqual(stepX.slice(1).map((value, index) => value - stepX[index]), [86, 86, 86]);
+});
+
+test('shows the completion motion only after the course preview succeeds', async () => {
+  let renderer;
+  await act(async () => {
+    renderer = create(createElement(CoursePreviewResults, {
+      preview: null,
+      status: 'loading',
+      MapComponent: FakeMap,
+    }));
+  });
+
+  assert.equal(renderer.root.findAllByProps({
+    className: 'course-preview-loader-status is-complete',
+  }).length, 0);
+
+  await act(async () => {
+    renderer.update(createElement(CoursePreviewResults, {
+      preview,
+      status: 'success',
+      MapComponent: FakeMap,
+    }));
+  });
+
+  assert.equal(renderer.root.findAllByProps({
+    className: 'course-preview-loader-status is-complete',
+  }).length, 1);
+  assert.equal(renderer.root.findByProps({ role: 'status' }).props['aria-busy'], false);
+
+  await act(async () => {
+    await new Promise((resolve) => setTimeout(resolve, 280));
+  });
+
+  assert.equal(renderer.root.findAllByProps({
+    className: 'course-preview-loader-status is-complete',
+  }).length, 0);
+  assert.equal(renderer.root.findAllByProps({ className: 'course-preview-stage' }).length, 1);
+});
+
+test('collapses the itinerary sheet after the completion motion reveals a generated course', async () => {
+  let renderer;
+  await act(async () => {
+    renderer = create(createElement(CoursePreviewResults, {
+      preview: null,
+      status: 'loading',
+      MapComponent: FakeMap,
+    }), {
+      createNodeMock: (element) => {
+        if (element.props.className === 'course-preview-sheet-frame') return { clientHeight: 600 };
+        if (element.props.className === 'course-preview-timeline') return { children: [] };
+        return {};
+      },
+    });
+  });
+
+  await act(async () => {
+    renderer.update(createElement(CoursePreviewResults, {
+      preview,
+      status: 'success',
+      MapComponent: FakeMap,
+    }));
+  });
+
+  await act(async () => {
+    await new Promise((resolve) => setTimeout(resolve, 280));
+  });
+
+  const sheet = renderer.root.findByProps({ className: 'course-preview-sheet' });
+  assert.deepEqual(sheet.props.style, {
+    transform: 'translateY(468px)',
+    height: 'calc(100% - 468px)',
+  });
 });
 
 test('renders every structured failure message in semantic group order outside the concise alert', async () => {

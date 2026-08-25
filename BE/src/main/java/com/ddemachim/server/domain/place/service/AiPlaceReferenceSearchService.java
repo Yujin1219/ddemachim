@@ -47,8 +47,17 @@ public class AiPlaceReferenceSearchService {
     }
 
     private ReferencePlace resolveSaved(String referenceName) {
+        ReferencePlace exact = placeRepository
+                .findFirstByNameIgnoreCaseAndLocationIsNotNullOrderByIdAsc(referenceName)
+                .map(this::toSavedReference)
+                .orElse(null);
+        if (exact != null) {
+            return exact;
+        }
+        String normalizedReferenceName = normalize(referenceName);
         return placeRepository.searchForAi(referenceName, null, null, REFERENCE_CANDIDATE_LIMIT).stream()
-                .filter(place -> place.getLocation() != null)
+                .filter(place -> place.getLocation() != null
+                        && normalize(place.getName()).contains(normalizedReferenceName))
                 .min(Comparator.comparingInt((Place place) -> exactNameScore(place, referenceName))
                         .thenComparing(Place::getId, Comparator.nullsLast(Long::compareTo)))
                 .map(this::toSavedReference)

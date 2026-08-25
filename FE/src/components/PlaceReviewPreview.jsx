@@ -1,13 +1,13 @@
 import { useState } from 'react';
-import { BadgeCheck, ChevronRight, Star, ThumbsUp } from 'lucide-react';
+import { BadgeCheck, ChevronRight, PencilLine, Star, ThumbsUp } from 'lucide-react';
 import {
+  buildReviewSummaryView,
   formatReviewRating,
   getPreviewPhotoSource,
   getPreviewPhotos,
   getReviewPreviewEmptyMessage,
   normalizePreviewReviews,
   normalizeRating,
-  normalizeReviewSummary,
   toggleHelpful,
 } from './placeReviewPreviewModel.js';
 
@@ -172,9 +172,9 @@ function SupportingReview({ review, helpful, onHelpfulToggle, onViewAll }) {
   );
 }
 
-export default function PlaceReviewPreview({ summary, reviews, onViewAll }) {
+export default function PlaceReviewPreview({ summary, reviews, onViewAll, onWriteReview }) {
   const normalizedReviews = normalizePreviewReviews(reviews);
-  const normalizedSummary = normalizeReviewSummary(summary, normalizedReviews);
+  const normalizedSummary = buildReviewSummaryView(summary, normalizedReviews, typeof onWriteReview === 'function');
   const [helpfulByReviewId, setHelpfulByReviewId] = useState({});
   const [helpfulMessage, setHelpfulMessage] = useState('');
   const canViewAll = typeof onViewAll === 'function';
@@ -193,11 +193,19 @@ export default function PlaceReviewPreview({ summary, reviews, onViewAll }) {
     <section className="place-review-preview" aria-label="방문자 후기 미리보기">
       <div className="place-review-surface">
         <div className="place-review-summary">
-          <RatingValue
-            label={normalizedSummary.averageRating === null ? '평균 별점 평가 전' : `평균 별점 ${formatReviewRating(normalizedSummary.averageRating)}점`}
-            rating={normalizedSummary.averageRating}
-          />
-          <span>{normalizedSummary.reviewCount}개 후기</span>
+          <div className="place-review-summary-main">
+            <RatingValue
+              label={normalizedSummary.averageRating === null ? '평균 별점 평가 전' : `평균 별점 ${formatReviewRating(normalizedSummary.averageRating)}점`}
+              rating={normalizedSummary.averageRating}
+            />
+            <span>{normalizedSummary.reviewCountLabel}</span>
+          </div>
+          {normalizedSummary.canWriteReview && (
+            <button className="place-review-write" onClick={onWriteReview} type="button">
+              <PencilLine aria-hidden="true" size={15} strokeWidth={2} />
+              후기 작성
+            </button>
+          )}
         </div>
 
         <div className="place-review-list">

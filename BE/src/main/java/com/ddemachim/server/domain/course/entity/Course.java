@@ -1,6 +1,7 @@
 package com.ddemachim.server.domain.course.entity;
 
 import com.ddemachim.server.domain.course.enums.CourseStatus;
+import com.ddemachim.server.domain.course.enums.CourseVisibility;
 import com.ddemachim.server.domain.user.entity.Member;
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
@@ -48,6 +49,10 @@ public class Course {
     @Column(name = "status", nullable = false, length = 20)
     private CourseStatus status;
 
+    @Enumerated(EnumType.STRING)
+    @Column(name = "visibility", nullable = false, length = 20)
+    private CourseVisibility visibility;
+
     @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "current_revision_id")
     private CourseRevision currentRevision;
@@ -68,17 +73,25 @@ public class Course {
     private OffsetDateTime updatedAt;
 
     public static Course create(Member member, String title) {
+        return create(member, title, CourseVisibility.PRIVATE);
+    }
+
+    public static Course create(Member member, String title, CourseVisibility visibility) {
         if (member == null) {
             throw new IllegalArgumentException("member is required");
         }
         if (title == null || title.isBlank() || title.length() > 200) {
             throw new IllegalArgumentException("title is required and must not exceed 200 characters");
         }
+        if (visibility == null) {
+            throw new IllegalArgumentException("visibility is required");
+        }
 
         Course course = new Course();
         course.member = member;
         course.title = title;
         course.status = CourseStatus.READY;
+        course.visibility = visibility;
         course.plannedStopCount = 0;
         course.version = 0L;
         return course;

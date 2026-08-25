@@ -130,6 +130,7 @@ CREATE TABLE IF NOT EXISTS course_basket_item (
     member_id       bigint NOT NULL REFERENCES member(member_id) ON DELETE CASCADE,
     place_id        bigint REFERENCES place(id) ON DELETE CASCADE,
     user_place_id   bigint REFERENCES user_place(id) ON DELETE CASCADE,
+    image_url       text,
     created_at      timestamptz NOT NULL DEFAULT now(),
     CONSTRAINT chk_course_basket_item_exactly_one_place
         CHECK (

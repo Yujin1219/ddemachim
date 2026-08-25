@@ -259,7 +259,8 @@ test('useRouteComparison retries after an error', async () => {
       await flushPromises();
     });
     assert.equal(ref.current.status, 'error');
-    assert.equal(ref.current.error.message, 'temporary failure');
+    assert.equal(ref.current.error.message, '백엔드 서버에 연결할 수 없습니다. 서버와 프록시 상태를 확인해주세요.');
+    assert.equal(ref.current.error.cause.message, 'temporary failure');
 
     await act(async () => {
       ref.current.retry();

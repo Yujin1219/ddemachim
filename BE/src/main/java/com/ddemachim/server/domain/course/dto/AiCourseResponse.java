@@ -16,7 +16,8 @@ public record AiCourseResponse(
         CourseRouteStrategy appliedStrategy,
         List<Long> requiredPlaceIds,
         List<Long> excludedCandidatePlaceIds,
-        List<Stop> stops) {
+        List<Stop> stops,
+        CoursePreviewResponse preview) {
 
     public record Stop(
             Integer sequence,

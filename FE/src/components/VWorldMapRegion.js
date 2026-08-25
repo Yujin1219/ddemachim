@@ -1,5 +1,16 @@
 import { createElement } from 'react';
 
+export function NavigationLocationButton({ following, onClick, disabled = false }) {
+  return createElement('button', {
+    className: `vworld-navigation-location${following ? ' is-following' : ' is-paused'}`,
+    type: 'button',
+    onClick,
+    disabled,
+    'aria-label': following ? '현재 위치 자동 추적 중' : '현재 위치로 돌아가서 자동 추적 시작',
+    'aria-pressed': following,
+  }, createElement('span', { 'aria-hidden': 'true' }, '⌖'));
+}
+
 export default function VWorldMapRegion({
   ariaLabel,
   children,

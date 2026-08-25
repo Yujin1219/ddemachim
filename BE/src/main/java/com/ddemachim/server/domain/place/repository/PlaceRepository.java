@@ -2,6 +2,7 @@ package com.ddemachim.server.domain.place.repository;
 
 import com.ddemachim.server.domain.place.entity.Place;
 import java.util.List;
+import java.util.Optional;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.JpaRepository;
@@ -9,6 +10,8 @@ import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 
 public interface PlaceRepository extends JpaRepository<Place, Long> {
+
+    Optional<Place> findFirstByNameIgnoreCaseAndLocationIsNotNullOrderByIdAsc(String name);
 
     @Query(
             """

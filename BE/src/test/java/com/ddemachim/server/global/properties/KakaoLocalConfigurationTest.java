@@ -18,7 +18,7 @@ class KakaoLocalConfigurationTest {
         propertySources.addFirst(new MapPropertySource(
                 "test-environment", Map.of("KAKAO_REST_API_KEY", "test-kakao-key")));
         new YamlPropertySourceLoader()
-                .load("application", new FileSystemResource("src/main/resources/application.yml"))
+                .load("application", new FileSystemResource("src/main/resources/application.yaml"))
                 .forEach(propertySources::addLast);
 
         PropertySourcesPropertyResolver resolver = new PropertySourcesPropertyResolver(propertySources);

@@ -19,6 +19,7 @@ import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestBody;
+import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
 @Tag(name = "코스 장바구니(Course Basket)", description = "코스 후보 장소 관리 API")
@@ -49,8 +50,9 @@ public class CourseBasketController {
     @PostMapping("/places/{placeId}")
     public ResponseEntity<ApiResponse<CourseBasketItemResponse>> addPlace(
             @AuthenticationPrincipal Long memberId,
-            @Parameter(description = "담을 장소 id") @PathVariable Long placeId) {
-        CourseBasketService.AddResult result = courseBasketService.addPlace(memberId, placeId);
+            @Parameter(description = "담을 장소 id") @PathVariable Long placeId,
+            @RequestParam(required = false) String imageUrl) {
+        CourseBasketService.AddResult result = courseBasketService.addPlace(memberId, placeId, imageUrl);
         HttpStatus status = result.isCreated() ? HttpStatus.CREATED : HttpStatus.OK;
         return ResponseEntity.status(status).body(ApiResponse.onSuccess(result.item()));
     }

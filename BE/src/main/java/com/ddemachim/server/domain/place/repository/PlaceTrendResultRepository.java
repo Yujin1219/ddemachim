@@ -18,14 +18,12 @@ public interface PlaceTrendResultRepository extends JpaRepository<PlaceTrendResu
             left join fetch place.category
             join result.run run
             where run.status = com.ddemachim.server.domain.place.enums.BlogTrendRunStatus.SUCCESS
-              and result.expiresAt > CURRENT_TIMESTAMP
               and run.runWeek = (
                   select max(latestRun.runWeek)
                   from PlaceTrendResult latestResult
                   join latestResult.run latestRun
                   where latestResult.place.id = result.place.id
                     and latestRun.status = com.ddemachim.server.domain.place.enums.BlogTrendRunStatus.SUCCESS
-                    and latestResult.expiresAt > CURRENT_TIMESTAMP
               )
             order by
                 case when result.status = com.ddemachim.server.domain.place.enums.PlaceTrendStatus.TRENDING
@@ -35,7 +33,7 @@ public interface PlaceTrendResultRepository extends JpaRepository<PlaceTrendResu
                 result.measuredAt desc,
                 result.place.id asc
             """)
-    List<PlaceTrendResult> findLatestVisibleResults(Pageable pageable);
+    List<PlaceTrendResult> findLatestStoredResults(Pageable pageable);
 
     @Query(
             """

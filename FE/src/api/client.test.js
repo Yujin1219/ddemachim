@@ -103,6 +103,35 @@ test('sendAiGuideMessage posts the bounded chat contract with an optional JWT', 
   }
 });
 
+test('createAiCoursePreview submits the confirmed structured proposal', async () => {
+  const client = await import('./client.js');
+  const originalFetch = globalThis.fetch;
+  let request;
+  const proposal = {
+    date: '2026-08-24',
+    startTime: '11:00',
+    startLocation: { latitude: 37.5759, longitude: 126.9768, name: '경복궁역' },
+    availableMinutes: 240,
+    requiredPlaceIds: [],
+    candidatePlaceIds: [11, 12, 13],
+    routePreference: 'FAST',
+    schedulePreference: 'BALANCED',
+  };
+  globalThis.fetch = async (url, options) => {
+    request = { url, options };
+    return successResponse({ preview: { options: [] } });
+  };
+
+  try {
+    await client.createAiCoursePreview(proposal);
+    assert.equal(request.url, '/api/v1/ai-courses/preview');
+    assert.equal(request.options.method, 'POST');
+    assert.deepEqual(JSON.parse(request.options.body), proposal);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
 test('AI guide quota errors preserve transport details and provide actionable guidance', async () => {
   const client = await import('./client.js');
   const originalFetch = globalThis.fetch;
@@ -234,6 +263,74 @@ test('fetchPlaceTrends requests the default latest-trend limit and preserves abo
   }
 });
 
+test('fetchFilmingWorks forwards a keyword for server-side catalog search', async () => {
+  const client = await import('./client.js');
+  const originalFetch = globalThis.fetch;
+  const controller = new AbortController();
+  let request;
+  globalThis.fetch = async (url, options) => {
+    request = { url, options };
+    return successResponse({ content: [] });
+  };
+
+  try {
+    await client.fetchFilmingWorks({
+      keyword: '오수재',
+      page: 0,
+      size: 50,
+      signal: controller.signal,
+    });
+    const url = new URL(request.url, 'https://ddemachim.test');
+
+    assert.equal(url.pathname, '/api/media-contents/filming-works');
+    assert.deepEqual(Object.fromEntries(url.searchParams), {
+      keyword: '오수재',
+      page: '0',
+      size: '50',
+    });
+    assert.equal(request.options.signal, controller.signal);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test('fetchFilmingLocation requests one scene by its filming location id', async () => {
+  const client = await import('./client.js');
+  assert.equal(typeof client.fetchFilmingLocation, 'function', 'filming location detail API function must exist');
+
+  const originalFetch = globalThis.fetch;
+  const controller = new AbortController();
+  let request;
+  const detail = {
+    id: 834,
+    placeId: 970,
+    placeName: '경희궁3길',
+    contentType: 'DRAMA',
+    mediaContent: {
+      id: 274,
+      mediaType: 'tv',
+      title: '키스 식스 센스',
+      releaseDate: '2022-05-25',
+    },
+    sceneDescription: '두 주인공이 데이트를 마치고 골목을 함께 걷는 장면',
+  };
+  globalThis.fetch = async (url, options) => {
+    request = { url, options };
+    return successResponse(detail);
+  };
+
+  try {
+    const response = await client.fetchFilmingLocation(834, { signal: controller.signal });
+    const url = new URL(request.url, 'https://ddemachim.test');
+
+    assert.equal(url.pathname, '/api/filming-locations/834');
+    assert.equal(request.options.signal, controller.signal);
+    assert.deepEqual(response, detail);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
 test('addKakaoPlaceToCourseBasket sends the frozen authenticated payload', async () => {
   const client = await import('./client.js');
   assert.equal(typeof client.addKakaoPlaceToCourseBasket, 'function', 'Kakao basket API function must exist');
@@ -268,6 +365,7 @@ test('addKakaoPlaceToCourseBasket sends the frozen authenticated payload', async
       latitude: 37.5742,
       phone: '02-123-4567',
       placeUrl: 'https://place.map.kakao.com/18612586',
+      imageUrl: 'https://example.com/event.jpg',
     });
 
     assert.equal(request.url, '/api/course-basket/kakao-places');
@@ -283,8 +381,35 @@ test('addKakaoPlaceToCourseBasket sends the frozen authenticated payload', async
       longitude: 126.9841,
       latitude: 37.5742,
       phone: '02-123-4567',
+      imageUrl: 'https://example.com/event.jpg',
     });
     assert.equal(result.id, 41);
+  } finally {
+    globalThis.fetch = originalFetch;
+    globalThis.window = originalWindow;
+  }
+});
+
+test('addPlaceToCourseBasket sends the optional event representative image', async () => {
+  const client = await import('./client.js');
+  const originalFetch = globalThis.fetch;
+  const originalWindow = globalThis.window;
+  const localStorage = createStorage({ accessToken: 'token-123' });
+  let request;
+  globalThis.window = { localStorage };
+  globalThis.fetch = async (url, options) => {
+    request = { url, options };
+    return new Response(JSON.stringify({ isSuccess: true, result: { id: 41, placeId: 7 } }), {
+      status: 200,
+      headers: { 'Content-Type': 'application/json' },
+    });
+  };
+
+  try {
+    await client.addPlaceToCourseBasket(7, { imageUrl: 'https://example.com/exhibition.jpg' });
+    const url = new URL(request.url, 'https://ddemachim.test');
+    assert.equal(url.pathname, '/api/course-basket/places/7');
+    assert.equal(url.searchParams.get('imageUrl'), 'https://example.com/exhibition.jpg');
   } finally {
     globalThis.fetch = originalFetch;
     globalThis.window = originalWindow;

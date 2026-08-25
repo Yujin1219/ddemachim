@@ -22,6 +22,19 @@ test('falls back to the visible review length when the summary count is invalid'
   );
 });
 
+test('builds the review summary row with a count label and write action state', () => {
+  assert.equal(typeof reviewModel.buildReviewSummaryView, 'function');
+  assert.deepEqual(
+    reviewModel.buildReviewSummaryView({ averageRating: 4.7, reviewCount: 126 }, [], true),
+    {
+      averageRating: 4.7,
+      reviewCount: 126,
+      reviewCountLabel: '126개 후기',
+      canWriteReview: true,
+    },
+  );
+});
+
 test('rejects whitespace-only strings and booleans as review counts', () => {
   const reviews = [{}, {}];
 

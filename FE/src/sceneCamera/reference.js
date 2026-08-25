@@ -1,3 +1,5 @@
+import { resolveFilmingSceneReference } from '../utils/filmingSceneImages.js';
+
 export const LOCAL_REFERENCE_STILLS = Object.freeze({
   1: Object.freeze({
     url: '/assets/scenes/filming-location-1.jpg',
@@ -35,12 +37,38 @@ export function normalizeReferenceStill(value, { origin = globalThis.location?.o
   } catch {
     return null;
   }
-  return { url: value.url, outlineUrl, altText: value.altText.trim(), attribution: value.attribution.trim(), width, height };
+  const defaultOverlay = value.defaultOverlay
+    && Number.isFinite(Number(value.defaultOverlay.x))
+    && Number.isFinite(Number(value.defaultOverlay.y))
+    && Number.isFinite(Number(value.defaultOverlay.scale))
+    && Number(value.defaultOverlay.x) >= -0.5
+    && Number(value.defaultOverlay.x) <= 0.5
+    && Number(value.defaultOverlay.y) >= -0.5
+    && Number(value.defaultOverlay.y) <= 0.5
+    && Number(value.defaultOverlay.scale) >= 0.5
+    && Number(value.defaultOverlay.scale) <= 2
+      ? {
+          x: Number(value.defaultOverlay.x),
+          y: Number(value.defaultOverlay.y),
+          scale: Number(value.defaultOverlay.scale),
+        }
+      : null;
+  return {
+    url: value.url,
+    outlineUrl,
+    altText: value.altText.trim(),
+    attribution: value.attribution.trim(),
+    width,
+    height,
+    ...(defaultOverlay ? { defaultOverlay } : {}),
+  };
 }
 
 export function resolveReferenceStill(id, map = LOCAL_REFERENCE_STILLS, options) {
   if (!id) return null;
-  return normalizeReferenceStill(map[1], options);
+  const mappedReference = map[id];
+  const demoReference = map === LOCAL_REFERENCE_STILLS ? resolveFilmingSceneReference(id) : null;
+  return normalizeReferenceStill(mappedReference || demoReference, options);
 }
 
 function withTimeout(promise, timeoutMs) {

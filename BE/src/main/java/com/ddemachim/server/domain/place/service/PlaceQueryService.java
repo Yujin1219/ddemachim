@@ -18,6 +18,7 @@ import com.ddemachim.server.domain.place.repository.PlaceOperatingHoursRepositor
 import com.ddemachim.server.domain.place.repository.PlaceMenuRepository;
 import com.ddemachim.server.domain.place.repository.PlaceRepository;
 import com.ddemachim.server.domain.place.repository.PlaceTrendResultRepository;
+import java.util.Arrays;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Locale;
@@ -38,10 +39,17 @@ public class PlaceQueryService {
     private static final int MIN_MAP_LIMIT = 1;
     private static final int MAX_MAP_LIMIT = 500;
     private static final int DEFAULT_TREND_LIMIT = 6;
+    private static final int DEMO_MENU_LIMIT = 8;
     private static final int MIN_TREND_LIMIT = 1;
     private static final int MAX_TREND_LIMIT = 50;
     private static final Set<String> FILMING_CONTENT_TYPES = Set.of("DRAMA", "VARIETY", "MOVIE");
     private static final List<String> FILMING_CONTENT_TYPE_ORDER = List.of("DRAMA", "VARIETY", "MOVIE");
+    private static final Set<String> CAFE_MENU_CATEGORIES = Set.of("CAFE", "DESSERT");
+    private static final Set<String> RESTAURANT_MENU_CATEGORIES = Set.of("RESTAURANT");
+    private static final List<String> LEGACY_CAFE_KEYWORDS = List.of(
+            "카페", "커피", "cafe", "coffee", "베이커리", "bakery", "디저트", "dessert",
+            "제과", "브레드", "빵", "티룸", "tearoom", "스타벅스", "투썸", "이디야",
+            "컴포즈", "메가커피", "커핀", "설빙", "배스킨", "쥬시", "스무디", "빙수");
     private final PlaceRepository placeRepository;
     private final PlaceOperatingHoursRepository placeOperatingHoursRepository;
     private final PlaceMenuRepository placeMenuRepository;
@@ -77,17 +85,69 @@ public class PlaceQueryService {
                         .map(PlaceOperatingHoursResponse::from)
                         .toList();
 
-        List<PlaceMenuResponse> menus = placeMenuRepository.findByPlaceIdOrderById(id).stream()
-                .map(PlaceMenuResponse::from)
-                .toList();
+        List<PlaceMenuResponse> menus = menusFor(place);
 
         PlaceTrendResponse trend = findVisibleTrend(id);
         return PlaceDetailResponse.of(place, operatingHours, menus, trend);
     }
 
+    private List<PlaceMenuResponse> menusFor(Place place) {
+        List<PlaceMenuResponse> menus = placeMenuRepository.findByPlaceIdOrderById(place.getId()).stream()
+                .map(PlaceMenuResponse::from)
+                .toList();
+        if (!menus.isEmpty()) {
+            return menus;
+        }
+
+        Set<String> donorCategories = demoMenuCategories(place);
+        if (donorCategories.isEmpty()) {
+            return List.of();
+        }
+
+        List<Long> donorPlaceIds = placeMenuRepository.findDistinctPlaceIdsWithMenusByCategoryCodes(
+                donorCategories,
+                place.getId());
+        if (donorPlaceIds.isEmpty()) {
+            return List.of();
+        }
+
+        int donorIndex = Math.floorMod(Long.hashCode(place.getId()), donorPlaceIds.size());
+        return placeMenuRepository.findByPlaceIdOrderById(donorPlaceIds.get(donorIndex)).stream()
+                .limit(DEMO_MENU_LIMIT)
+                .map(PlaceMenuResponse::from)
+                .toList();
+    }
+
+    private Set<String> demoMenuCategories(Place place) {
+        String categoryCode = place.getCategory() != null ? place.getCategory().getCode() : null;
+        if (categoryCode == null) {
+            return Set.of();
+        }
+        if (CAFE_MENU_CATEGORIES.contains(categoryCode)) {
+            return CAFE_MENU_CATEGORIES;
+        }
+        if (RESTAURANT_MENU_CATEGORIES.contains(categoryCode)) {
+            return RESTAURANT_MENU_CATEGORIES;
+        }
+        if ("ETC".equals(categoryCode) && !hasTag(place, "FILMING_LOCATION")) {
+            return looksLikeCafe(place) ? CAFE_MENU_CATEGORIES : RESTAURANT_MENU_CATEGORIES;
+        }
+        return Set.of();
+    }
+
+    private boolean looksLikeCafe(Place place) {
+        String tags = place.getTags() == null ? "" : String.join(" ", place.getTags());
+        String searchText = (place.getName() + " " + tags).toLowerCase(Locale.ROOT);
+        return LEGACY_CAFE_KEYWORDS.stream().anyMatch(searchText::contains);
+    }
+
+    private boolean hasTag(Place place, String expectedTag) {
+        return place.getTags() != null && Arrays.asList(place.getTags()).contains(expectedTag);
+    }
+
     public List<PlaceTrendSummaryResponse> getTrends(Integer limit) {
         int safeLimit = normalizeTrendLimit(limit);
-        List<PlaceTrendResult> results = placeTrendResultRepository.findLatestVisibleResults(
+        List<PlaceTrendResult> results = placeTrendResultRepository.findLatestStoredResults(
                 org.springframework.data.domain.PageRequest.of(0, safeLimit));
 
         return results.stream()
