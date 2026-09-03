@@ -47,7 +47,7 @@ ddemachim:
   data-pipeline:
     scheduler:
       enabled: ${DATA_PIPELINE_SCHEDULER_ENABLED:false}
-      working-directory: ${DATA_PIPELINE_PATH:../data-pipeline}
+      working-directory: ${DATA_PIPELINE_PATH:data-pipeline}
       timeout: 30m
       zone: Asia/Seoul
 

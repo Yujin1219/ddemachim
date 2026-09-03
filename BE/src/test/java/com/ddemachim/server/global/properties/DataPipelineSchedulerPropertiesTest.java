@@ -15,7 +15,7 @@ class DataPipelineSchedulerPropertiesTest {
 
         assertThat(properties.isEnabled()).isFalse();
         assertThat(properties.getPythonExecutable()).isNotBlank();
-        assertThat(properties.getWorkingDirectory()).isEqualTo(Path.of("..", "data-pipeline"));
+        assertThat(properties.getWorkingDirectory()).isEqualTo(Path.of("data-pipeline"));
         assertThat(properties.getTimeout()).isEqualTo(Duration.ofMinutes(30));
         assertThat(properties.getZone()).isEqualTo("Asia/Seoul");
         assertThat(properties.getTourApiEvents().getScript())

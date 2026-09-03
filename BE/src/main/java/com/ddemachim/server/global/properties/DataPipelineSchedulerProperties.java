@@ -18,7 +18,7 @@ public class DataPipelineSchedulerProperties {
 
     private boolean enabled;
     private String pythonExecutable = defaultPythonExecutable();
-    private Path workingDirectory = Path.of("..", "data-pipeline");
+    private Path workingDirectory = Path.of("data-pipeline");
     private Duration timeout = Duration.ofMinutes(30);
     private String zone = DEFAULT_ZONE;
     private Job tourApiEvents = new Job(
