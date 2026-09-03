@@ -29,10 +29,11 @@ function FakeMap(props) {
 
 test('development route simulation advances once from departure to destination', () => {
   assert.equal(typeof coursePreviewResultsModule.routeSimulationProgress, 'function');
-  assert.equal(coursePreviewResultsModule.routeSimulationProgress(0, 36_000), 0);
-  assert.equal(coursePreviewResultsModule.routeSimulationProgress(18_000, 36_000), 0.5);
-  assert.equal(coursePreviewResultsModule.routeSimulationProgress(36_000, 36_000), 1);
-  assert.equal(coursePreviewResultsModule.routeSimulationProgress(72_000, 36_000), 1);
+  assert.equal(coursePreviewResultsModule.routeSimulationProgress(0), 0);
+  assert.equal(coursePreviewResultsModule.routeSimulationProgress(2_500), 0.5);
+  assert.equal(coursePreviewResultsModule.routeSimulationProgress(4_999) < 1, true);
+  assert.equal(coursePreviewResultsModule.routeSimulationProgress(5_000), 1);
+  assert.equal(coursePreviewResultsModule.routeSimulationProgress(10_000), 1);
 });
 
 test('starts route movement only after the navigation route layer is ready', () => {
@@ -547,6 +548,67 @@ test('passes GPS coordinates and heading metadata from guidance into the navigat
   assert.equal(map.props.userSpeed, 1.2);
   assert.equal(map.props.userLocationAccuracy, 9);
   assert.deepEqual(reportedLocations, [observation.coordinate]);
+});
+
+test('shows arrival first and opens the ordinary place detail only from its button', async () => {
+  const arrivals = [];
+  let renderer;
+  await act(async () => {
+    renderer = create(createElement(CoursePreviewResults, {
+      preview,
+      status: 'success',
+      MapComponent: FakeMap,
+      navigationMode: true,
+      onArrivalPlace: (stop, arrivedAt) => arrivals.push([stop, arrivedAt]),
+      onBack: () => {},
+    }));
+  });
+
+  await act(async () => renderer.root.findByType(CourseNavigationGuidance).props.onArrival(preview.stops[0]));
+
+  assert.equal(arrivals.length, 0);
+  const arrival = renderer.root.findByProps({ className: 'course-navigation-arrival' });
+  assert.equal(textContent(arrival.findByType('h1')), '서울공예박물관');
+
+  await act(async () => arrival.findByProps({ className: 'course-navigation-place-link' }).props.onClick());
+
+  assert.equal(arrivals.length, 1);
+  assert.equal(arrivals[0][0], preview.stops[0]);
+  assert.equal(Number.isFinite(arrivals[0][1]), true);
+  await act(async () => renderer.unmount());
+});
+
+test('puts a detected filming-scene action inside the matching arrival card', async () => {
+  const filmingPlace = { id: 101, name: '서울공예박물관' };
+  const filmingVisits = [];
+  const previewWithPlaceIds = {
+    ...preview,
+    stops: preview.stops.map((stop, index) => ({ ...stop, placeId: index === 0 ? 101 : 202 })),
+  };
+  let renderer;
+
+  await act(async () => {
+    renderer = create(createElement(CoursePreviewResults, {
+      preview: previewWithPlaceIds,
+      status: 'success',
+      MapComponent: FakeMap,
+      navigationMode: true,
+      filmingNotice: filmingPlace,
+      onViewFilming: (place) => filmingVisits.push(place),
+      onBack: () => {},
+    }));
+  });
+
+  assert.equal(renderer.root.findAllByProps({ className: 'course-navigation-filming-prompt' }).length, 0);
+  await act(async () => renderer.root.findByType(CourseNavigationGuidance).props.onArrival(previewWithPlaceIds.stops[0]));
+
+  const arrival = renderer.root.findByProps({ className: 'course-navigation-arrival' });
+  const filmingPrompt = arrival.findByProps({ className: 'course-navigation-filming-prompt' });
+  assert.equal(textContent(filmingPrompt).includes('촬영 장면이 있어요'), true);
+
+  await act(async () => filmingPrompt.findByType('button').props.onClick());
+  assert.deepEqual(filmingVisits, [filmingPlace]);
+  await act(async () => renderer.unmount());
 });
 
 test('renders FAST schedule, authoritative hours, incoming legs, WALK steps, and map geometry', async () => {

@@ -58,3 +58,15 @@ BE/src/main/resources/application-local.properties
 *.log
 *.tmp
 *.swp
+
+# ==============================
+# AI coding assistant artifacts
+# ==============================
+.claude/
+.codex/
+.agents/
+.codex-ppt-work/
+docs/superpowers/
+**/CLAUDE.md
+**/AGENTS.md
+*.inspect.ndjson

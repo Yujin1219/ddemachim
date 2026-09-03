@@ -4,7 +4,7 @@ import { createElement } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import * as aiGuidePresentation from '../utils/aiGuidePresentation.js';
 
-test('AI 가이드의 새 답변은 긴 추천 결과의 끝이 아닌 답변 시작을 보여준다', () => {
+test('AI 가이드의 새 답변은 채팅창 내부 좌표의 답변 시작을 보여준다', () => {
   assert.equal(typeof aiGuidePresentation.scrollAiGuideToLatest, 'function');
 
   const scrollContainer = {
@@ -14,9 +14,16 @@ test('AI 가이드의 새 답변은 긴 추천 결과의 끝이 아닌 답변 �
     scrollTo(options) {
       this.lastScrollOptions = options;
     },
+    getBoundingClientRect() {
+      return { top: 220 };
+    },
   };
   const latestMessage = {
+    offsetTop: 240,
     offsetHeight: 140,
+    getBoundingClientRect() {
+      return { top: 240 };
+    },
     scrollIntoView(options) {
       this.lastScrollOptions = options;
     },
@@ -26,8 +33,8 @@ test('AI 가이드의 새 답변은 긴 추천 결과의 끝이 아닌 답변 �
   aiGuidePresentation.scrollAiGuideToLatest(scrollContainer, latestMessage, bottomSpacer);
 
   assert.equal(bottomSpacer.style.height, '360px');
-  assert.deepEqual(latestMessage.lastScrollOptions, { block: 'start', behavior: 'smooth' });
-  assert.equal(scrollContainer.lastScrollOptions, undefined);
+  assert.equal(latestMessage.lastScrollOptions, undefined);
+  assert.deepEqual(scrollContainer.lastScrollOptions, { top: 20, behavior: 'smooth' });
   assert.equal(scrollContainer.scrollTop, 0);
 });
 

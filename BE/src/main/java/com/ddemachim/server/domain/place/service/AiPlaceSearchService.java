@@ -123,7 +123,8 @@ public class AiPlaceSearchService {
                         crowding.get(row.getPlaceId()), origin, at.toLocalTime()))
                 .filter(Objects::nonNull)
                 .filter(place -> !Boolean.TRUE.equals(condition.openNow()) || Boolean.TRUE.equals(place.open()))
-                .sorted(Comparator.comparingInt((NearbyPlace place) -> rank(place, condition.query()))
+                .sorted(Comparator.comparingInt((NearbyPlace place) -> imageRank(places.get(place.placeId())))
+                        .thenComparingInt(place -> rank(place, condition.query()))
                         .thenComparingInt(NearbyPlace::walkingMinutes)
                         .thenComparingLong(NearbyPlace::placeId))
                 .limit(limit)
@@ -183,6 +184,10 @@ public class AiPlaceSearchService {
         if (StringUtils.hasText(query) && (place.name().contains(query)
                 || place.tags().stream().anyMatch(tag -> tag.contains(query)))) score -= 10;
         return score;
+    }
+
+    private static int imageRank(Place place) {
+        return place != null && StringUtils.hasText(place.getImageUrl()) ? 0 : 1;
     }
 
     private SearchPlace toSearchPlace(Place place, PlaceOperatingHours hours) {

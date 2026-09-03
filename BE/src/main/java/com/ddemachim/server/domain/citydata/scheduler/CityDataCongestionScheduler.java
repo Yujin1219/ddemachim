@@ -4,10 +4,12 @@ import com.ddemachim.server.domain.citydata.service.CityDataCongestionService;
 import java.util.concurrent.atomic.AtomicBoolean;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
 
 @Component
+@ConditionalOnProperty(prefix = "ddemachim.citydata.seoul", name = "enabled", havingValue = "true")
 public class CityDataCongestionScheduler {
 
     private static final Logger log = LoggerFactory.getLogger(CityDataCongestionScheduler.class);

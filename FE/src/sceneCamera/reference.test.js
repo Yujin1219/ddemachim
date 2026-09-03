@@ -27,7 +27,7 @@ test('resolves filming location 1 to its bundled same-origin reference still', a
 test('resolves any numeric filming location to the same stable demo still used by its card', () => {
   assert.deepEqual(resolveReferenceStill('834', LOCAL_REFERENCE_STILLS, { origin: 'https://example.test' }), {
     url: '/assets/scenes/demo/scene-01.jpg',
-    outlineUrl: null,
+    outlineUrl: '/assets/scenes/demo/scene-01-outline.svg',
     altText: '촬영 장면 참고 이미지',
     attribution: '사용자 제공 데모 장면',
     width: 960,

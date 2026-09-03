@@ -1,17 +1,46 @@
 export const FILMING_SCENE_DEMO_REFERENCES = [
-  { url: '/assets/scenes/demo/scene-01.jpg', width: 960, height: 467 },
-  { url: '/assets/scenes/demo/scene-02.jpg', width: 740, height: 480 },
-  { url: '/assets/scenes/demo/scene-03.jpg', width: 730, height: 486 },
-  { url: '/assets/scenes/demo/scene-04.jpg', width: 919, height: 512 },
-  { url: '/assets/scenes/demo/scene-05.jpg', width: 617, height: 266 },
-  { url: '/assets/scenes/demo/scene-06.jpg', width: 960, height: 456 },
+  {
+    url: '/assets/scenes/demo/scene-01.jpg',
+    outlineUrl: '/assets/scenes/demo/scene-01-outline.svg',
+    width: 960,
+    height: 467,
+  },
+  {
+    url: '/assets/scenes/demo/scene-02.jpg',
+    outlineUrl: '/assets/scenes/demo/scene-02-outline.png',
+    width: 740,
+    height: 480,
+  },
+  {
+    url: '/assets/scenes/demo/scene-03.jpg',
+    outlineUrl: '/assets/scenes/demo/scene-03-outline.png',
+    width: 730,
+    height: 486,
+  },
+  {
+    url: '/assets/scenes/demo/scene-04.jpg',
+    outlineUrl: '/assets/scenes/demo/scene-04-outline.png',
+    width: 919,
+    height: 512,
+  },
+  {
+    url: '/assets/scenes/demo/scene-05.jpg',
+    outlineUrl: '/assets/scenes/demo/scene-05-outline.png',
+    width: 617,
+    height: 266,
+  },
+  {
+    url: '/assets/scenes/demo/scene-06.jpg',
+    outlineUrl: '/assets/scenes/demo/scene-06-outline.png',
+    width: 960,
+    height: 456,
+  },
 ];
 
 export const FILMING_SCENE_DEMO_IMAGES = FILMING_SCENE_DEMO_REFERENCES.map(({ url }) => url);
 
 const FILMING_SCENE_REFERENCE_OVERRIDES = Object.freeze({
   78: Object.freeze({
-    outlineUrl: '/assets/scenes/demo/scene-01-outline.svg',
     defaultOverlay: Object.freeze({ x: -0.08, y: 0, scale: 1 }),
   }),
 });

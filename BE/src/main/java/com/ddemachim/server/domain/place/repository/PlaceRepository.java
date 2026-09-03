@@ -109,7 +109,7 @@ public interface PlaceRepository extends JpaRepository<Place, Long> {
 
     @Query(
             value = """
-                    select distinct p.*
+                    select p.*
                     from place p
                     left join place_category c on p.category_id = c.id
                     where p.location is not null
@@ -127,7 +127,9 @@ public interface PlaceRepository extends JpaRepository<Place, Long> {
                         or p.name ilike concat('%', cast(:query as text), '%')
                         or p.description ilike concat('%', cast(:query as text), '%')
                         or array_to_string(p.tags, ' ') ilike concat('%', cast(:query as text), '%'))
-                    order by p.id
+                    order by
+                        case when nullif(trim(p.image_url), '') is not null then 0 else 1 end,
+                        p.id
                     limit :limit
                     """,
             nativeQuery = true)
@@ -160,7 +162,10 @@ public interface PlaceRepository extends JpaRepository<Place, Long> {
                         cast(ST_SetSRID(ST_MakePoint(:longitude, :latitude), 4326) as geography),
                         :radiusMeters
                     )
-                    order by "distanceMeters", p.id
+                    order by
+                        case when nullif(trim(p.image_url), '') is not null then 0 else 1 end,
+                        "distanceMeters",
+                        p.id
                     limit :limit
                     """,
             nativeQuery = true)

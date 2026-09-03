@@ -3,6 +3,7 @@ package com.ddemachim.server.global.config;
 import com.ddemachim.server.global.auth.security.CustomAccessDeniedHandler;
 import com.ddemachim.server.global.auth.security.CustomJwtAuthenticationEntryPoint;
 import com.ddemachim.server.global.auth.jwt.filter.JwtAuthenticationFilter;
+import com.ddemachim.server.global.ratelimit.ExternalApiRateLimitFilter;
 import java.util.Arrays;
 import java.util.List;
 import lombok.RequiredArgsConstructor;
@@ -29,6 +30,7 @@ public class SecurityConfig {
     private final CustomJwtAuthenticationEntryPoint authenticationEntryPoint;
     private final CustomAccessDeniedHandler accessDeniedHandler;
     private final JwtAuthenticationFilter jwtAuthenticationFilter;
+    private final ExternalApiRateLimitFilter externalApiRateLimitFilter;
 
     @Bean
     public SecurityFilterChain securityFilterChain(HttpSecurity http) throws Exception {
@@ -42,7 +44,18 @@ public class SecurityConfig {
                         .authenticationEntryPoint(authenticationEntryPoint)
                         .accessDeniedHandler(accessDeniedHandler))
                 .addFilterBefore(jwtAuthenticationFilter, UsernamePasswordAuthenticationFilter.class)
+                .addFilterAfter(externalApiRateLimitFilter, JwtAuthenticationFilter.class)
                 .authorizeHttpRequests(auth -> auth
+                        .requestMatchers("/mcp", "/mcp/**")
+                        .denyAll()
+                        .requestMatchers("/api/v1/ai-guide/**")
+                        .authenticated()
+                        .requestMatchers("/api/v1/ai-courses/**")
+                        .authenticated()
+                        .requestMatchers("/api/routes/**")
+                        .authenticated()
+                        .requestMatchers("/api/place-search/**")
+                        .authenticated()
                         .requestMatchers("/api/courses/**")
                         .authenticated()
                         .requestMatchers("/api/course-basket/**")

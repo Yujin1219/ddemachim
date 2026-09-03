@@ -85,6 +85,33 @@ class SecurityConfigTest {
     }
 
     @Test
+    void 토큰이_없으면_외부_API를_사용하는_기능을_호출할_수_없다() throws Exception {
+        mockMvc.perform(post("/api/v1/ai-guide/chats")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{}"))
+                .andExpect(status().isUnauthorized());
+        mockMvc.perform(post("/api/v1/ai-courses/preview")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{}"))
+                .andExpect(status().isUnauthorized());
+        mockMvc.perform(post("/api/routes/compare")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{}"))
+                .andExpect(status().isUnauthorized());
+        mockMvc.perform(get("/api/place-search/kakao").queryParam("query", "경복궁"))
+                .andExpect(status().isUnauthorized());
+    }
+
+    @Test
+    void 인증된_사용자도_MCP_HTTP_엔드포인트에_접근할_수_없다() throws Exception {
+        mockMvc.perform(post("/mcp")
+                        .header("Authorization", "Bearer " + validToken())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{}"))
+                .andExpect(status().isForbidden());
+    }
+
+    @Test
     void 코스_장바구니_API의_기존_인증_보호를_유지한다() throws Exception {
         mockMvc.perform(get("/api/course-basket/places"))
                 .andExpect(status().isUnauthorized())

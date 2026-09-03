@@ -99,6 +99,27 @@ public class PlaceRepositoryTest {
         assertThat(result).extracting(Place::getId).containsExactly(filmingPlace.getId());
     }
 
+    @Test
+    void searchForAi_prioritizesPlacesWithRepresentativeImagesBeforeApplyingTheLimit() {
+        Place withoutImage = place("이미지 없는 AI 추천 장소", null);
+        Place withImage = place("이미지 있는 AI 추천 장소", "https://example.com/recommended.jpg");
+        GeometryFactory factory = new GeometryFactory(new PrecisionModel(), 4326);
+        ReflectionTestUtils.setField(withoutImage, "location",
+                factory.createPoint(new Coordinate(126.971, 37.571)));
+        ReflectionTestUtils.setField(withImage, "location",
+                factory.createPoint(new Coordinate(126.972, 37.572)));
+
+        entityManager.persist(withoutImage);
+        entityManager.persist(withImage);
+        entityManager.flush();
+        entityManager.clear();
+
+        var result = placeRepository.searchForAi(null, TEST_DISTRICT, null, 2);
+
+        assertThat(result).extracting(Place::getId)
+                .containsExactly(withImage.getId(), withoutImage.getId());
+    }
+
     private static Place place(String name, String imageUrl) {
         Place place = BeanUtils.instantiateClass(Place.class);
         ReflectionTestUtils.setField(place, "name", name);

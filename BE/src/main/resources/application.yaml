@@ -46,8 +46,8 @@ ddemachim:
 
   data-pipeline:
     scheduler:
-      enabled: true
-      working-directory: /Users/yujin/Project/ddemachim/data-pipeline
+      enabled: ${DATA_PIPELINE_SCHEDULER_ENABLED:false}
+      working-directory: ${DATA_PIPELINE_PATH:../data-pipeline}
       timeout: 30m
       zone: Asia/Seoul
 
@@ -79,8 +79,8 @@ ddemachim:
 
   citydata:
     seoul:
-      enabled: true
-      api-key: ${SEOUL_CITYDATA_API_KEY}
+      enabled: ${SEOUL_CITYDATA_ENABLED:false}
+      api-key: ${SEOUL_CITYDATA_API_KEY:}
       base-url: http://openapi.seoul.go.kr:8088
       refresh-delay-millis: 300000
       stale-after: 10m
@@ -98,6 +98,9 @@ ddemachim:
       zone: Asia/Seoul
       maximum-viewport-grids: 5000
       maximum-batch-points: 300
+
+  api-rate-limit:
+    requests-per-minute: ${API_RATE_LIMIT_REQUESTS_PER_MINUTE:30}
 
 jwt:
   secret: ${JWT_SECRET}

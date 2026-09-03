@@ -1,11 +1,25 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useReducer, useRef, useState } from 'react';
 import { AnimatePresence, motion, useReducedMotion } from 'motion/react';
-import { CalendarDays, Camera, Check, ChevronLeft, ChevronRight, CircleDollarSign, CircleHelp, Clapperboard, Clock3, Coffee, ExternalLink, Flame, Globe2, Heart, Image as ImageIcon, Landmark, LocateFixed, Lock, MapPin, Minus, MoreHorizontal, Phone, Plus, RefreshCw, Search, SearchX, SendHorizontal, ShoppingBasket, Trash2, TrendingUp, Trees, UserRound, Utensils, X } from 'lucide-react';
+import { CalendarDays, Camera, Check, ChevronLeft, ChevronRight, CircleDollarSign, Clapperboard, Clock3, Coffee, ExternalLink, Flame, Globe2, Heart, Image as ImageIcon, Landmark, LocateFixed, Lock, MapPin, Minus, Phone, Plus, RefreshCw, Search, SearchX, SendHorizontal, ShoppingBasket, Trash2, TrendingUp, Trees, UserRound, Utensils, X } from 'lucide-react';
 import AppHeader from '../components/AppHeader';
 import AiGuidePlaceRecommendations from '../components/AiGuidePlaceRecommendations.js';
 import AiGuideCourseProposal from '../components/AiGuideCourseProposal.js';
 import BottomNav from '../components/BottomNav';
 import CourseActionButton from '../components/CourseActionButton';
+import {
+  ActionButton,
+  BackHeader,
+  BottomSheet,
+  Chip,
+  DetailContentSheet,
+  IconButton,
+  MapStage,
+  ScreenSection,
+  SearchField,
+  SearchIcon,
+  StatusBanner,
+} from '../components/FlowPrimitives.jsx';
+import { MapLoadingPrompt, MapPermissionPrompt } from '../components/MapPrompts.jsx';
 import PlaceReviewPreview from '../components/PlaceReviewPreview';
 import PlaceTrendSection, { getPlaceTrendCardProps, getVisiblePlaceTrends } from '../components/PlaceTrendSection.js';
 import SelectedPlaceRoutePanel, { selectedPlaceDetailTarget } from '../components/SelectedPlaceRoutePanel.jsx';
@@ -34,7 +48,6 @@ import {
   fetchKakaoPlaces,
   fetchMapPlaces,
   fetchMockCrowdingGrids,
-  fetchMyProfile,
   fetchMediaContent,
   fetchMediaContents,
   fetchMediaFilmingLocations,
@@ -44,11 +57,9 @@ import {
   fetchPlaces,
   getAccessToken,
   getAiGuideErrorPresentation,
-  getUser,
   login,
   replanCourse,
   saveAuth,
-  saveUser,
   sendAiGuideMessage,
   startCourse,
   signup,
@@ -115,9 +126,17 @@ import { useCurrentLocation } from '../hooks/useCurrentLocation.js';
 import { useTransientNotice } from '../hooks/useTransientNotice.js';
 import { buildAiGuidePlacePresentation, renderAiGuideMarkdown, scrollAiGuideToLatest } from '../utils/aiGuidePresentation.js';
 import { loadAiGuideSession, saveAiGuideSession } from '../utils/aiGuideSession.js';
+import {
+  aiCourseProposalPlaceIds,
+  createSelectedAiCourseProposal,
+  mergeAiGuideRecommendedPlaces,
+  missingAiCourseProposalPlaceIds,
+  resolveAiCourseCandidateSelection,
+} from '../utils/aiGuideCourseSelection.js';
 import { createDeferredScrollRestoration } from '../utils/scrollRestoration.js';
 import {
   createInitialMapHomeInteraction,
+  mapDetailCameraState,
   mapHomePlaceCameraState,
   mapHomeRouteFitKey,
   mapHomeRouteFitPadding,
@@ -141,50 +160,17 @@ import { SceneCameraScreen, SceneDetailCameraPanel, SceneShotResultScreen } from
 import { SceneDetailHeading } from '../sceneCamera/ui.js';
 import { createSceneNavigationTarget, sceneRouteMotion } from '../sceneCamera/flow.js';
 import { guardSceneRouteHash } from '../sceneCamera/routes.js';
+import { useMyProfile } from '../hooks/useMyProfile.js';
+import { profileInitial } from '../utils/memberProfile.js';
+import {
+  detailReturnRouteFor,
+  detailReturnRoutes,
+  rememberDetailReturnRoute,
+  rootRoutes,
+  routeGroups,
+  routes,
+} from '../utils/routeRegistry.js';
 
-const routeGroups = {
-  auth: ['splash', 'intro', 'login', 'signup', 'onboarding', 'onboarding-schedule', 'onboarding-permissions'],
-  discovery: ['map', 'explore', 'place', 'event-detail', 'search', 'search-empty', 'saved', 'trending', 'filming-locations', 'popups', 'live-talk', 'ai-guide'],
-  course: ['course-home', 'course-conditions', 'course-place-times', 'basket', 'basket-natural', 'basket-glass', 'compare', 'route-map', 'saved-course-preview'],
-  travel: ['progress', 'arrival', 'navigation', 'reroute', 'reroute-applied', 'transit', 'taxi', 'nearby', 'nearby-added', 'nearby-arrival', 'active-course', 'next-stop', 'gps-error', 'taxi-handoff', 'offline', 'closed-place', 'stop-course'],
-  filming: ['onsite', 'filming-work', 'filming-content', 'nearby-filming', 'camera', 'scene-list', 'scene-detail', 'shot-result', 'photo-saved', 'image-missing', 'filming-restricted', 'report'],
-  record: ['complete', 'record', 'saved-courses', 'record-detail', 'write-review', 'reviews', 'review-detail'],
-  my: ['my', 'location-permission', 'notifications', 'profile-edit', 'privacy', 'app-permissions', 'support', 'loading', 'server-error'],
-};
-
-const detailReturnRoutes = new Set(['place', 'event-detail', 'filming-work']);
-const DETAIL_RETURN_STORAGE_KEY = 'ddemachim.detail-return-routes';
-
-function readDetailReturnRoutes() {
-  try {
-    const stored = JSON.parse(window.sessionStorage.getItem(DETAIL_RETURN_STORAGE_KEY) || '{}');
-    return stored && typeof stored === 'object' && !Array.isArray(stored) ? stored : {};
-  } catch {
-    return {};
-  }
-}
-
-function rememberDetailReturnRoute(detailHash, returnHash) {
-  if (!detailHash?.startsWith('#/') || !returnHash?.startsWith('#/') || detailHash === returnHash) return;
-  try {
-    window.sessionStorage.setItem(DETAIL_RETURN_STORAGE_KEY, JSON.stringify({
-      ...readDetailReturnRoutes(),
-      [detailHash]: returnHash,
-    }));
-  } catch {
-    // 세션 저장소를 사용할 수 없는 환경에서는 각 상세 화면의 기본 경로를 사용한다.
-  }
-}
-
-function detailReturnRouteFor(detailHash) {
-  const returnHash = readDetailReturnRoutes()[detailHash];
-  if (typeof returnHash !== 'string' || !returnHash.startsWith('#/') || returnHash === detailHash) return null;
-  const [screen, id] = returnHash.replace(/^#\/?/, '').split('/');
-  return routes.has(screen) ? { screen, id: id || null } : null;
-}
-
-const routes = new Set(Object.values(routeGroups).flat());
-const rootRoutes = { map: 'map', explore: 'explore', assistant: 'ai-guide', course: 'course-home', my: 'my' };
 const images = {
   cafe: '/assets/figma/explore-cafe.jpeg',
   mapPlace: '/assets/figma/map-place.jpeg',
@@ -228,10 +214,6 @@ function consumeKakaoMapTarget() {
   } catch {
     return null;
   }
-}
-
-function SearchIcon() {
-  return <Search aria-hidden="true" size={20} strokeWidth={2} />;
 }
 
 const PLACE_TREND_MOCK_FIXTURE = {
@@ -844,10 +826,6 @@ function ExploreCoverflow({
   );
 }
 
-function ActionButton({ children, onClick, tone = 'primary', disabled = false, className = '', type = 'button', ...buttonProps }) {
-  return <button className={`ui-button ${tone} ${className}`} disabled={disabled} onClick={onClick} type={type} {...buttonProps}>{children}</button>;
-}
-
 function PlaceBasketAction({ placeId, imageUrl, basketItems, onAdded, onRemoved, onAuthRequired, onRefresh }) {
   const [status, setStatus] = useState('idle');
   const [localBasketItem, setLocalBasketItem] = useState(null);
@@ -1059,43 +1037,6 @@ function KakaoPlaceActions({ place, basketItems, onAdded, onAuthRequired, onRefr
   );
 }
 
-function IconButton({ label, children, onClick, className = '' }) {
-  const icons = { 이전: ChevronLeft, 더보기: MoreHorizontal, 저장: Heart, 저장됨: Heart, '장소 저장': Heart, '장소 저장 취소': Heart, 닫기: X, 도움말: CircleHelp };
-  const Icon = icons[label];
-  const isSaved = label === '저장됨' || label === '장소 저장 취소';
-  return <button className={`icon-button ${className}`} onClick={onClick} type="button" aria-label={label} title={label}>{Icon ? <Icon aria-hidden="true" size={20} strokeWidth={2} fill={isSaved ? 'currentColor' : 'none'} /> : children}</button>;
-}
-
-function BackHeader({ title, onBack, action, actionLabel = '더보기' }) {
-  return <header className="screen-header">
-    <IconButton label="이전" onClick={onBack}>‹</IconButton>
-    <h1>{title}</h1>
-    {action ? <IconButton label={actionLabel} onClick={action}>•••</IconButton> : <span className="header-space" />}
-  </header>;
-}
-
-function SearchField({ value, onChange, onSubmit, onClear, clearLabel = '검색어 지우기', placeholder, autoFocus = false, inputRef, onKeyDown }) {
-  return (
-    <form className="search-field" onSubmit={(event) => { event.preventDefault(); onSubmit?.(); }}>
-      <button className="search-field-icon" type="submit" aria-label="검색"><SearchIcon /></button>
-      <input aria-label={placeholder} autoFocus={autoFocus} ref={inputRef} value={value} onChange={(event) => onChange(event.target.value)} onKeyDown={onKeyDown} placeholder={placeholder} />
-      {value && <button type="button" className="clear-search" aria-label={clearLabel} onClick={() => onClear ? onClear() : onChange('')}><X aria-hidden="true" size={14} strokeWidth={2.4} /></button>}
-    </form>
-  );
-}
-
-function Chip({ children, active = false, onClick, tone = '', current = false }) {
-  const className = `ui-chip ${active ? 'is-active' : ''} ${tone}`;
-  return onClick ? <button type="button" className={className} onClick={onClick} aria-pressed={active} aria-current={current ? 'true' : undefined}>{children}</button> : <span className={className}>{children}</span>;
-}
-
-function StatusBanner({ tone = 'blue', title, copy, action, onAction }) {
-  return <section className={`status-banner ${tone}`}>
-    <div><strong>{title}</strong>{copy && <p>{copy}</p>}</div>
-    {action && (onAction ? <button onClick={onAction} type="button">{action}</button> : <span className="status-banner-note">{action}</span>)}
-  </section>;
-}
-
 function PlaceRow({ place, onClick, action, onAction, compactSearch = false, hideMeta = false }) {
   const isKakaoResult = place.externalSource === 'KAKAO';
   const media = place.image === images.myMap
@@ -1185,39 +1126,6 @@ function PlaceCard({ place, onClick, index = 0 }) {
       </div>
     </motion.button>
   );
-}
-
-function ScreenSection({ title, subtitle, action, onAction, children }) {
-  return <section className="content-section">
-    <div className="section-title-row"><h2>{title}</h2>{action && (onAction ? <button type="button" onClick={onAction}>{action}</button> : <span className="section-action-note">{action}</span>)}</div>
-    {subtitle && <p className="section-subtitle">{subtitle}</p>}
-    {children}
-  </section>;
-}
-
-function MapStage({ children, variant = 'home', mapProps = {} }) {
-  const mapLabel = variant === 'navigation' ? '경로 안내 지도' : variant === 'complete' ? '완료한 코스 지도' : '서울과 주변 지도';
-  return <div className={`map-stage ${variant}`}><VWorldMap ariaLabel={mapLabel} style={{ position: 'absolute', inset: 0, width: '100%', height: '100%' }} {...mapProps} />{children}</div>;
-}
-
-function BottomSheet({ children, className = '', animated = false }) {
-  const sheetClassName = `bottom-sheet ${className} ${animated ? 'motion-depth-sheet' : ''}`;
-  const sheetMotion = {
-    initial: { opacity: 0, transform: 'perspective(1000px) translateY(42px) rotateX(-6deg) translateZ(-24px) scale(.985)' },
-    animate: { opacity: 1, transform: 'perspective(1000px) translateY(0px) rotateX(0deg) translateZ(0px) scale(1)' },
-    transition: { duration: 0.28, delay: 0.08, ease: [0.23, 1, 0.32, 1] },
-  };
-
-  if (animated) {
-    return <motion.section className={sheetClassName} {...sheetMotion}><span className="sheet-handle" />{children}</motion.section>;
-  }
-
-  return <section className={sheetClassName}><span className="sheet-handle" />{children}</section>;
-}
-
-function DetailContentSheet({ children, className = '' }) {
-  const sheetClassName = ['detail-content-sheet', className].filter(Boolean).join(' ');
-  return <div className={sheetClassName}>{children}</div>;
 }
 
 function DetailHeroControls({ onBack, onSave, saveLabel = '장소 저장' }) {
@@ -1369,8 +1277,7 @@ function DetailMapSection({ title, meta, ariaLabel, places, userLocation, placeM
           loadPlacesInBounds={loadMapPlaces}
           placeMarkerLabel={placeMarkerLabel}
           clusterPlaces={false}
-          fitPlaceMarkers
-          fitUserLocation
+          {...mapDetailCameraState()}
           userLocation={userLocation}
           placeRequestKey={placeRequestKey}
         />
@@ -3520,6 +3427,7 @@ function AiGuide({ go, onCourseGenerated }) {
   const [error, setError] = useState('');
   const [currentLocation, setCurrentLocation] = useState(null);
   const [previousResponseId, setPreviousResponseId] = useState(() => restoredSessionRef.current.previousResponseId || null);
+  const [courseProposalSelection, setCourseProposalSelection] = useState(null);
   const requestControllerRef = useRef(null);
   const chatScrollRef = useRef(null);
   const latestMessageRef = useRef(null);
@@ -3527,6 +3435,24 @@ function AiGuide({ go, onCourseGenerated }) {
   const isLoading = status === 'loading';
   const latestAssistantMessage = [...messages].reverse().find((message) => message.role === 'assistant') || null;
   const pendingProposalMessage = latestAssistantMessage?.courseProposal ? latestAssistantMessage : null;
+  const pendingProposalPlaceKey = pendingProposalMessage
+    ? aiCourseProposalPlaceIds(pendingProposalMessage.courseProposal).join(',')
+    : '';
+  const knownProposalPlaceKey = (pendingProposalMessage?.recommendedPlaces || [])
+    .map((place) => Number(place?.id))
+    .filter((id) => Number.isSafeInteger(id) && id > 0)
+    .sort((left, right) => left - right)
+    .join(',');
+  const selectedCandidatePlaceIds = pendingProposalMessage
+    ? resolveAiCourseCandidateSelection(
+      pendingProposalMessage.courseProposal,
+      pendingProposalMessage.id,
+      courseProposalSelection,
+    )
+    : [];
+  const selectedCourseProposal = pendingProposalMessage
+    ? createSelectedAiCourseProposal(pendingProposalMessage.courseProposal, selectedCandidatePlaceIds)
+    : null;
 
   const generateCourse = async (proposal, confirmationMessage = null) => {
     if (!proposal || isLoading) return;
@@ -3570,6 +3496,34 @@ function AiGuide({ go, onCourseGenerated }) {
   }, [messages, previousResponseId]);
 
   useEffect(() => {
+    if (!pendingProposalMessage?.courseProposal) return undefined;
+    const missingPlaceIds = missingAiCourseProposalPlaceIds(
+      pendingProposalMessage.courseProposal,
+      pendingProposalMessage.recommendedPlaces,
+    );
+    if (missingPlaceIds.length === 0) return undefined;
+
+    const controller = new AbortController();
+    Promise.allSettled(missingPlaceIds.map((placeId) => fetchPlace(placeId, { signal: controller.signal })))
+      .then((responses) => {
+        if (controller.signal.aborted) return;
+        const loadedPlaces = responses
+          .filter((response) => response.status === 'fulfilled')
+          .map((response) => response.value)
+          .filter((place) => Number.isSafeInteger(Number(place?.id)));
+        if (loadedPlaces.length === 0) return;
+        setMessages((current) => current.map((item) => item.id === pendingProposalMessage.id
+          ? {
+            ...item,
+            recommendedPlaces: mergeAiGuideRecommendedPlaces(item.recommendedPlaces, loadedPlaces),
+          }
+          : item));
+      });
+
+    return () => controller.abort();
+  }, [pendingProposalMessage?.id, pendingProposalPlaceKey, knownProposalPlaceKey]);
+
+  useEffect(() => {
     if (typeof navigator !== 'undefined' && navigator.geolocation) {
       navigator.geolocation.getCurrentPosition(
         ({ coords }) => setCurrentLocation({ latitude: coords.latitude, longitude: coords.longitude }),
@@ -3586,7 +3540,19 @@ function AiGuide({ go, onCourseGenerated }) {
     if (!message || isLoading) return;
 
     if (pendingProposalMessage?.courseProposal && isAiCourseConfirmation(message)) {
-      await generateCourse(pendingProposalMessage.courseProposal, message);
+      const selectedPlaceCount = new Set([
+        ...(selectedCourseProposal?.requiredPlaceIds || []),
+        ...(selectedCourseProposal?.candidatePlaceIds || []),
+      ]).size;
+      if (selectedPlaceCount === 0) {
+        setError({
+          title: '코스에 포함할 장소를 선택해주세요',
+          message: '추천 목록에서 한 곳 이상 체크한 뒤 다시 만들어달라고 말씀해주세요.',
+          requestMessage: message,
+        });
+        return;
+      }
+      await generateCourse(selectedCourseProposal, message);
       return;
     }
 
@@ -3609,10 +3575,13 @@ function AiGuide({ go, onCourseGenerated }) {
       if (controller.signal.aborted) return;
       const answer = String(result?.answer ?? '').trim();
       if (!answer) throw new Error('AI 가이드가 답변을 보내지 못했어요.');
-      const recommendedPlaceIds = [...new Set((Array.isArray(result?.recommendedPlaceIds) ? result.recommendedPlaceIds : [])
+      const proposalPlaceIds = aiCourseProposalPlaceIds(result?.courseProposal);
+      const responsePlaceIds = (Array.isArray(result?.recommendedPlaceIds) ? result.recommendedPlaceIds : [])
         .map(Number)
         .filter(Number.isSafeInteger)
-        .filter((id) => id > 0))].slice(0, 6);
+        .filter((id) => id > 0);
+      const recommendedPlaceIds = [...new Set([...proposalPlaceIds, ...responsePlaceIds])]
+        .slice(0, Math.max(6, proposalPlaceIds.length));
       const placeResponses = await Promise.allSettled(
         recommendedPlaceIds.map((placeId) => fetchPlace(placeId, { signal: controller.signal })),
       );
@@ -3676,13 +3645,35 @@ function AiGuide({ go, onCourseGenerated }) {
               </div>}
               <AiGuidePlaceRecommendations
                 recommendations={presentation.recommendations}
+                selectablePlaceIds={message.courseProposal && pendingProposalMessage?.id === message.id
+                  ? aiCourseProposalPlaceIds(message.courseProposal)
+                  : []}
+                requiredPlaceIds={message.courseProposal && pendingProposalMessage?.id === message.id
+                  ? message.courseProposal.requiredPlaceIds
+                  : []}
+                selectedPlaceIds={message.courseProposal && pendingProposalMessage?.id === message.id
+                  ? [...(message.courseProposal.requiredPlaceIds || []), ...selectedCandidatePlaceIds]
+                  : []}
+                selectionBusy={isLoading && pendingProposalMessage?.id === message.id}
                 onMapClick={() => go('map')}
                 onPlaceClick={(place) => go('place', place.id)}
+                onPlaceSelectionChange={(placeId, checked) => {
+                  const nextSelection = new Set(selectedCandidatePlaceIds);
+                  if (checked) nextSelection.add(placeId);
+                  else nextSelection.delete(placeId);
+                  setCourseProposalSelection({
+                    messageId: message.id,
+                    candidatePlaceIds: (message.courseProposal?.candidatePlaceIds || [])
+                      .map(Number)
+                      .filter((candidateId) => nextSelection.has(candidateId)),
+                  });
+                }}
               />
               {message.courseProposal && pendingProposalMessage?.id === message.id && <AiGuideCourseProposal
                 proposal={message.courseProposal}
+                selectedCandidatePlaceIds={selectedCandidatePlaceIds}
                 busy={isLoading && pendingProposalMessage?.id === message.id}
-                onConfirm={() => generateCourse(message.courseProposal)}
+                onConfirm={() => generateCourse(selectedCourseProposal)}
               />}
             </div>;
           })}
@@ -4429,12 +4420,10 @@ function NearbyFilmingScreen({ placeId, go }) {
 function SavedCourseScreen({ courseId, go, onAuthRequired, active = false }) {
   const [state, setState] = useState({ detail: null, status: 'loading', error: null });
   const [navigationLocation, setNavigationLocation] = useState(null);
+  const [filmingNotice, setFilmingNotice] = useState(null);
   const [completionState, setCompletionState] = useState({ status: 'idle', error: null });
   const [replanState, setReplanState] = useState({ status: 'idle', error: null });
   const controllerRef = useRef(null);
-  const handleNearbyFilming = useCallback((place) => {
-    openNearbyFilmingScenes(place, go);
-  }, [go]);
 
   const load = useCallback(() => {
     controllerRef.current?.abort();
@@ -4528,8 +4517,8 @@ function SavedCourseScreen({ courseId, go, onAuthRequired, active = false }) {
   if (state.status === 'loading') return <section className="phone standard-screen"><main className="page-scroll centered-state" role="status"><BrandLoading /><p>저장된 코스를 불러오고 있어요.</p></main></section>;
   if (!state.detail) return <section className="phone standard-screen"><main className="page-scroll centered-state" role="alert"><h1>{state.error}</h1><ActionButton onClick={load}>다시 시도</ActionButton></main></section>;
   return <>
-    {active && <CourseFilmingProximity currentLocation={navigationLocation} courseStops={state.detail.preview?.stops} onNearby={handleNearbyFilming} />}
-    <CoursePreviewResults preview={state.detail.preview} origin={state.detail.start} status="success" MapComponent={VWorldMap} onBack={() => go('course-home')} readOnly navigationMode={active} onNavigationLocationChange={setNavigationLocation} onDwellChanged={active ? handleDwellChange : null} replanBusy={replanState.status === 'loading'} replanError={replanState.error} onArrivalPlace={(stop) => {
+    {active && <CourseFilmingProximity currentLocation={navigationLocation} courseStops={state.detail.preview?.stops} onNearby={setFilmingNotice} />}
+    <CoursePreviewResults preview={state.detail.preview} origin={state.detail.start} status="success" MapComponent={VWorldMap} onBack={() => go('course-home')} readOnly navigationMode={active} filmingNotice={filmingNotice} onViewFilming={(place) => openNearbyFilmingScenes(place, go)} onNavigationLocationChange={setNavigationLocation} onDwellChanged={active ? handleDwellChange : null} replanBusy={replanState.status === 'loading'} replanError={replanState.error} onArrivalPlace={(stop) => {
       const placeId = Number(stop?.placeId);
       go(Number.isSafeInteger(placeId) && placeId > 0 ? 'place' : 'map', Number.isSafeInteger(placeId) && placeId > 0 ? placeId : undefined);
     }} onCompleteCourse={active ? finishTodayCourse : null} completeBusy={completionState.status === 'loading'} completeError={completionState.error} onConfirm={!active && state.detail.status === 'READY' ? () => begin(false) : null} confirmLabel="시작하기" confirmBusy={state.status === 'starting'} confirmError={state.error} />
@@ -4875,14 +4864,6 @@ function FilmingWorkDetail({ go, onBack, workId }) {
   );
 }
 
-function MapPermissionPrompt({ go, title, copy, detail, action, next }) {
-  return <section className="phone map-permission-screen"><MapStage variant="home"><div className="map-top-fade" /><header className="server-map-heading"><p>안국동 · 내 주변</p><h1>오늘, 어디로 걸어볼까요?</h1><button type="button"><span><SearchIcon /></span>장소 · 지역 · 테마 검색</button><div><Chip active>전체</Chip><Chip>요즘</Chip><Chip>팝업</Chip><Chip>촬영지</Chip></div></header><div className="server-error-dim" /><BottomSheet className="map-permission-sheet"><h1>{title}</h1><p>{copy}</p><article><strong>{detail[0]}</strong><small>{detail[1]}</small></article><ActionButton onClick={() => go(next)}>{action}</ActionButton></BottomSheet></MapStage></section>;
-}
-
-function MapLoadingPrompt({ go }) {
-  return <section className="phone map-permission-screen map-loading-screen"><MapStage variant="home"><div className="map-top-fade" /><header className="server-map-heading"><p>안국동 · 내 주변</p><h1>오늘, 어디로 걸어볼까요?</h1><button type="button"><span><SearchIcon /></span>장소 · 지역 · 테마 검색</button><div><Chip active>전체</Chip><Chip>요즘</Chip><Chip>팝업</Chip><Chip>촬영지</Chip></div></header><div className="server-error-dim" /><BottomSheet className="map-permission-sheet map-loading-sheet"><BrandLoading /><h1>장소 정보를 불러오고 있어요</h1><p>공공데이터와 실시간 혼잡 정보를 확인하는 중이에요.</p><article><strong>잠시만 기다려주세요</strong><small>네트워크 상태에 따라 몇 초 걸릴 수 있어요.</small></article><ActionButton tone="secondary" onClick={() => go('map')}>나중에 다시 보기</ActionButton></BottomSheet></MapStage></section>;
-}
-
 function SceneDetailScreen({ id, go }) {
   const sceneReference = resolveReferenceStill(id);
   const [detail, setDetail] = useState(null);
@@ -4993,76 +4974,6 @@ const settingsState = {
   loading: ['불러오는 중', '여행 정보를 준비하고 있어요', '잠시만 기다리면 저장한 장소와 코스를 불러올게요.', '새로고침', 'my'],
   'server-error': ['일시적인 오류', '정보를 불러오지 못했어요', '잠시 후 다시 시도해주세요. 저장된 기록은 안전해요.', '다시 시도', 'my'],
 };
-
-function normalizeMemberProfile(value) {
-  if (!value || typeof value !== 'object') return null;
-
-  const nickname = typeof value.nickname === 'string' ? value.nickname.trim() : '';
-  const email = typeof value.email === 'string' ? value.email.trim() : '';
-  const memberId = value.memberId ?? null;
-  if (!nickname && !email && memberId === null) return null;
-
-  return { ...value, nickname, email, memberId };
-}
-
-function profileInitial(nickname) {
-  const initial = Array.from(String(nickname ?? '').trim())[0];
-  return initial ? initial.toUpperCase() : '?';
-}
-
-function useMyProfile(enabled) {
-  const [profile, setProfile] = useState(() => normalizeMemberProfile(getUser()));
-  const [status, setStatus] = useState(() => enabled ? 'loading' : 'idle');
-  const [error, setError] = useState('');
-  const [retryKey, setRetryKey] = useState(0);
-
-  useEffect(() => {
-    if (!enabled) return undefined;
-
-    const controller = new AbortController();
-    let cancelled = false;
-    const cachedProfile = normalizeMemberProfile(getUser());
-
-    setProfile((current) => current ?? cachedProfile);
-    setStatus('loading');
-    setError('');
-
-    fetchMyProfile({ signal: controller.signal })
-      .then((result) => {
-        if (cancelled) return;
-        const nextProfile = normalizeMemberProfile(result);
-        if (nextProfile) saveUser(nextProfile);
-        setProfile(nextProfile);
-        setStatus(nextProfile ? 'success' : 'empty');
-      })
-      .catch((requestError) => {
-        if (cancelled || requestError?.name === 'AbortError') return;
-
-        console.error('회원 정보 조회 실패:', requestError);
-        if (requestError?.status === 401) {
-          setProfile(null);
-          setStatus('unauthorized');
-          setError('로그인이 만료됐어요. 다시 로그인하면 회원 정보를 확인할 수 있어요.');
-          return;
-        }
-
-        setStatus('error');
-        setError('회원 정보를 불러오지 못했어요. 네트워크 상태를 확인하고 다시 시도해주세요.');
-      });
-
-    return () => {
-      cancelled = true;
-      controller.abort();
-    };
-  }, [enabled, retryKey]);
-
-  return {
-    profile,
-    status,
-    error,
-    retry: () => setRetryKey((current) => current + 1),
-  };
-}
 
 function MyProfileStatus({ status, profile, error, onRetry, onLogin }) {
   if (status === 'loading') {

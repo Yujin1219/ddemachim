@@ -1,7 +1,9 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import { resolveFilmingSceneImage } from './filmingSceneImages.js';
+import { readFile } from 'node:fs/promises';
+
+import { resolveFilmingSceneImage, resolveFilmingSceneReference } from './filmingSceneImages.js';
 
 const demoImages = ['/scene-a.jpg', '/scene-b.jpg', '/scene-c.jpg'];
 
@@ -32,6 +34,28 @@ test('assigns the same stable demo image to a filming location across every entr
 
 test('returns null when there is no existing image or demo pool', () => {
   assert.equal(resolveFilmingSceneImage({ workId: 274, filmingLocationId: 59 }, []), null);
+});
+
+test('provides a bundled outline for every demo filming scene', async () => {
+  const expectedOutlineUrls = [
+    '/assets/scenes/demo/scene-01-outline.svg',
+    '/assets/scenes/demo/scene-02-outline.png',
+    '/assets/scenes/demo/scene-03-outline.png',
+    '/assets/scenes/demo/scene-04-outline.png',
+    '/assets/scenes/demo/scene-05-outline.png',
+    '/assets/scenes/demo/scene-06-outline.png',
+  ];
+
+  for (let filmingLocationId = 6; filmingLocationId < 12; filmingLocationId += 1) {
+    const expectedOutlineUrl = expectedOutlineUrls[filmingLocationId % expectedOutlineUrls.length];
+    const reference = resolveFilmingSceneReference(filmingLocationId);
+    assert.equal(reference.outlineUrl, expectedOutlineUrl);
+
+    const outline = await readFile(new URL(`../../public${reference.outlineUrl}`, import.meta.url));
+    const isSvg = outline.subarray(0, 4).toString() === '<svg';
+    const isPng = outline.subarray(1, 4).toString() === 'PNG';
+    assert.equal(isSvg || isPng, true);
+  }
 });
 
 test('builds scene detail copy from the matched work, place, and scene data', async () => {

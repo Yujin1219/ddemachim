@@ -8,10 +8,13 @@ public class ProcessBuilderPipelineProcessStarter implements PipelineProcessStar
 
     @Override
     public Process start(PipelineProcessCommand command) throws IOException {
-        ProcessBuilder processBuilder = new ProcessBuilder(command.commandLine())
+        return createProcessBuilder(command).start();
+    }
+
+    ProcessBuilder createProcessBuilder(PipelineProcessCommand command) {
+        return new ProcessBuilder(command.commandLine())
                 .directory(command.workingDirectory().toFile())
-                .redirectOutput(ProcessBuilder.Redirect.DISCARD)
-                .redirectError(ProcessBuilder.Redirect.DISCARD);
-        return processBuilder.start();
+                .redirectOutput(ProcessBuilder.Redirect.INHERIT)
+                .redirectError(ProcessBuilder.Redirect.INHERIT);
     }
 }

@@ -42,6 +42,7 @@ class CityDataCongestionServiceTest {
     void refreshUpdatesSuccessfulAreasAndKeepsFailedAreas() {
         SeoulCityDataClient client = mock(SeoulCityDataClient.class);
         SeoulCityDataProperties properties = new SeoulCityDataProperties();
+        properties.setEnabled(true);
         properties.setApiKey("test-key");
         CityDataCongestionService service = new CityDataCongestionService(client, properties, FIXED_CLOCK);
 

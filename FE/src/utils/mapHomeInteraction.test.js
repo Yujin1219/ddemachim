@@ -56,6 +56,17 @@ test('gives the route camera sole ownership while route comparison is open', () 
   );
 });
 
+test('keeps the place detail camera on the selected place when GPS updates', () => {
+  assert.equal(typeof mapHomeInteraction.mapDetailCameraState, 'function');
+  const { mapDetailCameraState } = mapHomeInteraction;
+
+  assert.deepEqual(mapDetailCameraState(), {
+    fitPlaceMarkers: true,
+    fitUserLocation: false,
+    followUserLocation: false,
+  });
+});
+
 test('starts with the nearby sheet collapsed on short phone viewports', () => {
   assert.deepEqual(createInitialMapHomeInteraction(568), {
     isMapFocused: false,

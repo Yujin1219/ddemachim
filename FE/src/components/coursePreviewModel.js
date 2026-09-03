@@ -106,6 +106,7 @@ const COURSE_PREVIEW_FAILURE_RULES = {
   NO_FEASIBLE_ORDER: {
     proposal: 'ADJUST_START_TIME',
     group: 'conditions',
+    scope: 'course',
     message: () => '현재 출발 시각으로는 장소별 조건을 모두 맞추기 어려워요.',
   },
   ROUTE_NOT_FOUND: {
@@ -121,16 +122,19 @@ const COURSE_PREVIEW_FAILURE_RULES = {
   ROUTE_PROVIDER_UNAVAILABLE: {
     proposal: 'CHECK_ROUTE_AVAILABILITY',
     group: 'route',
+    scope: 'course',
     message: () => '현재 이동 경로 정보를 불러오기 어려워요.',
   },
   ROUTE_PROVIDER_NOT_CONFIGURED: {
     proposal: 'CHECK_ROUTE_AVAILABILITY',
     group: 'route',
+    scope: 'course',
     message: () => '현재 이동 경로 정보를 확인할 수 없어요.',
   },
   ROUTE_PROVIDER_TIMEOUT: {
     proposal: 'CHECK_ROUTE_AVAILABILITY',
     group: 'route',
+    scope: 'course',
     message: () => '이동 경로 확인을 완료하지 못했어요.',
   },
 };
@@ -177,7 +181,11 @@ export function normalizeCoursePreviewFailure(result, payload) {
       ? COURSE_PREVIEW_FAILURE_RULES[item.reason]
       : null;
     if (!placeName || !rule || item.adjustmentProposal !== rule.proposal) return null;
-    messagesByGroup.get(rule.group).push(rule.message(placeName));
+    const message = rule.message(placeName);
+    const groupMessages = messagesByGroup.get(rule.group);
+    if (rule.scope !== 'course' || !groupMessages.includes(message)) {
+      groupMessages.push(message);
+    }
     itemsByGroup.get(rule.group).push({
       basketItemId: item.basketItemId,
       placeName,

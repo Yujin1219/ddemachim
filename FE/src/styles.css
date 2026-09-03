@@ -1349,6 +1349,10 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, [role='button
 .course-navigation-complete-error { color: var(--color-danger) !important; font-size: 12px !important; line-height: 18px !important; }
 .course-navigation-stay-edit-toggle, .course-navigation-place-link { justify-self: start; min-height: 32px; padding: 5px 0; border: 0; color: var(--color-text-brand); background: transparent; font-size: 12px; font-weight: 700; line-height: 18px; }
 .course-navigation-place-link { margin-top: 2px; color: var(--color-text-secondary); font-weight: 600; }
+.course-navigation-filming-prompt { display: grid; gap: 3px; margin-top: 8px; padding: 13px; border: 1px solid rgba(57,114,190,.16); border-radius: 16px; background: rgba(235,245,255,.76); }
+.course-navigation-filming-prompt > span { color: #3972be; font-size: 13px; font-weight: 700; line-height: 19px; }
+.course-navigation-filming-prompt > p { font-size: 12px; line-height: 18px; }
+.course-navigation-filming-prompt > button { justify-self: start; min-height: 32px; padding: 5px 0; border: 0; color: var(--color-text-brand); background: transparent; font-size: 12px; font-weight: 700; line-height: 18px; }
 .course-navigation-stay-editor { display: inline-flex; align-items: center; gap: 12px; width: fit-content; min-height: 38px; padding: 4px 6px; border-radius: 12px; background: rgba(232, 240, 253, .72); }
 .course-navigation-stay-editor button { width: 30px; height: 30px; padding: 0; border: 0; border-radius: 9px; color: var(--color-text-brand); background: rgba(255,255,255,.82); font-size: 19px; line-height: 1; }
 .course-navigation-stay-editor strong { min-width: 44px; color: var(--color-text-primary); font-size: 12px; text-align: center; }
@@ -1969,6 +1973,9 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, [role='button
 .ai-guide-place-header span { color: var(--color-text-secondary); font-size: 12px; font-weight: 500; line-height: 18px; }
 .ai-guide-place-map-link { min-height: 28px; display: inline-flex; align-items: center; gap: 4px; padding: 4px 2px 4px 6px; border: 0; border-radius: 8px; color: var(--color-text-brand); background: transparent; font-size: 12px; font-weight: 700; line-height: 18px; white-space: nowrap; transition: color 160ms ease, background-color 160ms ease, transform 140ms var(--ease-out); }
 .ai-guide-place-cards { display: grid; gap: 9px; }
+.ai-guide-place-card-row { min-width: 0; display: grid; grid-template-columns: minmax(0, 1fr); align-items: stretch; gap: 8px; }
+.ai-guide-place-card-row:has(.ai-guide-place-select) { grid-template-columns: minmax(0, 1fr) 38px; }
+.ai-guide-place-card-row.is-selected .ai-guide-place-card { border-color: rgba(38, 112, 203, .32); background: rgba(240, 247, 255, .96); }
 .ai-guide-place-card { width: 100%; min-height: 84px; display: grid; grid-template-columns: 52px minmax(0, 1fr) 18px; align-items: center; gap: 11px; padding: 10px 11px; overflow: hidden; border: 1px solid rgba(209, 218, 229, .72); border-radius: 15px; color: var(--color-text-primary); background: rgba(255, 255, 255, .94); box-shadow: 0 5px 16px rgba(47, 73, 105, .055); text-align: left; transition: border-color 170ms ease, background-color 170ms ease, box-shadow 170ms ease, transform 140ms var(--ease-out); }
 .ai-guide-place-card > img { width: 52px; height: 52px; object-fit: cover; object-position: center; border-radius: 11px; background: #eef3f8; }
 .ai-guide-place-image-placeholder { width: 52px; height: 52px; display: grid; place-items: center; border-radius: 11px; color: #6f91bd; background: #edf4fb; }
@@ -1980,6 +1987,9 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, [role='button
 .ai-guide-place-walk b { color: var(--color-text-brand); font-size: 12px; font-weight: 800; }
 .ai-guide-place-card-copy > small { grid-column: 1 / -1; min-width: 0; overflow: hidden; color: var(--color-text-secondary); font-size: 11px; font-weight: 500; line-height: 17px; text-overflow: ellipsis; white-space: nowrap; }
 .ai-guide-place-chevron { color: #a2afbf; }
+.ai-guide-place-select { min-height: 44px; display: grid; place-items: center; align-self: center; border: 1px solid rgba(209, 218, 229, .8); border-radius: 12px; background: rgba(255, 255, 255, .96); cursor: pointer; }
+.ai-guide-place-select input { width: 18px; height: 18px; margin: 0; accent-color: var(--color-text-brand); cursor: pointer; }
+.ai-guide-place-select input:disabled { cursor: default; opacity: 1; }
 .ai-guide-place-toggle { justify-self: center; min-height: 34px; padding: 6px 10px; border: 0; border-radius: 10px; color: var(--color-text-brand); background: transparent; font-size: 12px; font-weight: 700; line-height: 18px; transition: color 160ms ease, background-color 160ms ease, transform 140ms var(--ease-out); }
 .ai-guide-place-toggle > span { display: inline-flex; align-items: center; gap: 4px; }
 .ai-guide-course-proposal { width: 100%; display: grid; gap: 11px; padding: 14px; border: 1px solid rgba(209, 218, 229, .7); border-radius: 16px; background: rgba(255, 255, 255, .96); box-shadow: 0 6px 18px rgba(47, 73, 105, .06); }
@@ -1989,8 +1999,8 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, [role='button
 .ai-guide-course-proposal p { margin: 0; color: var(--color-text-primary); font-size: 13px; font-weight: 650; line-height: 20px; }
 .ai-guide-course-confirm { min-height: 42px; display: inline-flex; align-items: center; justify-content: center; gap: 6px; border: 0; border-radius: 12px; color: #fff; background: var(--color-text-brand); font-size: 13px; font-weight: 750; line-height: 20px; box-shadow: 0 5px 12px rgba(40, 111, 202, .18); transition: transform 140ms var(--ease-out), opacity 160ms ease; }
 .ai-guide-course-confirm:active:not(:disabled) { transform: scale(.985); }
-.ai-guide-course-confirm:disabled { opacity: .62; cursor: wait; }
-.ai-guide-place-map-link:focus-visible, .ai-guide-place-card:focus-visible, .ai-guide-place-toggle:focus-visible { outline: 2px solid rgba(23, 88, 189, .58); outline-offset: 2px; }
+.ai-guide-course-confirm:disabled { opacity: .62; cursor: not-allowed; }
+.ai-guide-place-map-link:focus-visible, .ai-guide-place-card:focus-visible, .ai-guide-place-toggle:focus-visible, .ai-guide-place-select:has(input:focus-visible) { outline: 2px solid rgba(23, 88, 189, .58); outline-offset: 2px; }
 .ai-guide-place-map-link:active, .ai-guide-place-card:active, .ai-guide-place-toggle:active { transform: scale(.98); }
 @media (hover: hover) and (pointer: fine) {
   .ai-guide-place-map-link:hover, .ai-guide-place-toggle:hover { background: rgba(225, 239, 255, .68); }
