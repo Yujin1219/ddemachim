@@ -34,6 +34,8 @@ import org.springframework.transaction.annotation.Transactional;
 @Service
 public class AiCourseService {
 
+    private static final int MAXIMUM_REQUESTED_PLACES = 20;
+
     private static final LocalTime FALLBACK_OPEN = LocalTime.of(9, 0);
     private static final LocalTime FALLBACK_CLOSE = LocalTime.of(22, 0);
     private final PlaceRepository placeRepository;
@@ -193,6 +195,9 @@ public class AiCourseService {
     }
 
     private static void validate(AiCourseRequest request) {
+        int requestedPlaceCount = request == null
+                ? 0
+                : distinct(request.requiredPlaceIds()).size() + distinct(request.candidatePlaceIds()).size();
         if (request == null || request.date() == null || request.startTime() == null
                 || request.startLocation() == null || request.availableMinutes() == null
                 || request.availableMinutes() < 30 || request.availableMinutes() > 1440
@@ -201,6 +206,7 @@ public class AiCourseService {
                 || !Double.isFinite(request.startLocation().longitude())
                 || request.startLocation().latitude() < -90 || request.startLocation().latitude() > 90
                 || request.startLocation().longitude() < -180 || request.startLocation().longitude() > 180
+                || requestedPlaceCount > MAXIMUM_REQUESTED_PLACES
                 || (distinct(request.requiredPlaceIds()).isEmpty()
                 && distinct(request.candidatePlaceIds()).isEmpty())) {
             throw new CourseException(CourseErrorStatus.INVALID_PREVIEW_INPUT);

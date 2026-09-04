@@ -1,6 +1,7 @@
 package com.ddemachim.server.domain.course.service;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
@@ -9,6 +10,7 @@ import static org.mockito.Mockito.when;
 import com.ddemachim.server.domain.course.dto.AiCourseRequest;
 import com.ddemachim.server.domain.course.dto.CoursePreviewResponse;
 import com.ddemachim.server.domain.course.enums.CourseRouteStrategy;
+import com.ddemachim.server.domain.course.exception.CourseException;
 import com.ddemachim.server.domain.place.entity.Place;
 import com.ddemachim.server.domain.place.entity.PlaceCategory;
 import com.ddemachim.server.domain.place.repository.PlaceOperatingHoursRepository;
@@ -24,6 +26,24 @@ import org.locationtech.jts.geom.PrecisionModel;
 import org.mockito.ArgumentCaptor;
 
 class AiCourseServiceTest {
+
+    @Test
+    void rejectsMoreThanTwentyDistinctPlacesBeforeDatabaseLookup() {
+        PlaceRepository places = mock(PlaceRepository.class);
+        PlaceOperatingHoursRepository hours = mock(PlaceOperatingHoursRepository.class);
+        CoursePreviewService planner = mock(CoursePreviewService.class);
+        AiCourseService service = new AiCourseService(places, hours, planner);
+        List<Long> placeIds = java.util.stream.LongStream.rangeClosed(1, 21).boxed().toList();
+
+        assertThatThrownBy(() -> service.create(new AiCourseRequest(
+                LocalDate.of(2026, 8, 24), LocalTime.of(10, 0),
+                new AiCourseRequest.StartLocation(37.570, 126.970, "출발지"), 600,
+                List.of(), placeIds,
+                AiCourseRequest.RoutePreference.FAST, AiCourseRequest.SchedulePreference.BALANCED)))
+                .isInstanceOf(CourseException.class);
+
+        org.mockito.Mockito.verifyNoInteractions(places, hours, planner);
+    }
 
     @Test
     void createsCourseFromPlaceIdsWithoutBasketLookup() {

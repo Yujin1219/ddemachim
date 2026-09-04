@@ -37,6 +37,7 @@ class EventDataPipelineSchedulerTest {
     @BeforeEach
     void setUp() {
         properties = new DataPipelineSchedulerProperties();
+        properties.setEnabled(true);
         properties.setPythonExecutable("python-test");
         properties.setWorkingDirectory(Path.of("pipeline"));
         properties.setTimeout(Duration.ofSeconds(5));

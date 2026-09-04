@@ -25,35 +25,66 @@ function PlaceImage({ place }) {
   });
 }
 
-function recommendationCard(recommendation, onPlaceClick) {
+function recommendationCard(recommendation, onPlaceClick, selection) {
   const { place, walkingMinutes, distanceMeters, reason } = recommendation;
   const distance = distanceLabel(distanceMeters);
   const hasWalkingMeta = walkingMinutes !== null || distance !== null;
-  return createElement('button', {
-    'aria-label': `${place.name} 상세 보기`,
-    className: 'ai-guide-place-card',
+  const selectable = selection.selectablePlaceIds.has(Number(place.id));
+  const required = selection.requiredPlaceIds.has(Number(place.id));
+  const checked = required || selection.selectedPlaceIds.has(Number(place.id));
+  return createElement('div', {
+    className: `ai-guide-place-card-row${checked && selectable ? ' is-selected' : ''}`,
     key: place.id,
-    onClick: () => onPlaceClick?.(place),
-    type: 'button',
   },
-  createElement(PlaceImage, { key: place.imageUrl || 'placeholder', place }),
-  createElement('span', { className: 'ai-guide-place-card-copy' },
-    createElement('strong', null, place.name),
-    createElement('span', { className: 'ai-guide-place-category' }, place.categoryLabel || '장소'),
-    hasWalkingMeta && createElement('span', { className: 'ai-guide-place-walk' },
-      createElement(Footprints, { 'aria-hidden': true, size: 14, strokeWidth: 2.1 }),
-      walkingMinutes !== null && createElement('b', null, `${walkingMinutes}분`),
-      walkingMinutes !== null && distance !== null && createElement('span', { 'aria-hidden': true }, '·'),
-      distance !== null && createElement('span', null, distance)),
-    reason && createElement('small', null, reason)),
-  createElement(ChevronRight, { 'aria-hidden': true, className: 'ai-guide-place-chevron', size: 18, strokeWidth: 2 }));
+    createElement('button', {
+      'aria-label': `${place.name} 상세 보기`,
+      className: 'ai-guide-place-card',
+      onClick: () => onPlaceClick?.(place),
+      type: 'button',
+    },
+    createElement(PlaceImage, { key: place.imageUrl || 'placeholder', place }),
+    createElement('span', { className: 'ai-guide-place-card-copy' },
+      createElement('strong', null, place.name),
+      createElement('span', { className: 'ai-guide-place-category' }, place.categoryLabel || '장소'),
+      hasWalkingMeta && createElement('span', { className: 'ai-guide-place-walk' },
+        createElement(Footprints, { 'aria-hidden': true, size: 14, strokeWidth: 2.1 }),
+        walkingMinutes !== null && createElement('b', null, `${walkingMinutes}분`),
+        walkingMinutes !== null && distance !== null && createElement('span', { 'aria-hidden': true }, '·'),
+        distance !== null && createElement('span', null, distance)),
+      reason && createElement('small', null, reason)),
+    createElement(ChevronRight, { 'aria-hidden': true, className: 'ai-guide-place-chevron', size: 18, strokeWidth: 2 })),
+    selectable && createElement('label', { className: 'ai-guide-place-select' },
+      createElement('input', {
+        'aria-label': `${place.name} 코스에 포함`,
+        checked,
+        disabled: required || selection.busy,
+        onChange: (event) => selection.onChange?.(Number(place.id), event.target.checked),
+        type: 'checkbox',
+      }),
+      createElement('span', { className: 'sr-only' }, required ? '필수 장소' : '코스 장소 선택')));
 }
 
-export default function AiGuidePlaceRecommendations({ recommendations = [], onMapClick, onPlaceClick }) {
+export default function AiGuidePlaceRecommendations({
+  recommendations = [],
+  selectablePlaceIds = [],
+  requiredPlaceIds = [],
+  selectedPlaceIds = [],
+  selectionBusy = false,
+  onMapClick,
+  onPlaceClick,
+  onPlaceSelectionChange,
+}) {
   const [expanded, setExpanded] = useState(false);
   const listId = useId();
   const visibleRecommendations = expanded ? recommendations : recommendations.slice(0, 3);
   const hiddenCount = Math.max(0, recommendations.length - 3);
+  const selection = {
+    selectablePlaceIds: new Set(selectablePlaceIds.map(Number)),
+    requiredPlaceIds: new Set(requiredPlaceIds.map(Number)),
+    selectedPlaceIds: new Set(selectedPlaceIds.map(Number)),
+    busy: selectionBusy,
+    onChange: onPlaceSelectionChange,
+  };
   if (recommendations.length === 0) return null;
   return createElement('section', { 'aria-label': 'AI 추천 장소', className: 'ai-guide-recommendations' },
     createElement('header', { className: 'ai-guide-place-header' },
@@ -64,7 +95,7 @@ export default function AiGuidePlaceRecommendations({ recommendations = [], onMa
         createElement(MapPinned, { 'aria-hidden': true, size: 14, strokeWidth: 2 }),
         '지도보기')),
     createElement('div', { className: 'ai-guide-place-cards', id: listId },
-      visibleRecommendations.map((recommendation) => recommendationCard(recommendation, onPlaceClick))),
+      visibleRecommendations.map((recommendation) => recommendationCard(recommendation, onPlaceClick, selection))),
     hiddenCount > 0 && createElement('button', {
       'aria-controls': listId,
       'aria-expanded': expanded,

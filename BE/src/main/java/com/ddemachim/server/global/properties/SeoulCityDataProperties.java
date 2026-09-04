@@ -7,7 +7,7 @@ import org.springframework.util.StringUtils;
 @ConfigurationProperties(prefix = "ddemachim.citydata.seoul")
 public class SeoulCityDataProperties {
 
-    private boolean enabled = true;
+    private boolean enabled;
     private String apiKey = "";
     private String baseUrl = "http://openapi.seoul.go.kr:8088";
     private Duration staleAfter = Duration.ofMinutes(10);

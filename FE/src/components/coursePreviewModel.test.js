@@ -556,6 +556,37 @@ test('keeps every diagnostic in stable semantic group order without retaining ra
   assert.deepEqual(result, before, 'normalization must not mutate the server result');
 });
 
+test('shows a course-wide failure message once while retaining every place diagnostic', () => {
+  const normalizeFailure = coursePreviewModel.normalizeCoursePreviewFailure;
+  const normalized = normalizeFailure(failureResult([
+    diagnostic(11, 'NO_FEASIBLE_ORDER', 'ADJUST_START_TIME', '첫 장소'),
+    diagnostic(12, 'NO_FEASIBLE_ORDER', 'ADJUST_START_TIME', '둘째 장소'),
+    diagnostic(13, 'NO_FEASIBLE_ORDER', 'ADJUST_START_TIME', '셋째 장소'),
+  ]), failurePayload(11, 12, 13));
+
+  assert.deepEqual(normalized.groups[0].messages, [
+    '현재 출발 시각으로는 장소별 조건을 모두 맞추기 어려워요.',
+  ]);
+  assert.deepEqual(normalized.groups[0].items.map((item) => item.placeName), [
+    '첫 장소',
+    '둘째 장소',
+    '셋째 장소',
+  ]);
+});
+
+test('keeps place-specific failures separate even when their reason is the same', () => {
+  const normalizeFailure = coursePreviewModel.normalizeCoursePreviewFailure;
+  const normalized = normalizeFailure(failureResult([
+    diagnostic(11, 'ARRIVAL_DEADLINE_EXCEEDED', 'RELAX_ARRIVAL_DEADLINE', '첫 장소'),
+    diagnostic(12, 'ARRIVAL_DEADLINE_EXCEEDED', 'RELAX_ARRIVAL_DEADLINE', '둘째 장소'),
+  ]), failurePayload(11, 12));
+
+  assert.deepEqual(normalized.groups[0].messages, [
+    '첫 장소: 설정한 도착 시각을 맞추기 어려워요.',
+    '둘째 장소: 설정한 도착 시각을 맞추기 어려워요.',
+  ]);
+});
+
 test('sanitizes control text, whitespace, bidi overrides, and limits names to 60 Unicode code points', () => {
   const normalizeFailure = coursePreviewModel.normalizeCoursePreviewFailure;
   const longName = `  서울\u0000\u0085  \u202E공예   ${'😀'.repeat(70)}  `;

@@ -27,6 +27,7 @@ const STRATEGY_OPTIONS = [
 ];
 
 const COURSE_PREVIEW_COMPLETION_DURATION = 250;
+const ROUTE_SIMULATION_DURATION_MS = 5_000;
 
 function finiteNumber(value) {
   return Number.isFinite(Number(value)) ? Number(value) : null;
@@ -68,7 +69,7 @@ function routePointAtProgress(coordinates, progress) {
   return coordinates.at(-1);
 }
 
-export function routeSimulationProgress(elapsedMilliseconds, durationMilliseconds) {
+export function routeSimulationProgress(elapsedMilliseconds, durationMilliseconds = ROUTE_SIMULATION_DURATION_MS) {
   const elapsed = Number(elapsedMilliseconds);
   const duration = Number(durationMilliseconds);
   if (!Number.isFinite(elapsed) || !Number.isFinite(duration) || duration <= 0) return 0;
@@ -89,10 +90,9 @@ function useRoutePositionSimulation(coordinates, enabled) {
       return undefined;
     }
     const startedAt = Date.now();
-    const duration = 36000;
     let timer = null;
     const update = () => {
-      const progress = routeSimulationProgress(Date.now() - startedAt, duration);
+      const progress = routeSimulationProgress(Date.now() - startedAt);
       setPosition(routePointAtProgress(coordinates, progress));
       if (progress >= 1 && timer !== null) {
         window.clearInterval(timer);
@@ -333,7 +333,7 @@ function h(type, props, ...children) {
   return React.createElement(type, props, ...children);
 }
 
-function CourseNavigationArrival({ stop, arrivedAt, onContinue, onDwellChanged, onViewPlace, onCompleteCourse, completeBusy = false, completeError = null, replanBusy = false, replanError = null }) {
+function CourseNavigationArrival({ stop, arrivedAt, filmingPlace = null, onContinue, onDwellChanged, onViewPlace, onViewFilming, onCompleteCourse, completeBusy = false, completeError = null, replanBusy = false, replanError = null }) {
   const placeName = stop?.placeName || '다음 장소';
   const configuredDwellMinutes = Math.max(0, Math.round(Number(stop?.dwellMinutes ?? stop?.defaultDwellMinutes) || 0));
   const [dwellMinutes, setDwellMinutes] = useState(configuredDwellMinutes);
@@ -347,8 +347,8 @@ function CourseNavigationArrival({ stop, arrivedAt, onContinue, onDwellChanged, 
 
   useEffect(() => {
     if (!arrivedAt || dwellMinutes <= 0) return undefined;
-    const timer = window.setInterval(() => setClock(Date.now()), 30_000);
-    return () => window.clearInterval(timer);
+    const timer = globalThis.setInterval(() => setClock(Date.now()), 30_000);
+    return () => globalThis.clearInterval(timer);
   }, [arrivedAt, dwellMinutes]);
 
   const elapsedMinutes = arrivedAt ? Math.max(0, Math.floor((Date.now() - arrivedAt) / 60_000)) : 0;
@@ -385,18 +385,25 @@ function CourseNavigationArrival({ stop, arrivedAt, onContinue, onDwellChanged, 
       h(CourseActionButton, { onClick: onCompleteCourse, disabled: completeBusy, 'aria-busy': completeBusy || undefined }, completeBusy ? '종료하는 중…' : '코스 종료'),
       completeError && h('p', { className: 'course-navigation-complete-error', role: 'alert' }, completeError),
     ),
+    filmingPlace && h('section', { className: 'course-navigation-filming-prompt', 'aria-label': '촬영 장면 안내' },
+      h('span', null, '촬영 장면이 있어요'),
+      h('p', null, '작품 속 장면을 확인하고 같은 구도로 촬영해보세요.'),
+      h('button', { type: 'button', onClick: () => onViewFilming?.(filmingPlace) }, '촬영 장면 보기'),
+    ),
     h('button', { className: 'course-navigation-place-link', type: 'button', onClick: onViewPlace }, '장소 상세 보기'),
   );
 }
 
-function CourseFilmingArrival({ place, onViewFilming }) {
-  const placeName = place?.name || place?.placeName || '촬영지';
-  return h('section', { className: 'course-navigation-arrival course-filming-arrival', role: 'dialog', 'aria-modal': 'true', 'aria-labelledby': 'course-filming-arrival-title' },
-    h('span', null, '촬영지 근처에 도착했어요'),
-    h('h1', { id: 'course-filming-arrival-title' }, placeName),
-    h('p', null, '이곳에서 촬영된 장면을 확인하고 같은 구도로 촬영해보세요.'),
-    h(CourseActionButton, { onClick: onViewFilming }, '촬영 장면 보기'),
-  );
+function matchingFilmingPlace(stop, filmingNotice) {
+  if (!stop || !filmingNotice) return null;
+  const stopPlaceId = Number(stop.placeId);
+  const filmingPlaceId = Number(filmingNotice.id ?? filmingNotice.placeId);
+  if (Number.isSafeInteger(stopPlaceId) && Number.isSafeInteger(filmingPlaceId)) {
+    return stopPlaceId === filmingPlaceId ? filmingNotice : null;
+  }
+  const stopName = String(stop.placeName || '').trim();
+  const filmingPlaceName = String(filmingNotice.name || filmingNotice.placeName || '').trim();
+  return stopName && stopName === filmingPlaceName ? filmingNotice : null;
 }
 
 function routeMetric(route) {
@@ -1372,7 +1379,7 @@ export default function CoursePreviewResults({
         fitPlaceMarkers: !hasDrawableRoute,
         placeRequestKey: effectivePreview.routeFitKey,
         showCongestionAreas: false,
-        mapDimmed: Boolean(navigationMode && filmingNotice),
+        mapDimmed: Boolean(navigationMode && arrivalStop && matchingFilmingPlace(arrivalStop, filmingNotice)),
         routeLegs: displayedRouteLegs,
         ghostRouteLegs: overviewMode || navigationMode ? [] : wholeCourseRouteLegs,
         ghostHighlightLegs: [],
@@ -1411,7 +1418,7 @@ export default function CoursePreviewResults({
         onSelect: (index) => selectStopAtIndex(index),
       }),
       !navigationMode && routeDrawn && h('div', { className: 'course-preview-done', role: 'status' }, '오늘의 코스 완성 ✦'),
-      navigationMode && !arrivalStop && !filmingNotice && h('section', { className: `course-navigation-destination-slider${navigationPanelExpanded ? ' is-expanded' : ''}`, 'aria-label': '다음 목적지' },
+      navigationMode && !arrivalStop && h('section', { className: `course-navigation-destination-slider${navigationPanelExpanded ? ' is-expanded' : ''}`, 'aria-label': '다음 목적지' },
         h('div', { className: 'course-navigation-destination-track' }, effectivePreview.stops.slice(selectedStopIndex).map((stop, offset) => {
           const index = selectedStopIndex + offset;
           const route = stop?.selectedRoute || stop?.incomingRoute;
@@ -1450,10 +1457,12 @@ export default function CoursePreviewResults({
           );
         })),
       ),
-      navigationMode && arrivalStop && !filmingNotice && h(CourseNavigationArrival, {
+      navigationMode && arrivalStop && h(CourseNavigationArrival, {
         stop: arrivalStop,
         arrivedAt: arrivalStartedAt,
-        onViewPlace: () => onArrivalPlace?.(arrivalStop),
+        filmingPlace: matchingFilmingPlace(arrivalStop, filmingNotice),
+        onViewPlace: () => onArrivalPlace?.(arrivalStop, arrivalStartedAt),
+        onViewFilming,
         onContinue: effectivePreview.stops[selectedStopIndex + 1] ? () => {
           selectStopAtIndex(selectedStopIndex + 1);
           setArrivalStop(null);
@@ -1466,7 +1475,6 @@ export default function CoursePreviewResults({
         completeBusy,
         completeError,
       }),
-      navigationMode && filmingNotice && h(CourseFilmingArrival, { place: filmingNotice, onViewFilming: () => onViewFilming?.(filmingNotice) }),
       !navigationMode && h('div', { className: 'course-preview-sheet-frame', ref: sheetFrameRef },
         h('section', {
         className: `course-preview-sheet${sheetDragging ? ' is-dragging' : ''}`,

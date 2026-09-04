@@ -157,9 +157,26 @@ export function renderAiGuideMarkdown(content, keyPrefix = 'ai-guide', options =
 }
 
 export function scrollAiGuideToLatest(container, latestMessage, bottomSpacer) {
-  if (!container || typeof latestMessage?.scrollIntoView !== 'function') return;
+  if (!container || !latestMessage) return;
   if (bottomSpacer?.style) {
     bottomSpacer.style.height = `${Math.max(0, container.clientHeight - latestMessage.offsetHeight)}px`;
   }
-  latestMessage.scrollIntoView({ block: 'start', behavior: 'smooth' });
+  const containerRect = typeof container.getBoundingClientRect === 'function'
+    ? container.getBoundingClientRect()
+    : null;
+  const messageRect = typeof latestMessage.getBoundingClientRect === 'function'
+    ? latestMessage.getBoundingClientRect()
+    : null;
+  const relativeTop = Number(container.scrollTop || 0)
+    + Number(messageRect?.top)
+    - Number(containerRect?.top);
+  const fallbackTop = Number(latestMessage.offsetTop);
+  const top = Number.isFinite(relativeTop)
+    ? Math.max(0, relativeTop)
+    : Number.isFinite(fallbackTop) ? Math.max(0, fallbackTop) : 0;
+  if (typeof container.scrollTo === 'function') {
+    container.scrollTo({ top, behavior: 'smooth' });
+  } else {
+    container.scrollTop = top;
+  }
 }

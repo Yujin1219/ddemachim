@@ -120,6 +120,51 @@ test('장소 카드는 선택한 장소를 상세 이동 callback에 전달한�
   assert.deepEqual(selectedPlaceIds, [7]);
 });
 
+test('코스 추천 장소는 카드 옆 체크박스에서 선택 상태를 바꾼다', async () => {
+  const changes = [];
+  let renderer;
+  await act(async () => {
+    renderer = TestRenderer.create(createElement(AiGuidePlaceRecommendations, {
+      recommendations: [recommendation(1), recommendation(2), recommendation(3)],
+      selectablePlaceIds: [1, 2, 3],
+      requiredPlaceIds: [1],
+      selectedPlaceIds: [1, 2],
+      onPlaceSelectionChange: (placeId, checked) => changes.push([placeId, checked]),
+      onMapClick() {},
+      onPlaceClick() {},
+    }));
+  });
+
+  const checkboxes = renderer.root.findAllByType('input');
+  assert.deepEqual(checkboxes.map((checkbox) => checkbox.props.checked), [true, true, false]);
+  assert.deepEqual(checkboxes.map((checkbox) => Boolean(checkbox.props.disabled)), [true, false, false]);
+
+  await act(async () => {
+    checkboxes[2].props.onChange({ target: { checked: true } });
+  });
+  assert.deepEqual(changes, [[3, true]]);
+});
+
+test('추천 카드의 체크박스를 눌러도 장소 상세 화면은 열리지 않는다', async () => {
+  const openedPlaceIds = [];
+  let renderer;
+  await act(async () => {
+    renderer = TestRenderer.create(createElement(AiGuidePlaceRecommendations, {
+      recommendations: [recommendation(7)],
+      selectablePlaceIds: [7],
+      selectedPlaceIds: [7],
+      onPlaceSelectionChange() {},
+      onMapClick() {},
+      onPlaceClick: (place) => openedPlaceIds.push(place.id),
+    }));
+  });
+
+  await act(async () => {
+    renderer.root.findByType('input').props.onChange({ target: { checked: false } });
+  });
+  assert.deepEqual(openedPlaceIds, []);
+});
+
 test('장소 이미지가 없을 때 다른 장소의 사진을 대신 보여주지 않는다', () => {
   const item = recommendation(1);
   item.place.imageUrl = null;

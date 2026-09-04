@@ -16,9 +16,9 @@ public class DataPipelineSchedulerProperties {
     public static final String DEFAULT_SEOUL_CULTURE_CRON = "0 10 6 ? * MON";
     public static final String DEFAULT_REPEATED_BLOG_TREND_CRON = "0 30 4 * * *";
 
-    private boolean enabled = true;
+    private boolean enabled;
     private String pythonExecutable = defaultPythonExecutable();
-    private Path workingDirectory = Path.of("..", "data-pipeline");
+    private Path workingDirectory = Path.of("data-pipeline");
     private Duration timeout = Duration.ofMinutes(30);
     private String zone = DEFAULT_ZONE;
     private Job tourApiEvents = new Job(

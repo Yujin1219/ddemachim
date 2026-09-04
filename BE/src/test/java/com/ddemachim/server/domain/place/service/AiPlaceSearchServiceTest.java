@@ -172,6 +172,29 @@ class AiPlaceSearchServiceTest {
         verify(places).findNearbyForAi(eq(37.577), eq(126.972), eq("RESTAURANT"), eq(null), eq(1_000), eq(20));
     }
 
+    @Test
+    void nearbySearchPrioritizesAPlaceWithAnImageOverACloserPlaceWithoutOne() {
+        NearbyPlaceDistanceProjection closeWithoutImage = nearbyRow(61L, 100.0);
+        NearbyPlaceDistanceProjection fartherWithImage = nearbyRow(62L, 200.0);
+        Place closePlace = place(61L, "가까운 사진 없는 카페", "CAFE", null, 126.973, 37.578);
+        Place imagePlace = place(
+                62L, "조금 먼 사진 있는 카페", "CAFE", "https://example.com/cafe.jpg", 126.974, 37.579);
+        when(places.findNearbyForAi(any(Double.class), any(Double.class), any(), any(), anyInt(), anyInt()))
+                .thenReturn(List.of(closeWithoutImage, fartherWithImage));
+        when(places.findAllById(any())).thenReturn(List.of(closePlace, imagePlace));
+        when(hours.findByPlaceIdInAndDayOfWeek(any(), any(Short.class))).thenReturn(List.of());
+        when(crowding.getPointCrowding(any())).thenReturn(List.of());
+        AiPlaceSearchService service = new AiPlaceSearchService(
+                places, hours, crowding, routes,
+                Clock.fixed(Instant.parse("2026-08-20T07:00:00Z"), ZoneId.of("Asia/Seoul")));
+
+        var result = service.searchNearby(new AiPlaceSearchService.NearbyCondition(
+                37.577, 126.972, "CAFE", 1_000, null, false, 10, null));
+
+        assertThat(result.places()).extracting(AiPlaceSearchService.NearbyPlace::placeId)
+                .containsExactly(62L, 61L);
+    }
+
     private static Place place() {
         Place place = mock(Place.class);
         PlaceCategory category = mock(PlaceCategory.class);
@@ -186,6 +209,11 @@ class AiPlaceSearchServiceTest {
     }
 
     private static Place place(long id, String name, String categoryCode) {
+        return place(id, name, categoryCode, null, 126.97 + id / 1000.0, 37.57);
+    }
+
+    private static Place place(
+            long id, String name, String categoryCode, String imageUrl, double longitude, double latitude) {
         Place place = mock(Place.class);
         PlaceCategory category = mock(PlaceCategory.class);
         when(category.getCode()).thenReturn(categoryCode);
@@ -194,8 +222,16 @@ class AiPlaceSearchServiceTest {
         when(place.getCategory()).thenReturn(category);
         when(place.getTags()).thenReturn(new String[]{"FILMING_LOCATION"});
         when(place.getDefaultDwellMinutes()).thenReturn(60);
+        when(place.getImageUrl()).thenReturn(imageUrl);
         GeometryFactory factory = new GeometryFactory(new PrecisionModel(), 4326);
-        when(place.getLocation()).thenReturn(factory.createPoint(new Coordinate(126.97 + id / 1000.0, 37.57)));
+        when(place.getLocation()).thenReturn(factory.createPoint(new Coordinate(longitude, latitude)));
         return place;
+    }
+
+    private static NearbyPlaceDistanceProjection nearbyRow(long placeId, double distanceMeters) {
+        NearbyPlaceDistanceProjection row = mock(NearbyPlaceDistanceProjection.class);
+        when(row.getPlaceId()).thenReturn(placeId);
+        when(row.getDistanceMeters()).thenReturn(distanceMeters);
+        return row;
     }
 }

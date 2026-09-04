@@ -49,6 +49,14 @@ export function mapHomePlaceCameraState({
   };
 }
 
+export function mapDetailCameraState() {
+  return {
+    fitPlaceMarkers: true,
+    fitUserLocation: false,
+    followUserLocation: false,
+  };
+}
+
 export function createInitialMapHomeInteraction(viewportHeight) {
   return {
     ...initialMapHomeInteraction,

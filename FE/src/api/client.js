@@ -262,10 +262,6 @@ export function fetchRouteComparison({ origin, destination, signal } = {}) {
   }, { signal });
 }
 
-export function fetchJongnoCongestion({ signal } = {}) {
-  return request('/citydata/congestion/jongno', { signal });
-}
-
 export function fetchMockCrowdingPoints(points, { at, signal } = {}) {
   const payload = { points };
   if (at !== undefined && at !== null && at !== '') {
