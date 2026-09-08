@@ -1,5 +1,5 @@
 export const routeGroups = Object.freeze({
-  auth: ['splash', 'intro', 'login', 'signup', 'onboarding', 'onboarding-schedule', 'onboarding-permissions'],
+  auth: ['splash', 'intro', 'login', 'signup'],
   discovery: ['map', 'explore', 'place', 'event-detail', 'search', 'search-empty', 'saved', 'trending', 'filming-locations', 'popups', 'live-talk', 'ai-guide'],
   course: ['course-home', 'course-conditions', 'course-place-times', 'basket', 'basket-natural', 'basket-glass', 'compare', 'route-map', 'saved-course-preview'],
   travel: ['progress', 'arrival', 'navigation', 'reroute', 'reroute-applied', 'transit', 'taxi', 'nearby', 'nearby-added', 'nearby-arrival', 'active-course', 'next-stop', 'gps-error', 'taxi-handoff', 'offline', 'closed-place', 'stop-course'],
@@ -17,6 +17,10 @@ export const rootRoutes = Object.freeze({
   course: 'course-home',
   my: 'my',
 });
+
+export function destinationAfterSignup() {
+  return rootRoutes.map;
+}
 
 const DETAIL_RETURN_STORAGE_KEY = 'ddemachim.detail-return-routes';
 

@@ -36,6 +36,30 @@ class ExternalApiRateLimitFilterTest {
         assertThat(secondResponse.getContentAsString()).contains("COMMON429");
     }
 
+    @Test
+    void guestPublicRequestsShareAnIpLimitAndIgnoreForwardedHeaders() throws Exception {
+        ExternalApiRateLimitFilter filter = new ExternalApiRateLimitFilter(
+                new FixedWindowRequestRateLimiter(1, Duration.ofMinutes(1), Ticker.systemTicker()),
+                new ObjectMapper());
+        assertThat(executeGuest(filter, "/api/routes/compare", "192.0.2.1", "198.51.100.1").getStatus())
+                .isEqualTo(200);
+        assertThat(executeGuest(filter, "/api/place-search/kakao", "192.0.2.1", "198.51.100.2").getStatus())
+                .isEqualTo(429);
+        assertThat(executeGuest(filter, "/api/place-search/kakao", "192.0.2.2", "198.51.100.1").getStatus())
+                .isEqualTo(200);
+    }
+
+    private static MockHttpServletResponse executeGuest(
+            ExternalApiRateLimitFilter filter, String path, String address, String forwarded) throws Exception {
+        MockHttpServletRequest request = new MockHttpServletRequest("POST", path);
+        request.setRequestURI(path);
+        request.setRemoteAddr(address);
+        request.addHeader("X-Forwarded-For", forwarded);
+        MockHttpServletResponse response = new MockHttpServletResponse();
+        filter.doFilter(request, response, new MockFilterChain());
+        return response;
+    }
+
     private static MockHttpServletResponse execute(ExternalApiRateLimitFilter filter, String path)
             throws Exception {
         MockHttpServletRequest request = new MockHttpServletRequest("POST", path);

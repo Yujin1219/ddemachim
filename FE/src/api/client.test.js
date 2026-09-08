@@ -55,6 +55,49 @@ test('fetchKakaoPlaces sends available location options and preserves the abort 
   }
 });
 
+test('public Kakao search failure does not clear an existing login', async () => {
+  const client = await import('./client.js');
+  const originalFetch = globalThis.fetch;
+  const originalWindow = globalThis.window;
+  const localStorage = createStorage({ accessToken: 'valid-token', user: '{"id":1}' });
+  globalThis.window = { localStorage };
+  globalThis.fetch = async () => new Response(JSON.stringify({
+    isSuccess: false,
+    code: 'COMMON401',
+    message: '인증이 필요합니다.',
+  }), { status: 401, headers: { 'Content-Type': 'application/json' } });
+
+  try {
+    await assert.rejects(client.fetchKakaoPlaces('경복궁'), (error) => error.status === 401);
+    assert.equal(localStorage.getItem('accessToken'), 'valid-token');
+    assert.equal(localStorage.getItem('user'), '{"id":1}');
+  } finally {
+    globalThis.fetch = originalFetch;
+    globalThis.window = originalWindow;
+  }
+});
+
+test('non-JSON 401 from a public request does not clear an existing login', async () => {
+  const client = await import('./client.js');
+  const originalFetch = globalThis.fetch;
+  const originalWindow = globalThis.window;
+  const localStorage = createStorage({ accessToken: 'valid-token', user: '{"id":1}' });
+  globalThis.window = { localStorage };
+  globalThis.fetch = async () => new Response('Unauthorized', {
+    status: 401,
+    headers: { 'Content-Type': 'text/plain' },
+  });
+
+  try {
+    await assert.rejects(client.fetchKakaoPlaces('경복궁'), (error) => error.code === 'INVALID_RESPONSE');
+    assert.equal(localStorage.getItem('accessToken'), 'valid-token');
+    assert.equal(localStorage.getItem('user'), '{"id":1}');
+  } finally {
+    globalThis.fetch = originalFetch;
+    globalThis.window = originalWindow;
+  }
+});
+
 test('sendAiGuideMessage posts the bounded chat contract with an optional JWT', async () => {
   const client = await import('./client.js');
   assert.equal(typeof client.sendAiGuideMessage, 'function', 'AI guide API function must exist');
@@ -764,4 +807,14 @@ test('fetchMockCrowdingGrids sends WGS84 viewport bounds, optional slot time, an
   } finally {
     globalThis.fetch = originalFetch;
   }
+});
+
+test('disabled AI guide displays an unavailable notice without technical details', async () => {
+  const { getAiGuideErrorPresentation } = await import('./client.js');
+  const presentation = getAiGuideErrorPresentation({ status: 503, code: 'AIGUIDE5032' });
+  assert.equal(presentation.title, '현재 이용할 수 없습니다');
+  assert.equal(presentation.message, 'AI 가이드가 잠시 중단되어 있어요. 나중에 다시 이용해주세요.');
+  assert.equal(presentation.technical, null);
+  assert.equal(presentation.unavailable, true);
+  assert.notEqual(getAiGuideErrorPresentation({ status: 503, code: 'AIGUIDE5031' }).unavailable, true);
 });

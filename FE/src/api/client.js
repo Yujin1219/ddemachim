@@ -105,7 +105,7 @@ async function request(path, options = {}) {
     try {
       body = JSON.parse(responseText);
     } catch {
-      if (response.status === 401) clearAuth();
+      if (auth && response.status === 401) clearAuth();
       const error = new Error(`API ${path} 응답을 JSON으로 읽지 못했습니다.`);
       error.name = 'ApiRequestError';
       error.status = response.status;
@@ -119,7 +119,7 @@ async function request(path, options = {}) {
     const errorCode = String(body.code ?? '');
     const isAuthError = response.status === 401
       || /(?:401|UNAUTHORIZED|TOKEN[_-]?EXPIRED|AUTH[_-]?EXPIRED)/i.test(errorCode);
-    if (isAuthError) clearAuth();
+    if (auth && isAuthError) clearAuth();
 
     const error = new Error(body.message || `API ${path} failed: ${response.status}`);
     error.name = 'ApiRequestError';
@@ -136,6 +136,11 @@ async function request(path, options = {}) {
 }
 
 const AI_GUIDE_ERROR_PRESENTATIONS = {
+  AIGUIDE5032: {
+    title: '현재 이용할 수 없습니다',
+    message: 'AI 가이드가 잠시 중단되어 있어요. 나중에 다시 이용해주세요.',
+    unavailable: true,
+  },
   AIGUIDE4291: {
     title: 'OpenAI 사용량 한도를 초과했어요',
     message: 'OpenAI API의 분당 요청 한도와 프로젝트 결제 크레딧을 확인한 뒤 다시 시도해주세요.',
@@ -194,7 +199,7 @@ export function getAiGuideErrorPresentation(error) {
     ...(known || fallback),
     code: code || null,
     status,
-    technical: [status ? `HTTP ${status}` : null, code || null].filter(Boolean).join(' · '),
+    technical: known?.unavailable ? null : [status ? `HTTP ${status}` : null, code || null].filter(Boolean).join(' · '),
   };
 }
 

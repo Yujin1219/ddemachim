@@ -163,6 +163,7 @@ import { guardSceneRouteHash } from '../sceneCamera/routes.js';
 import { useMyProfile } from '../hooks/useMyProfile.js';
 import { profileInitial } from '../utils/memberProfile.js';
 import {
+  destinationAfterSignup,
   detailReturnRouteFor,
   detailReturnRoutes,
   rememberDetailReturnRoute,
@@ -1201,7 +1202,7 @@ function AuthForm({ screen, go, onLoginSuccess }) {
         ? await signup({ email: form.email.trim(), password: form.password, nickname: form.nickname.trim() })
         : await login({ email: form.email.trim(), password: form.password });
       saveAuth(result);
-      if (isSignup) go('onboarding');
+      if (isSignup) go(destinationAfterSignup());
       else if (onLoginSuccess) onLoginSuccess();
       else go('map');
     } catch (error) {
@@ -1213,7 +1214,7 @@ function AuthForm({ screen, go, onLoginSuccess }) {
 
   return <section className="phone standard-screen auth-form-screen"><main className="page-scroll form-scroll auth-form-scroll" aria-busy={isSubmitting}>
     <IconButton label="이전" className="auth-back" onClick={() => go('intro')} />
-    <div className="form-heading"><h2 id="auth-form-title">{isSignup ? '때마침을 시작해볼까요?' : '다시 만나서 반가워요'}</h2><p>{isSignup ? '가입 후 관심 장소와 알림을 설정할 수 있어요.' : '저장한 코스와 여행 기록을 이어서 확인하세요.'}</p></div>
+    <div className="form-heading"><h2 id="auth-form-title">{isSignup ? '때마침을 시작해볼까요?' : '다시 만나서 반가워요'}</h2><p>{isSignup ? '가입 후 바로 서울의 장소와 코스를 둘러볼 수 있어요.' : '저장한 코스와 여행 기록을 이어서 확인하세요.'}</p></div>
     <form className="auth-form" aria-labelledby="auth-form-title" noValidate onSubmit={handleSubmit}>
       <AuthField id="auth-email" name="email" label="이메일" type="email" value={form.email} onChange={handleChange} error={fieldErrors.email} placeholder="이메일을 입력해주세요" autoComplete="email" disabled={isSubmitting} />
       <AuthField id="auth-password" name="password" label="비밀번호" type="password" value={form.password} onChange={handleChange} error={fieldErrors.password} placeholder={isSignup ? '8자 이상 입력해주세요' : '비밀번호를 입력해주세요'} autoComplete={isSignup ? 'new-password' : 'current-password'} disabled={isSubmitting} />
@@ -1221,7 +1222,6 @@ function AuthForm({ screen, go, onLoginSuccess }) {
       {isSignup && <><AuthField id="auth-nickname" name="nickname" label="닉네임" value={form.nickname} onChange={handleChange} error={fieldErrors.nickname} placeholder="사용할 닉네임을 입력해주세요" disabled={isSubmitting} /><div className="terms-group"><label className="check-row all-check"><input type="checkbox" checked={form.requiredTerms && form.marketingTerms} onChange={handleAllTermsChange} disabled={isSubmitting} /> 전체 동의</label><label className={`check-row ${fieldErrors.requiredTerms ? 'has-error' : ''}`}><input name="requiredTerms" type="checkbox" checked={form.requiredTerms} onChange={handleChange} disabled={isSubmitting} /> [필수] 이용약관 및 개인정보처리방침</label><label className="check-row"><input name="marketingTerms" type="checkbox" checked={form.marketingTerms} onChange={handleChange} disabled={isSubmitting} /> [선택] 장소 추천과 이벤트 알림</label>{fieldErrors.requiredTerms && <span className="field-error terms-error" role="alert">{fieldErrors.requiredTerms}</span>}</div></>}
       {serverError && <p className="auth-server-error" role="alert">{serverError}</p>}
       <ActionButton type="submit" disabled={isSubmitting}>{isSubmitting ? (isSignup ? '가입 중...' : '로그인 중...') : (isSignup ? '회원가입' : '로그인')}</ActionButton>
-      {!isSignup && <><div className="divider-text"><span />또는<span /></div><div className="social-actions"><ActionButton className="auth-kakao" disabled>카카오로 계속하기</ActionButton><ActionButton tone="secondary" disabled>Apple로 계속하기</ActionButton></div></>}
       <p className="form-foot">{isSignup ? '이미 계정이 있나요?' : '계정이 없나요?'} <button onClick={() => go(isSignup ? 'login' : 'signup')} type="button" disabled={isSubmitting}>{isSignup ? '로그인' : '회원가입'}</button></p>
     </form>
   </main></section>;
@@ -1287,10 +1287,6 @@ function DetailMapSection({ title, meta, ariaLabel, places, userLocation, placeM
 }
 
 function AuthScreen({ screen, go, onLoginSuccess }) {
-  const [themes, setThemes] = useState(['촬영지', '요즘 뜨는 곳']);
-  const [pace, setPace] = useState('여유롭게');
-  const [tripTime, setTripTime] = useState('5시간');
-  const [permissions, setPermissions] = useState(['위치', '알림']);
   if (screen === 'splash') {
     return <section className="phone auth-screen splash-screen"><div className="splash-orbit" /><div className="splash-brand">ㅌ</div><h1>때마침</h1><p>걷기 좋은 순간, 도착하는 여행</p><div className="splash-progress"><span /></div><button className="full-screen-hit" onClick={() => go('intro')} aria-label="서비스 시작" /></section>;
   }
@@ -1300,9 +1296,7 @@ function AuthScreen({ screen, go, onLoginSuccess }) {
   if (screen === 'login' || screen === 'signup') {
     return <AuthForm screen={screen} go={go} onLoginSuccess={onLoginSuccess} />;
   }
-  const step = screen === 'onboarding' ? 1 : screen === 'onboarding-schedule' ? 2 : 3;
-  const goNext = () => go(screen === 'onboarding' ? 'onboarding-schedule' : screen === 'onboarding-schedule' ? 'onboarding-permissions' : 'map');
-  return <section className="phone standard-screen onboarding-screen onboarding-v3"><main className="page-scroll onboarding-scroll"><div className="onboarding-progress"><strong>{step} / 3</strong><span><i style={{ transform: `scaleX(${step / 3})` }} /></span></div>{screen === 'onboarding' && <><div className="onboarding-copy"><h1>어떤 장소를 좋아하세요?</h1><p>관심 있는 테마를 고르면 첫 코스를 더 잘 추천할 수 있어요.</p></div><div className="onboarding-topic-list">{[['촬영지', '영화와 드라마 속 장면'], ['요즘 뜨는 곳', '저장과 사진 반응이 빠른 장소'], ['팝업·전시', '이번 주에만 만날 수 있는 공간'], ['골목·산책', '천천히 걷기 좋은 서울의 길'], ['카페·디저트', '메뉴와 공간이 함께 좋은 곳']].map(([name, copy]) => { const selected = themes.includes(name); return <button type="button" className={selected ? 'selected' : ''} key={name} onClick={() => setThemes((current) => selected ? current.filter((item) => item !== name) : [...current, name])}><i /><span><strong>{name}</strong><small>{copy}</small></span></button>; })}</div></>}{screen === 'onboarding-schedule' && <><div className="onboarding-copy"><h1>오늘 여행은 어떤 느낌이 좋아요?</h1><p>일정 밀도와 사용할 수 있는 시간을 알려주세요.</p></div><section className="onboarding-group"><h2>일정 밀도</h2><div className="onboarding-density-grid">{[['여유롭게', '장소마다 충분히 머물고 싶어요'], ['촘촘하게', '더 많은 장소를 방문하고 싶어요']].map(([name, copy]) => <button type="button" className={pace === name ? 'selected' : ''} key={name} onClick={() => setPace(name)}><strong>{name}</strong><small>{copy}</small></button>)}</div></section><section className="onboarding-group"><h2>여행 시간</h2><div className="onboarding-duration-grid">{[['3시간', '가볍게 반나절 걷기'], ['5시간', '점심부터 저녁 전까지'], ['하루 종일', '여유 있는 서울 여행']].map(([name, copy]) => <button type="button" className={tripTime === name ? 'selected' : ''} key={name} onClick={() => setTripTime(name)}><strong>{name}</strong><small>{copy}</small></button>)}</div></section></>}{screen === 'onboarding-permissions' && <><div className="onboarding-copy"><h1>필요한 순간에 알려드릴게요</h1><p>권한은 해당 기능을 사용할 때만 요청해요.</p></div><div className="onboarding-permission-list">{[['위치', '길 안내와 도착 감지에 사용'], ['알림', '혼잡 변화와 주변 장소 안내'], ['카메라', '촬영 장면 구도 맞추기'], ['사진', '방문 인증 사진 저장']].map(([name, copy]) => { const selected = permissions.includes(name); return <button type="button" className={selected ? 'selected' : ''} key={name} onClick={() => setPermissions((current) => selected ? current.filter((item) => item !== name) : [...current, name])}><i>{selected ? '✓' : ''}</i><span><strong>{name}</strong><small>{copy}</small></span></button>; })}</div><button type="button" className="onboarding-later" onClick={goNext}>나중에 설정<span>MY에서 언제든 변경 가능</span></button></>}</main><div className="sticky-actions"><ActionButton onClick={goNext}>{screen === 'onboarding-permissions' ? '때마침 시작' : '다음'}</ActionButton></div></section>;
+  return null;
 }
 
 const MAP_FILTER_ICONS = {
@@ -3537,7 +3531,7 @@ function AiGuide({ go, onCourseGenerated }) {
   const handleSubmit = async (event) => {
     event.preventDefault();
     const message = draft.trim();
-    if (!message || isLoading) return;
+    if (!message || isLoading || error?.unavailable) return;
 
     if (pendingProposalMessage?.courseProposal && isAiCourseConfirmation(message)) {
       const selectedPlaceCount = new Set([
@@ -3683,7 +3677,7 @@ function AiGuide({ go, onCourseGenerated }) {
               <strong>{error.title}</strong>
               <span>{error.message}</span>
               {error.technical && <small>{error.technical}</small>}
-              <button
+              {!error.unavailable && <button
                 type="button"
                 onClick={() => {
                   setDraft(error.requestMessage || '');
@@ -3691,7 +3685,7 @@ function AiGuide({ go, onCourseGenerated }) {
                 }}
               >
                 요청 다시 입력하기
-              </button>
+              </button>}
             </section>
           )}
           <div aria-hidden="true" className="ai-guide-bottom-spacer" ref={chatBottomSpacerRef} />
@@ -3706,10 +3700,10 @@ function AiGuide({ go, onCourseGenerated }) {
           onKeyDown={handleInputKeyDown}
           placeholder="예: 안국에서 조용한 카페를 추천해줘"
           rows={1}
-          disabled={isLoading}
+          disabled={isLoading || error?.unavailable}
           aria-describedby={error ? 'ai-guide-error' : undefined}
         />
-        <button type="submit" aria-label="메시지 보내기" disabled={!draft.trim() || isLoading}>
+        <button type="submit" aria-label="메시지 보내기" disabled={!draft.trim() || isLoading || error?.unavailable}>
           <SendHorizontal aria-hidden="true" size={19} strokeWidth={2} />
         </button>
       </form>

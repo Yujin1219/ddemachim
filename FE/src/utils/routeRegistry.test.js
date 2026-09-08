@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
+import * as routeRegistry from './routeRegistry.js';
 
 import {
   detailReturnRouteFor,
@@ -31,6 +32,18 @@ test('route registry keeps every root tab and detail destination available', () 
   assert.equal(routes.has('place'), true);
   assert.equal(routes.has('event-detail'), true);
   assert.equal(routes.has('filming-work'), true);
+});
+
+test('signup completion enters the map without an onboarding detour', () => {
+  assert.equal(typeof routeRegistry.destinationAfterSignup, 'function');
+  assert.equal(routeRegistry.destinationAfterSignup(), 'map');
+});
+
+test('removed signup onboarding screens are not valid routes', () => {
+  assert.deepEqual(routeRegistry.routeGroups.auth, ['splash', 'intro', 'login', 'signup']);
+  assert.equal(routes.has('onboarding'), false);
+  assert.equal(routes.has('onboarding-schedule'), false);
+  assert.equal(routes.has('onboarding-permissions'), false);
 });
 
 test('detail return routes preserve the exact screen and identifier in session storage', () => {

@@ -130,7 +130,7 @@ test('renders the AI guide as an API-backed, composition-safe chat surface', () 
     'getAiGuideErrorPresentation(requestError)',
     'error.technical',
     'aria-live="polite"',
-    'disabled={!draft.trim() || isLoading}',
+    'disabled={!draft.trim() || isLoading || error?.unavailable}',
   ]) {
     assert.equal(productFlowSource.includes(expectedReference), true, `missing AI guide reference: ${expectedReference}`);
   }
