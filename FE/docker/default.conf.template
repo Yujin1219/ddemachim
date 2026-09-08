@@ -1,0 +1,56 @@
+# Preserve HTTPS information when the company proxy terminates TLS.
+# Only the trusted company proxy should reach the VM's published web port.
+map $http_x_forwarded_proto $original_scheme {
+    default $scheme;
+    https https;
+    http http;
+}
+
+server {
+    listen 80;
+    server_name _;
+    server_tokens off;
+    root /usr/share/nginx/html;
+    index index.html;
+    client_max_body_size 10m;
+
+    # Docker's DNS. Resolve at request time so the web image can start before
+    # the backend, and refresh the address after a backend container replacement.
+    resolver 127.0.0.11 valid=10s ipv6=off;
+    set $backend_upstream "${BACKEND_UPSTREAM}";
+
+    location = /healthz {
+        access_log off;
+        default_type text/plain;
+        return 200 "ok\n";
+    }
+
+    location ~ ^/api(?:/|$) {
+        proxy_pass $backend_upstream$request_uri;
+        proxy_http_version 1.1;
+        proxy_set_header Host $http_host;
+        proxy_set_header X-Forwarded-Host $http_host;
+        proxy_set_header X-Forwarded-Proto $original_scheme;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header Connection "";
+        proxy_connect_timeout 5s;
+        proxy_read_timeout 300s;
+        proxy_buffering off;
+    }
+
+    location ~ /\. {
+        return 404;
+    }
+
+    location /assets/ {
+        try_files $uri =404;
+    }
+
+    location = /index.html {
+        add_header Cache-Control "no-cache";
+    }
+
+    location / {
+        try_files $uri $uri/ /index.html;
+    }
+}

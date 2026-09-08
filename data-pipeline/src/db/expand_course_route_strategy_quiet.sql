@@ -1,7 +1,13 @@
--- Keep existing revisions while extending the strategy check used by new course previews.
-ALTER TABLE course_revision
+-- Replace the legacy PLEASANT strategy while preserving existing revisions.
+BEGIN;
+SET LOCAL lock_timeout = '5s';
+ALTER TABLE public.course_revision
     DROP CONSTRAINT IF EXISTS chk_course_revision_route_strategy;
 
-ALTER TABLE course_revision
+UPDATE public.course_revision SET route_strategy = 'QUIET'
+WHERE route_strategy = 'PLEASANT';
+
+ALTER TABLE public.course_revision
     ADD CONSTRAINT chk_course_revision_route_strategy
-    CHECK (route_strategy IN ('EASY', 'FAST', 'QUIET', 'PLEASANT'));
+    CHECK (route_strategy IN ('EASY', 'FAST', 'QUIET'));
+COMMIT;

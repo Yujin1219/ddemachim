@@ -188,7 +188,7 @@ BEGIN
     ) THEN
         ALTER TABLE course_revision
             ADD CONSTRAINT chk_course_revision_route_strategy
-            CHECK (route_strategy IN ('EASY', 'FAST', 'QUIET', 'PLEASANT'));
+            CHECK (route_strategy IN ('EASY', 'FAST', 'QUIET'));
     END IF;
 
     IF NOT EXISTS (

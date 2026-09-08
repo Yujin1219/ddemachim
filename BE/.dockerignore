@@ -1,0 +1,12 @@
+.env
+.env.*
+.gradle
+.idea
+.git
+build
+out
+bin
+*.log
+.DS_Store
+src/test
+src/main/resources/application-local.*
