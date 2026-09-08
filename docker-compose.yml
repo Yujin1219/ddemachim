@@ -13,7 +13,7 @@ services:
       - ddemachim-db-data:/var/lib/postgresql
 
   redis:
-    image: redis:7-alpine
+    image: redis:8.8.0-alpine
     container_name: ddemachim-redis
     restart: unless-stopped
     ports:

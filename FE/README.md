@@ -11,6 +11,9 @@ npm run dev
 
 검증 명령은 `npm test`, `npm run build`입니다.
 
+Rocky Linux x86_64 VM용 프론트 이미지의 빌드·실행·검증 방법은
+[Docker 배포 안내](docker/README.md)를 참고하세요.
+
 ## 폰트
 
 전역 서체는 `@fontsource/noto-sans-kr`로 자체 호스팅하는 Noto Sans KR이며, `src/main.jsx`에서 400·500·600·700 굵기를 불러옵니다. 폰트 파일은 앱 번들에 포함되므로 Google Fonts 같은 외부 폰트 CDN에 의존하지 않습니다.
