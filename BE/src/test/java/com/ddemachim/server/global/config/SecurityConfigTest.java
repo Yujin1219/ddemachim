@@ -85,7 +85,7 @@ class SecurityConfigTest {
     }
 
     @Test
-    void 토큰이_없으면_외부_API를_사용하는_기능을_호출할_수_없다() throws Exception {
+    void 토큰이_없으면_AI_API를_호출할_수_없다() throws Exception {
         mockMvc.perform(post("/api/v1/ai-guide/chats")
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("{}"))
@@ -94,12 +94,31 @@ class SecurityConfigTest {
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("{}"))
                 .andExpect(status().isUnauthorized());
+    }
+
+    @Test
+    void 토큰이_없어도_홈_길찾기는_좌표_검증까지_도달한다() throws Exception {
         mockMvc.perform(post("/api/routes/compare")
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("{}"))
-                .andExpect(status().isUnauthorized());
-        mockMvc.perform(get("/api/place-search/kakao").queryParam("query", "경복궁"))
-                .andExpect(status().isUnauthorized());
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.code").value("ROUTE4001"));
+    }
+
+    @Test
+    void 만료된_토큰도_홈_길찾기를_막지_않는다() throws Exception {
+        mockMvc.perform(post("/api/routes/compare")
+                        .header("Authorization", "Bearer " + expiredToken())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{}"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.code").value("ROUTE4001"));
+    }
+
+    @Test
+    void 토큰이_없어도_카카오_장소_검색은_컨트롤러까지_도달한다() throws Exception {
+        mockMvc.perform(get("/api/place-search/kakao"))
+                .andExpect(status().isBadRequest());
     }
 
     @Test

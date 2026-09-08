@@ -11,6 +11,7 @@ import java.nio.charset.StandardCharsets;
 import java.util.Set;
 import lombok.NonNull;
 import org.springframework.http.MediaType;
+import org.springframework.security.authentication.AnonymousAuthenticationToken;
 import org.springframework.security.core.Authentication;
 import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.stereotype.Component;
@@ -25,6 +26,9 @@ public class ExternalApiRateLimitFilter extends OncePerRequestFilter {
             "/api/v1/ai-courses/preview",
             "/api/routes/compare",
             "/api/place-search/kakao");
+
+    private static final Set<String> PUBLIC_RATE_LIMITED_PATHS = Set.of(
+            "/api/routes/compare", "/api/place-search/kakao");
 
     private final FixedWindowRequestRateLimiter rateLimiter;
     private final ObjectMapper objectMapper;
@@ -47,13 +51,19 @@ public class ExternalApiRateLimitFilter extends OncePerRequestFilter {
             @NonNull HttpServletResponse response,
             @NonNull FilterChain filterChain) throws ServletException, IOException {
         Authentication authentication = SecurityContextHolder.getContext().getAuthentication();
-        if (authentication == null || !authentication.isAuthenticated()) {
+        boolean authenticated = authentication != null
+                && authentication.isAuthenticated()
+                && !(authentication instanceof AnonymousAuthenticationToken);
+        if (!authenticated && !PUBLIC_RATE_LIMITED_PATHS.contains(request.getRequestURI())) {
             filterChain.doFilter(request, response);
             return;
         }
 
-        String memberKey = "member:" + authentication.getPrincipal();
-        if (rateLimiter.tryAcquire(memberKey)) {
+        // Use the connection address; forwarded headers require trusted-proxy configuration.
+        String requesterKey = authenticated
+                ? "member:" + authentication.getPrincipal()
+                : "ip:" + request.getRemoteAddr();
+        if (rateLimiter.tryAcquire(requesterKey)) {
             filterChain.doFilter(request, response);
             return;
         }

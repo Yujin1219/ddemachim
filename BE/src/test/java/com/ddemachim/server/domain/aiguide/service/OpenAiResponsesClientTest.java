@@ -803,6 +803,22 @@ class OpenAiResponsesClientTest {
     }
 
     @Test
+    void disabledGuideReturnsUnavailableWithoutCallingOpenAi() {
+        AiGuideProperties properties = properties();
+        properties.setEnabled(false);
+        properties.setApiKey("");
+        RestClient.Builder builder = RestClient.builder().baseUrl("https://example.test");
+        MockRestServiceServer server = MockRestServiceServer.bindTo(builder).build();
+
+        assertThatThrownBy(() ->
+                client(properties, mock(DdemachimMcpTools.class), builder.build())
+                        .complete(new AiGuideRequest("도와줘", List.of())))
+                .isInstanceOfSatisfying(AiGuideException.class, exception ->
+                        assertThat(exception.getErrorReason().getCode()).isEqualTo("AIGUIDE5032"));
+        server.verify();
+    }
+
+    @Test
     void missingApiKeyBecomesStructuredConfigurationError() {
         AiGuideProperties properties = properties();
         properties.setApiKey("");

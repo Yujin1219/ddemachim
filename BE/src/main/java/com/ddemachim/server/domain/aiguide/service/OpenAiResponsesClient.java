@@ -1080,8 +1080,10 @@ public class OpenAiResponsesClient implements AiGuideLlmClient {
     }
 
     private void validateConfiguration() {
-        if (!properties.isEnabled()
-                || !properties.hasApiKey()
+        if (!properties.isEnabled()) {
+            throw new AiGuideException(AiGuideErrorStatus.DISABLED);
+        }
+        if (!properties.hasApiKey()
                 || !StringUtils.hasText(properties.getModel())
                 || properties.getMaxOutputTokens() < 1
                 || properties.getMaxToolRounds() < 1
