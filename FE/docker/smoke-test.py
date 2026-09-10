@@ -69,7 +69,7 @@ try:
     status, headers, html = fetch("/")
     assert status == 200 and b'<div id="root"></div>' in html
     assert headers.get("Cache-Control") == "no-cache"
-    for path in re.findall(r'(?:src|href)="(/assets/[^\"]+)"', html.decode()):
+    for path in re.findall(r'(?:src|href)="((?:/machim)?/assets/[^\"]+)"', html.decode()):
         status, headers, content = fetch(path)
         assert status == 200 and content and "text/html" not in headers.get("Content-Type", "")
     assert fetch("/assets/does-not-exist.js")[0] == 404
@@ -91,7 +91,27 @@ try:
     assert reply["headers"]["origin"] == "https://web.example.test"
     assert reply["headers"]["x-forwarded-proto"] == "https"
     assert fetch("/api/fail")[0] == 503
+    status, _, subpath_html = fetch("/machim/")
+    assert status == 200 and subpath_html == html
+    paths = re.findall(r'(?:src|href)="(/machim/assets/[^\"]+)"', html.decode())
+    assert len(paths) >= 2, "Expected subpath JS and CSS links"
+    for path in paths + ["/machim/assets/place-default.svg"]:
+        status, headers, content = fetch(path)
+        assert status == 200 and content and "text/html" not in headers.get("Content-Type", "")
+        if path.endswith(".css"):
+            nav_rules = re.findall(r"\.bottom-nav\{([^}]*)\}", content.decode())
+            assert any(re.search(r"(?:^|;)backdrop-filter:blur\(18px\)", rule) for rule in nav_rules), \
+                "Built CSS must retain the standard bottom navigation backdrop-filter"
+    assert fetch("/machim/assets/missing.js")[0] == 404
+    assert fetch("/machim/.env")[0] == 404
+    status, _, body = fetch("/machim/api/echo?q=a%20b", b'{}', {"Content-Type": "application/json"})
+    assert status == 200 and json.loads(body)["url"] == "/api/echo?q=a%20b", (status, body)
+    assert json.loads(body)["method"] == "POST"
+    assert fetch("/machim/api/fail")[0] == 503
     print("PASS: amd64 image, static assets, config exclusion, backend-independent startup, API proxy")
+except Exception:
+    print(docker("logs", "--tail", "15", web), file=sys.stderr)
+    raise
 finally:
     for container in (web, backend):
         subprocess.run(["docker", "rm", "-f", container], capture_output=True)

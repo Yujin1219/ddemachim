@@ -79,9 +79,7 @@ Python 표준 라이브러리와 Docker를 사용합니다. 임시 Docker 네트
 
 ## 회사 Nginx 연결 전 확인
 
-- 현재 이미지는 도메인의 루트(`/`)에서 제공하는 구성을 기준으로 합니다.
-  `/yujin/` 같은 하위 경로로 서비스한다면 프론트의 `/api`, `/assets` 절대 경로와
-  회사 Nginx 경로 분기를 함께 조정해야 합니다.
+- 현재 Docker 이미지는 `/machim/` 경로 기준입니다. 다른 접두어를 사용한다면 빌드 base와 Nginx rewrite를 함께 변경하세요.
 - 회사 Nginx가 VM의 웹 포트로만 전달하게 하고, VM 웹 포트는 신뢰하는 프록시에서
   접근하도록 설정합니다. HTTPS를 회사에서 종료하면 `Host`, `X-Forwarded-Proto`를 전달해야 합니다.
 - 이 Nginx는 Origin을 삭제하거나 모든 출처에 CORS를 허용하지 않습니다.
@@ -98,3 +96,11 @@ docker image save -o /tmp/ddemachim-web-amd64.tar ddemachim-web:vm-amd64
 
 이 파일을 VM으로 전송하고 VM에서 `docker image load -i 파일경로`로 등록합니다.
 DB 데이터는 이 이미지에 포함하지 않습니다.
+
+## 회사 하위 경로 배포
+
+Docker 빌드는 기본 `VITE_BASE_PATH=/machim/`을 사용합니다. 화면 파일과 API는
+`/machim/assets/...`, `/machim/api/...`로 요청합니다. Nginx가 `/machim/`을 제거해
+기존 파일 경로와 `/api` 백엔드로 전달합니다. 로컬 Vite 개발 기본 경로는 `/`입니다.
+새 이미지는 `ddemachim-web:machim-amd64` 태그로 배포하고, VM 환경 파일의
+`PUBLIC_ORIGIN`은 `https://mapprime.synology.me:15289`로 지정합니다.

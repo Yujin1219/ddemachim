@@ -1,3 +1,4 @@
+import { withBasePath } from './utils/appPath.js';
 const AUTH_RETURN_ROUTE_KEY = 'ddemachim:auth-return-route';
 
 function normalizedSource(item) {
@@ -12,16 +13,16 @@ export function getBasketItemPresentation(item) {
   const category = String(item?.categoryName || '').toLowerCase();
 
   if (/전시|행사|공연|축제|팝업|event/.test(category) || item?.categoryGroupCode === 'EVENT') {
-    return { label: '전시·행사', tone: 'event', imageUrl: imageUrl || '/assets/figma/explore-popup.png' };
+    return { label: '전시·행사', tone: 'event', imageUrl: imageUrl || withBasePath('/assets/figma/explore-popup.png') };
   }
   if (source === 'KAKAO') {
-    return { label: '카카오 장소', tone: 'kakao', imageUrl: imageUrl || '/assets/place-default.svg' };
+    return { label: '카카오 장소', tone: 'kakao', imageUrl: imageUrl || withBasePath('/assets/place-default.svg') };
   }
-  if (/촬영|드라마|영화/.test(category)) return { label: '촬영지', tone: 'filming', imageUrl: imageUrl || '/assets/figma/explore-scene.jpeg' };
-  if (/음식|식당|맛집|restaurant/.test(category)) return { label: '음식점', tone: 'restaurant', imageUrl: imageUrl || '/assets/cafe-garden.png' };
-  if (/카페|커피|디저트|cafe/.test(category)) return { label: '카페', tone: 'cafe', imageUrl: imageUrl || '/assets/cafe-garden.png' };
-  if (/공원|숲|산책|park/.test(category)) return { label: '공원', tone: 'park', imageUrl: imageUrl || '/assets/palace-garden.png' };
-  return { label: '관광지', tone: 'landmark', imageUrl: imageUrl || '/assets/palace-garden.png' };
+  if (/촬영|드라마|영화/.test(category)) return { label: '촬영지', tone: 'filming', imageUrl: imageUrl || withBasePath('/assets/figma/explore-scene.jpeg') };
+  if (/음식|식당|맛집|restaurant/.test(category)) return { label: '음식점', tone: 'restaurant', imageUrl: imageUrl || withBasePath('/assets/cafe-garden.png') };
+  if (/카페|커피|디저트|cafe/.test(category)) return { label: '카페', tone: 'cafe', imageUrl: imageUrl || withBasePath('/assets/cafe-garden.png') };
+  if (/공원|숲|산책|park/.test(category)) return { label: '공원', tone: 'park', imageUrl: imageUrl || withBasePath('/assets/palace-garden.png') };
+  return { label: '관광지', tone: 'landmark', imageUrl: imageUrl || withBasePath('/assets/palace-garden.png') };
 }
 
 function basketItemIdentity(item) {

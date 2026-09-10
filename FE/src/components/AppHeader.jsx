@@ -1,6 +1,7 @@
+import { withBasePath } from '../utils/appPath.js';
 import { MessageCircle, ShoppingBasket } from 'lucide-react';
 
-const ASSET_BASE = '/assets/app-header';
+const ASSET_BASE = withBasePath('/assets/app-header');
 
 export default function AppHeader({ basketCount = 0, onHome, onBasket, onLiveTalk }) {
   return (
