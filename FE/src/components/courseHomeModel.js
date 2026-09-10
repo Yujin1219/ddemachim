@@ -1,3 +1,4 @@
+import { withBasePath } from '../utils/appPath.js';
 const immutableCourses = (courses) => Object.freeze(
   courses.map((course) => Object.freeze({
     ...course,
@@ -19,7 +20,7 @@ export const scheduledCourses = immutableCourses([
     area: '안국·북촌',
     placeCount: 4,
     duration: '3시간 10분',
-    image: '/assets/figma/my-map.png',
+    image: withBasePath('/assets/figma/my-map.png'),
     status: 'scheduled',
   },
   {
@@ -30,7 +31,7 @@ export const scheduledCourses = immutableCourses([
     area: '성수동',
     placeCount: 3,
     duration: '2시간 40분',
-    image: '/assets/figma/explore-scene.jpeg',
+    image: withBasePath('/assets/figma/explore-scene.jpeg'),
     status: 'scheduled',
   },
 ]);
@@ -44,7 +45,7 @@ export const completedCourses = immutableCourses([
     area: '서촌·경복궁',
     placeCount: 4,
     duration: '2시간 50분',
-    image: '/assets/figma/complete-photo.png',
+    image: withBasePath('/assets/figma/complete-photo.png'),
     status: 'completed',
   },
   {
@@ -55,7 +56,7 @@ export const completedCourses = immutableCourses([
     area: '북촌·창덕궁',
     placeCount: 5,
     duration: '4시간 5분',
-    image: '/assets/palace-garden.png',
+    image: withBasePath('/assets/palace-garden.png'),
     status: 'completed',
   },
 ]);

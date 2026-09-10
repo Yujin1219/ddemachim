@@ -1,4 +1,5 @@
-const BASE_URL = '/api';
+import { withBasePath } from '../utils/appPath.js';
+const BASE_URL = withBasePath('/api');
 const ACCESS_TOKEN_KEY = 'accessToken';
 const USER_KEY = 'user';
 

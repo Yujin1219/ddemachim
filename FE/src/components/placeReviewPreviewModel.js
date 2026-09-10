@@ -1,3 +1,4 @@
+import { withBasePath } from '../utils/appPath.js';
 function parseFiniteNumber(value) {
   if (typeof value === 'boolean' || value === null || value === undefined) return null;
   if (typeof value === 'string' && value.trim() === '') return null;
@@ -117,15 +118,15 @@ export const PLACE_REVIEW_ITEMS = [
     photos: [
       {
         id: 'place-review-preview-1-photo-2',
-        url: '/assets/cafe-garden.png',
-        thumbnailUrl: '/assets/cafe-garden.png',
+        url: withBasePath('/assets/cafe-garden.png'),
+        thumbnailUrl: withBasePath('/assets/cafe-garden.png'),
         displayOrder: 1,
         alt: '햇빛이 비치는 카페 정면과 창가',
       },
       {
         id: 'place-review-preview-1-photo-1',
-        url: '/assets/figma/place-detail.jpeg',
-        thumbnailUrl: '/assets/figma/place-detail.jpeg',
+        url: withBasePath('/assets/figma/place-detail.jpeg'),
+        thumbnailUrl: withBasePath('/assets/figma/place-detail.jpeg'),
         displayOrder: 0,
         alt: '골목에서 바라본 카페 외관',
       },

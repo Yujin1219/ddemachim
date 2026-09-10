@@ -319,3 +319,28 @@ test('StrictMode stale play timeout cannot overwrite the newer camera-ready stat
   assert.equal(fixture.track.stops, 0);
   act(() => renderer.unmount());
 });
+
+test('entering scene detail from map completes the reference check', async () => {
+  let api;
+  const target = eventTarget();
+  const preflight = async (metadata) => ({ metadata, image: {} });
+  const AutoPrepare = () => {
+    api = useSceneCamera();
+    React.useEffect(() => {
+      if (api.referenceStatus === 'idle') void api.prepareReference('42');
+    }, [api.prepareReference, api.referenceStatus]);
+    return null;
+  };
+  const props = { referenceMap: { 42: reference }, preflight, windowTarget: target, documentTarget: target };
+  const render = (screen) => React.createElement(SceneCameraProvider,
+    { ...props, screen, routeId: screen === 'scene-detail' ? '42' : null },
+    screen === 'scene-detail' ? React.createElement(AutoPrepare) : null);
+  let renderer;
+  try {
+    await act(async () => { renderer = create(render('map')); });
+    await act(async () => { renderer.update(render('scene-detail')); });
+    assert.equal(api.referenceStatus, 'ready');
+  } finally {
+    await act(async () => renderer.unmount());
+  }
+});

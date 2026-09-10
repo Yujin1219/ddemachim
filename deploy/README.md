@@ -38,7 +38,7 @@ chmod 600 deploy/.env
   웹 포트는 신뢰하는 회사 프록시에서 접근하도록 네트워크 정책을 설정합니다.
 - `PUBLIC_ORIGIN`은 브라우저의 실제 출처입니다. 예: `https://yujin.company.example`.
   경로(`/yujin`)나 끝의 `/`를 넣지 않습니다. 여러 출처는 쉼표로 구분할 수 있습니다.
-- 프론트는 루트(`/`)에 제공하는 구성이므로 `/yujin/` 하위 경로 배포는 추가 조정이 필요합니다.
+- 웹 이미지의 기본 빌드 경로는 `/machim/`입니다. 회사 프록시가 접두어를 유지하거나 제거하는 경우 모두 웹 Nginx에서 처리합니다. 다른 경로는 Vite 빌드 인자와 Nginx rewrite를 함께 수정하세요.
 - `AI_GUIDE_ENABLED=false`가 기본값입니다. 켜려면 true와 유효한 OpenAI 키를 지정하세요.
 - 외부 API 키는 이 파일에 넣지만 프론트 VWorld 키는 웹 이미지 빌드 시 반영해야 합니다.
 - Python 자동 수집기는 이 구성에 포함되지 않으며 수집 스케줄러는 비활성화합니다.
@@ -136,3 +136,21 @@ python3 deploy/smoke-test.py
 
 이 테스트는 실제 데이터 백업 복원, 실제 회사 Nginx/HTTPS, 외부 API, 브라우저의 지도·카메라 동작을
 대신하지 않습니다. 이 항목은 VM 배포 시 추가 검증해야 합니다.
+
+## `/machim/` 웹 이미지로 업데이트
+
+맥에서 `FE/Dockerfile`로 `ddemachim-web:machim-amd64` 이미지를 빌드하고 save/scp/load로 VM에 전달합니다.
+VM의 `deploy/.env`에서 다음 두 항목을 바꿉니다.
+
+```dotenv
+WEB_IMAGE=ddemachim-web:machim-amd64
+PUBLIC_ORIGIN=https://mapprime.synology.me:15289
+```
+
+```bash
+docker compose --project-name ddemachim-vm --env-file deploy/.env \
+  -f deploy/compose.yaml up -d --wait --wait-timeout 240 backend web
+```
+
+DB 복원은 반복하지 않습니다. 접속 주소는 `https://mapprime.synology.me:15289/machim/`이며
+이미지 교체 전 브라우저 탭은 새로고침하세요. 로컬 `npm run dev`는 기본 `/` 경로를 유지합니다.

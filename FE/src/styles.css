@@ -85,8 +85,9 @@ img { max-width: 100%; display: block; }
   background: rgba(255,255,255,.82);
   border-top: 1px solid rgba(255,255,255,.78);
   box-shadow: 0 -6px 20px rgba(55, 103, 153, .06);
-  backdrop-filter: blur(18px) saturate(145%);
   -webkit-backdrop-filter: blur(18px) saturate(145%);
+  /* Keep the standard property last so CSS minification preserves it for Chrome. */
+  backdrop-filter: blur(18px) saturate(145%);
   overflow: visible;
 }
 

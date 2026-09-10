@@ -1,3 +1,4 @@
+import { withBasePath } from '../utils/appPath.js';
 import { useEffect, useRef } from 'react';
 import { animate, createScope } from 'animejs';
 import {
@@ -103,7 +104,7 @@ export default function ScrollOnboarding({ go }) {
             <p>지금 가기 좋은 장소를 발견하고 하루의 흐름으로 자연스럽게 이어드려요.</p>
           </motion.div>
           <motion.div className="story-hero-scene" style={reduceMotion ? undefined : { transform: heroTransform }}>
-            <img src="/assets/figma/intro-visual.png" alt="안국동 궁궐 연못 풍경" />
+            <img src={withBasePath('/assets/figma/intro-visual.png')} alt="안국동 궁궐 연못 풍경" />
           </motion.div>
           <motion.div className="story-hero-summary" initial={stageInitial} animate={stageVisible} transition={{ ...enterTransition, delay: 0.14 }}>
             <span>오늘의 코스</span>
@@ -187,7 +188,7 @@ export default function ScrollOnboarding({ go }) {
             viewport={{ once: true, amount: 0.32 }}
             transition={{ ...enterTransition, delay: 0.08 }}
           >
-            <img src="/assets/figma/onsite-media.png" alt="운현궁 현장 풍경" />
+            <img src={withBasePath('/assets/figma/onsite-media.png')} alt="운현궁 현장 풍경" />
             <ArrivalMotion />
             <div className="story-arrival-card"><span>위치 확인 완료</span><strong>운현궁에 도착했어요</strong><small>이곳의 이야기와 장면을 열어볼까요?</small></div>
           </motion.div>

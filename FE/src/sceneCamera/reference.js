@@ -1,9 +1,10 @@
+import { withBasePath } from '../utils/appPath.js';
 import { resolveFilmingSceneReference } from '../utils/filmingSceneImages.js';
 
 export const LOCAL_REFERENCE_STILLS = Object.freeze({
   1: Object.freeze({
-    url: '/assets/scenes/filming-location-1.jpg',
-    outlineUrl: '/assets/scenes/filming-location-1-outline.svg',
+    url: withBasePath('/assets/scenes/filming-location-1.jpg'),
+    outlineUrl: withBasePath('/assets/scenes/filming-location-1-outline.svg'),
     altText: '바닷가에서 꽃을 든 두 인물의 촬영 장면',
     attribution: '사용자 제공 이미지 · 출처: 스타뉴스(daumcdn.net)',
     width: 658,

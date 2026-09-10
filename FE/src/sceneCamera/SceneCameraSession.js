@@ -1,4 +1,4 @@
-import React, { createContext, useCallback, useContext, useEffect, useMemo, useReducer, useRef, useState } from 'react';
+import React, { createContext, useCallback, useContext, useEffect, useLayoutEffect, useMemo, useReducer, useRef, useState } from 'react';
 
 import { captureVideoFrame } from './canvas.js';
 import { resultGuardDestination, startCameraGesture } from './flow.js';
@@ -196,7 +196,8 @@ export function SceneCameraProvider({
     return notice;
   }, []);
 
-  useEffect(() => {
+  // Reset the old scene before child passive effects start the next preflight.
+  useLayoutEffect(() => {
     const nextRoute = { screen, id: routeId };
     if (shouldResetSceneSession(previousRouteRef.current, nextRoute)) {
       preflightRef.current += 1;

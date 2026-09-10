@@ -1,4 +1,5 @@
-const base = '/assets/motion';
+import { withBasePath } from '../utils/appPath.js';
+const base = withBasePath('/assets/motion');
 
 export function BrandLoading({ compact = false }) {
   return (
