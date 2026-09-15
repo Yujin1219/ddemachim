@@ -343,11 +343,3 @@ cd BE
 ```
 
 명령은 각각 프로젝트 루트에서 시작하는 예시입니다. 일부 백엔드 통합 테스트는 Docker 환경을 사용합니다.
-
-### 기획·발표 자료
-
-- [서비스 기획안](docs/기획안/서비스-기획안.md)
-- [기능 명세서](docs/기능%20명세서/기능-명세서-v2.md)
-- [최종 발표자료 · FAST 알고리즘 시각화 포함](docs/presentations/최종_ppt_FAST_알고리즘_시각화_추가본.pptx)
-- [장면 구도 오버레이 발표자료](docs/presentations/장면_구도_오버레이_추가본.pptx)
-- [README 소개 이미지 모음](docs/images/readme/features-v3/README.md)
